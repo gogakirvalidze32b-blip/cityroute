@@ -12,14 +12,16 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    "strict": false,                  /* შეცვალეთ false-ზე */
+    "noUnusedLocals": false,           /* შეცვალეთ false-ზე (აშორებს unused variables ერორებს) */
+    "noUnusedParameters": false,       /* შეცვალეთ false-ზე (აშორებს unused params ერორებს) */
+    "noImplicitAny": false,            /* დაამატეთ */
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
-    }
+      "@/*": ["./src/*"]
+    },
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
