@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Untitled layer</name>
+    <Style id="line-000000-1200-nodesc-normal">
+      <LineStyle>
+        <color>ff000000</color>
+        <width>1.2</width>
+      </LineStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <Style id="line-000000-1200-nodesc-highlight">
+      <LineStyle>
+        <color>ff000000</color>
+        <width>1.8</width>
+      </LineStyle>
+      <BalloonStyle>
+        <text><![CDATA[<h3>$[name]</h3>]]></text>
+      </BalloonStyle>
+    </Style>
+    <StyleMap id="line-000000-1200-nodesc">
+      <Pair>
+        <key>normal</key>
+        <styleUrl>#line-000000-1200-nodesc-normal</styleUrl>
+      </Pair>
+      <Pair>
+        <key>highlight</key>
+        <styleUrl>#line-000000-1200-nodesc-highlight</styleUrl>
+      </Pair>
+    </StyleMap>
+    <Placemark>
+      <name>მეორე მარშუტი</name>
+      <styleUrl>#line-000000-1200-nodesc</styleUrl>
+      <LineString>
+        <tessellate>1</tessellate>
+        <coordinates>
+          45.4747597,41.9316083,0
+          45.4762498,41.9311572,0
+          45.4749314,41.9291259,0
+          45.475256,41.9290241,0
+          45.4788367,41.934753,0
+          45.4804245,41.9341384,0
+          45.4839329,41.9340187,0
+          45.488557,41.9331966,0
+          45.4953054,41.9315444,0
+          45.4990314,41.9308013,0
+          45.5069782,41.9300597,0
+          45.5002649,41.9201236,0
+          45.4920466,41.9187266,0
+          45.4862128,41.9189491,0
+          45.4831658,41.9217751,0
+          45.4755483,41.9243136,0
+          45.4664503,41.9258143,0
+          45.4586041,41.9278153,0
+          45.4534114,41.9261231,0
+          45.4540896,41.9259016,0
+          45.45439,41.9259654,0
+          45.4566431,41.9250075,0
+          45.4580808,41.9248958,0
+          45.4615998,41.9232514,0
+          45.4664278,41.9233631,0
+          45.4669213,41.9255823,0
+          45.4701829,41.9249916,0
+          45.4708961,41.9300078,0
+          45.475256,41.9290241,0
+          45.4763842,41.9312176,0
+          45.4747319,41.9317284,0
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>

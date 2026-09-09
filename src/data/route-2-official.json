@@ -1,0 +1,164 @@
+{
+  "route_name": "თელავი, საგამოცდო მარშრუტი №2¹",
+  "source": "Untitled layer(3).kmz",
+  "total_distance_m": 11993.3,
+  "total_points": 31,
+  "full_path": [
+    {
+      "lat": 41.931608,
+      "lng": 45.47476,
+      "distance_from_start_m": 0
+    },
+    {
+      "lat": 41.931157,
+      "lng": 45.47625,
+      "distance_from_start_m": 133.1
+    },
+    {
+      "lat": 41.929126,
+      "lng": 45.474931,
+      "distance_from_start_m": 383.9
+    },
+    {
+      "lat": 41.929024,
+      "lng": 45.475256,
+      "distance_from_start_m": 413
+    },
+    {
+      "lat": 41.934753,
+      "lng": 45.478837,
+      "distance_from_start_m": 1115.6
+    },
+    {
+      "lat": 41.934138,
+      "lng": 45.480425,
+      "distance_from_start_m": 1263.6
+    },
+    {
+      "lat": 41.934019,
+      "lng": 45.483933,
+      "distance_from_start_m": 1554.1
+    },
+    {
+      "lat": 41.933197,
+      "lng": 45.488557,
+      "distance_from_start_m": 1947.4
+    },
+    {
+      "lat": 41.931544,
+      "lng": 45.495305,
+      "distance_from_start_m": 2535.1
+    },
+    {
+      "lat": 41.930801,
+      "lng": 45.499031,
+      "distance_from_start_m": 2854.2
+    },
+    {
+      "lat": 41.93006,
+      "lng": 45.506978,
+      "distance_from_start_m": 3516.8
+    },
+    {
+      "lat": 41.920124,
+      "lng": 45.500265,
+      "distance_from_start_m": 4753.4
+    },
+    {
+      "lat": 41.918727,
+      "lng": 45.492047,
+      "distance_from_start_m": 5450.8
+    },
+    {
+      "lat": 41.918949,
+      "lng": 45.486213,
+      "distance_from_start_m": 5934.2
+    },
+    {
+      "lat": 41.921775,
+      "lng": 45.483166,
+      "distance_from_start_m": 6337
+    },
+    {
+      "lat": 41.924314,
+      "lng": 45.475548,
+      "distance_from_start_m": 7027.6
+    },
+    {
+      "lat": 41.925814,
+      "lng": 45.46645,
+      "distance_from_start_m": 7798.5
+    },
+    {
+      "lat": 41.927815,
+      "lng": 45.458604,
+      "distance_from_start_m": 8484.7
+    },
+    {
+      "lat": 41.926123,
+      "lng": 45.453411,
+      "distance_from_start_m": 8953.7
+    },
+    {
+      "lat": 41.925902,
+      "lng": 45.45409,
+      "distance_from_start_m": 9015
+    },
+    {
+      "lat": 41.925965,
+      "lng": 45.45439,
+      "distance_from_start_m": 9040.8
+    },
+    {
+      "lat": 41.925008,
+      "lng": 45.456643,
+      "distance_from_start_m": 9255.5
+    },
+    {
+      "lat": 41.924896,
+      "lng": 45.458081,
+      "distance_from_start_m": 9375.1
+    },
+    {
+      "lat": 41.923251,
+      "lng": 45.4616,
+      "distance_from_start_m": 9718.9
+    },
+    {
+      "lat": 41.923363,
+      "lng": 45.466428,
+      "distance_from_start_m": 10118.5
+    },
+    {
+      "lat": 41.925582,
+      "lng": 45.466921,
+      "distance_from_start_m": 10368.6
+    },
+    {
+      "lat": 41.924992,
+      "lng": 45.470183,
+      "distance_from_start_m": 10646.4
+    },
+    {
+      "lat": 41.930008,
+      "lng": 45.470896,
+      "distance_from_start_m": 11207.2
+    },
+    {
+      "lat": 41.929024,
+      "lng": 45.475256,
+      "distance_from_start_m": 11584.1
+    },
+    {
+      "lat": 41.931218,
+      "lng": 45.476384,
+      "distance_from_start_m": 11845.3
+    },
+    {
+      "lat": 41.931728,
+      "lng": 45.474732,
+      "distance_from_start_m": 11993.3
+    }
+  ],
+  "manoeuvres": []
+}
