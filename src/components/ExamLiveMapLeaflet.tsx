@@ -113,7 +113,9 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
 
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
-  const nextPinPulse = nextPin != null
+  
+  // პინი იციმციმოს მხოლოდ როცა ძალიან ახლოს ხარ (trigger distance-ის ფარგლებში)
+  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
 
   return (
     <div className="exam-live-map">

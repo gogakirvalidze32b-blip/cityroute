@@ -201,6 +201,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         const pending = voicePins.find((p) => !triggeredRef.current.has(p.id))
         setNextPin(pending ?? null)
 
+        // აუდიო ყოველთვის ითამაშოს თუ routeAudio feature enabled-ია, view-ის მიუხედავად
         if (!pending || phase !== 'active' || !features.routeAudio) return
 
         const dist = distanceToPinMeters(raw, [pending.lat, pending.lng])
