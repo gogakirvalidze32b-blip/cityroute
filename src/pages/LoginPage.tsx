@@ -10,15 +10,41 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  if (!loading && user) return <Navigate to="/" replace />
+  if (loading) {
+    return (
+      <div className="page center auth-page">
+        <div className="auth-brand">
+          <AppBrand centered />
+        </div>
+        <div className="auth-card">
+          <p className="muted">იტვირთება...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (user) return <Navigate to="/" replace />
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setSubmitting(true)
     setError(null)
-    const err = await signIn(email.trim(), password)
-    setError(err)
-    setSubmitting(false)
+    
+    try {
+      // დავამატოთ timeout რომ არ იჭედოს უსასრულოდ
+      const timeoutPromise = new Promise<string>((resolve) => 
+        setTimeout(() => resolve('მოთხოვნა ძალიან დიდხანს გრძელდება. სცადეთ თავიდან.'), 15000)
+      )
+      
+      const signInPromise = signIn(email.trim(), password)
+      const err = await Promise.race([signInPromise, timeoutPromise])
+      
+      setError(err)
+    } catch (err) {
+      setError('შეცდომა დაფიქსირდა. გთხოვთ სცადოთ თავიდან.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
