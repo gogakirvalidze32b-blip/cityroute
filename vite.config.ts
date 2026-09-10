@@ -44,8 +44,8 @@ export default defineConfig({
             handler: 'NetworkFirst',
             options: {
               cacheName: 'routes-cache',
-              networkTimeoutSeconds: 3,
-              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              networkTimeoutSeconds: 5,
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 }, // 30 დღე
             },
           },
           {
@@ -53,15 +53,44 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'audio-cache',
-              expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 90 }, // 90 დღე
             },
           },
+          // თელავის რუკის ფილები - zoom 13-18 (street level detail)
+          {
+            urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*\/16\/.*\/(26653|26654|26655|26656|26657)\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'telavi-map-tiles-z16',
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 180 }, // 6 თვე
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*\/17\/.*\/(53306|53307|53308|53309|53310|53311|53312|53313|53314|53315)\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'telavi-map-tiles-z17',
+              expiration: { maxEntries: 1000, maxAgeSeconds: 60 * 60 * 24 * 180 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*\/18\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'telavi-map-tiles-z18',
+              expiration: { maxEntries: 2000, maxAgeSeconds: 60 * 60 * 24 * 180 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          // ზოგადი რუკის ფილები (სხვა zoom levels)
           {
             urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*/i,
             handler: 'CacheFirst',
             options: {
-              cacheName: 'map-tiles-hd',
-              expiration: { maxEntries: 1500, maxAgeSeconds: 60 * 60 * 24 * 90 },
+              cacheName: 'map-tiles-other',
+              expiration: { maxEntries: 1000, maxAgeSeconds: 60 * 60 * 24 * 90 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
@@ -69,8 +98,8 @@ export default defineConfig({
             urlPattern: /^https:\/\/[abc]\.tile\.openstreetmap\.org\/.*/i,
             handler: 'CacheFirst',
             options: {
-              cacheName: 'map-tiles',
-              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              cacheName: 'osm-tiles',
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 90 },
             },
           },
         ],
