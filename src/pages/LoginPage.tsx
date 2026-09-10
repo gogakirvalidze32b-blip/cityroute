@@ -30,6 +30,8 @@ export function LoginPage() {
     setSubmitting(true)
     setError(null)
     
+    console.log('📝 LoginPage: Form submitted')
+    
     try {
       // დავამატოთ timeout რომ არ იჭედოს უსასრულოდ
       const timeoutPromise = new Promise<string>((resolve) => 
@@ -39,8 +41,10 @@ export function LoginPage() {
       const signInPromise = signIn(email.trim(), password)
       const err = await Promise.race([signInPromise, timeoutPromise])
       
+      console.log('📝 LoginPage: signIn result:', err || 'success')
       setError(err)
     } catch (err) {
+      console.error('📝 LoginPage: Unexpected error:', err)
       setError('შეცდომა დაფიქსირდა. გთხოვთ სცადოთ თავიდან.')
     } finally {
       setSubmitting(false)
