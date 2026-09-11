@@ -105,7 +105,6 @@ export function HomePage() {
             className={`route-card route-card--${index + 1}`}
           >
             <div className="route-card__content">
-              <div className="route-card__number">მარშრუტი {index + 1}</div>
               <strong className="route-card__name">{route.name_ka}</strong>
               <div className="route-card__tags">
                 {route.license_category && (
