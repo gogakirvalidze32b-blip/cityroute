@@ -69,11 +69,14 @@ export function RoutePage() {
           </Link>
 
           <div className="toolbar-title">
-
             <strong>{route.name_ka}</strong>
-
+            {route.license_category && (
+              <span className="tag tag--category">
+                {route.license_category === 'B' && '🚗 B'}
+                {route.license_category === 'C' && '🚛 C'}
+              </span>
+            )}
             {route.official_label && <span className="tag">{route.official_label}</span>}
-
           </div>
 
           <span className="tag tag--exam">გამოცდა</span>

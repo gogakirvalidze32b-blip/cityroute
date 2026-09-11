@@ -382,9 +382,15 @@ button:disabled {
   font-weight: 600;
 }
 
+.route-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
 .tag {
   display: inline-block;
-  margin-top: 0.35rem;
   font-size: 0.7rem;
   font-weight: 600;
   background: rgba(255, 255, 255, 0.25);
@@ -1039,6 +1045,15 @@ button:disabled {
   padding: 0.2rem 0.45rem;
   border-radius: 999px;
   color: #94a3b8;
+}
+
+.tag--category {
+  font-size: 0.72rem;
+  background: #1e40af;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  color: #ffffff;
+  font-weight: 600;
 }
 
 .exam-session {

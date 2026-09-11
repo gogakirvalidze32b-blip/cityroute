@@ -107,7 +107,15 @@ export function HomePage() {
             <div className="route-card__content">
               <div className="route-card__number">მარშრუტი {index + 1}</div>
               <strong className="route-card__name">{route.name_ka}</strong>
-              {route.official_label && <span className="tag">{route.official_label}</span>}
+              <div className="route-card__tags">
+                {route.license_category && (
+                  <span className="tag tag--category">
+                    {route.license_category === 'B' && '🚗 B კატეგორია'}
+                    {route.license_category === 'C' && '🚛 C კატეგორია'}
+                  </span>
+                )}
+                {route.official_label && <span className="tag">{route.official_label}</span>}
+              </div>
             </div>
             <span className="chevron">→</span>
           </Link>
