@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Circle, CircleMarker, MapContainer, Marker, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -110,6 +110,7 @@ type Props = {
 export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge }: Props) {
   const [followPaused, setFollowPaused] = useState(false)
   const navArrowIcon = useMemo(() => createNavArrowIcon(heading), [heading])
+  const pins = route.pins // Get pins from route
 
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
@@ -143,26 +144,36 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
         <MapSizeFix />
         <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
-        {nextPin && (
-          <>
-            <Circle
-              center={[nextPin.lat, nextPin.lng]}
-              radius={nextPin.trigger_distance_m}
-              pathOptions={{ color: '#14b8a6', fillColor: '#14b8a6', fillOpacity: 0.12, weight: 2 }}
-            />
-            <CircleMarker
-              center={[nextPin.lat, nextPin.lng]}
-              radius={nextPinPulse ? 14 : 10}
-              pathOptions={{
-                color: '#0f766e',
-                fillColor: '#5eead4',
-                fillOpacity: 1,
-                weight: 2,
-                className: nextPinPulse ? 'exam-pin-pulse' : undefined,
-              }}
-            />
-          </>
-        )}
+        {/* All pins with trigger zones */}
+        {pins.map((pin) => {
+          const isNext = nextPin?.id === pin.id
+          const isPulse = isNext && nextPinPulse
+          return (
+            <React.Fragment key={pin.id}>
+              <Circle
+                center={[pin.lat, pin.lng]}
+                radius={pin.trigger_distance_m}
+                pathOptions={{
+                  color: isNext ? '#14b8a6' : '#10b981',
+                  fillColor: isNext ? '#14b8a6' : '#10b981',
+                  fillOpacity: isNext ? 0.12 : 0.08,
+                  weight: isNext ? 2 : 1.5,
+                }}
+              />
+              <CircleMarker
+                center={[pin.lat, pin.lng]}
+                radius={isPulse ? 14 : 10}
+                pathOptions={{
+                  color: isNext ? '#0f766e' : '#047857',
+                  fillColor: isNext ? '#5eead4' : '#10b981',
+                  fillOpacity: 1,
+                  weight: 2,
+                  className: isPulse ? 'exam-pin-pulse' : undefined,
+                }}
+              />
+            </React.Fragment>
+          )
+        })}
 
         <Marker position={userPos} icon={navArrowIcon} zIndexOffset={1000} />
 
