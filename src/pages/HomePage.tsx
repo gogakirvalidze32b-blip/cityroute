@@ -112,6 +112,7 @@ export function HomePage() {
                   <span className="tag tag--category">
                     {route.license_category === 'B' && '🚗 B კატეგორია'}
                     {route.license_category === 'C' && '🚛 C კატეგორია'}
+                    {route.license_category === 'C,D' && '🚛🚌 C+D კატეგორია'}
                   </span>
                 )}
                 {route.official_label && <span className="tag">{route.official_label}</span>}

@@ -74,6 +74,7 @@ export function RoutePage() {
               <span className="tag tag--category">
                 {route.license_category === 'B' && '🚗 B'}
                 {route.license_category === 'C' && '🚛 C'}
+                {route.license_category === 'C,D' && '🚛🚌 C+D'}
               </span>
             )}
             {route.official_label && <span className="tag">{route.official_label}</span>}
