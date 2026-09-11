@@ -13,7 +13,7 @@ INSERT INTO public.pins (
   lat,
   lng,
   instruction_ka,
-  audio_filename,
+  audio_url,
   sort_order,
   trigger_distance_m
 )
@@ -22,7 +22,7 @@ SELECT
   41.691852 as lat,
   44.961638 as lng,
   '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ' as instruction_ka,
-  '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3' as audio_filename,
+  '/audio/points/300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3' as audio_url,
   (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM public.pins WHERE route_id = r.id) as sort_order,
   300 as trigger_distance_m
 FROM public.routes r
@@ -31,13 +31,13 @@ WHERE r.slug = 'route-1';  -- ← შეცვალე route-1/route-2/route-3/
 
 -- ===== OR: Add to specific route by ID =====
 /*
-INSERT INTO public.pins (route_id, lat, lng, instruction_ka, audio_filename, sort_order, trigger_distance_m)
+INSERT INTO public.pins (route_id, lat, lng, instruction_ka, audio_url, sort_order, trigger_distance_m)
 VALUES (
   'your-route-uuid-here',
   41.691852,
   44.961638,
   '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ',
-  '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
+  '/audio/points/300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
   10,  -- sort_order (შეცვალე)
   300  -- trigger distance in meters
 );
@@ -50,7 +50,7 @@ SELECT
   p.lat,
   p.lng,
   p.instruction_ka,
-  p.audio_filename,
+  p.audio_url,
   p.sort_order,
   p.trigger_distance_m,
   r.name_ka as route_name
@@ -100,7 +100,7 @@ SET
   lat = 41.691852,
   lng = 44.961638,
   instruction_ka = '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ',
-  audio_filename = '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
+  audio_url = '/audio/points/300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
   trigger_distance_m = 300
 WHERE id = 'pin-uuid-here';
 */

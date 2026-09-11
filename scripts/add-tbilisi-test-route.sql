@@ -47,7 +47,7 @@ INSERT INTO public.pins (
   lat,
   lng,
   instruction_ka,
-  audio_filename,
+  audio_url,
   sort_order,
   trigger_distance_m
 )
@@ -56,7 +56,7 @@ SELECT
   41.691852,
   44.961638,
   '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ',
-  '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
+  '/audio/points/300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
   1,
   300
 FROM test_route
@@ -66,16 +66,16 @@ ON CONFLICT DO NOTHING;
 WITH test_route AS (
   SELECT id FROM public.routes WHERE slug = 'test-route-tbilisi'
 )
-INSERT INTO public.pins (route_id, lat, lng, instruction_ka, audio_filename, sort_order, trigger_distance_m)
-SELECT test_route.id, v.lat, v.lng, v.instruction_ka, v.audio_filename, v.sort_order, v.trigger_distance_m
+INSERT INTO public.pins (route_id, lat, lng, instruction_ka, audio_url, sort_order, trigger_distance_m)
+SELECT test_route.id, v.lat, v.lng, v.instruction_ka, v.audio_url, v.sort_order, v.trigger_distance_m
 FROM test_route,
 (VALUES
-  (41.690500, 44.960500, 'დაწყება - ტესტ მარშრუტი', 'დაწყება.mp3', 0, 50),
-  (41.691852, 44.961638, '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ', '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3', 1, 300),
-  (41.692500, 44.962000, 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.mp3', 2, 100),
-  (41.693500, 44.963000, 'გთხოვთ, იმოძრაოთ პირდაპირ', 'გთხოვთ, იმოძრაოთ პირდაპირ.mp3', 3, 50),
-  (41.690500, 44.960500, 'ფინიში', 'ფინიში.mp3', 4, 30)
-) AS v(lat, lng, instruction_ka, audio_filename, sort_order, trigger_distance_m)
+  (41.690500, 44.960500, 'დაწყება - ტესტ მარშრუტი', '/audio/დაწყება.mp3', 0, 50),
+  (41.691852, 44.961638, '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ', '/audio/points/300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3', 1, 300),
+  (41.692500, 44.962000, 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ', '/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.mp3', 2, 100),
+  (41.693500, 44.963000, 'გთხოვთ, იმოძრაოთ პირდაპირ', '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.mp3', 3, 50),
+  (41.690500, 44.960500, 'ფინიში', '/audio/ფინიში.mp3', 4, 30)
+) AS v(lat, lng, instruction_ka, audio_url, sort_order, trigger_distance_m)
 ON CONFLICT DO NOTHING;
 
 
@@ -97,7 +97,7 @@ SELECT
   p.lat,
   p.lng,
   p.instruction_ka,
-  p.audio_filename,
+  p.audio_url,
   p.trigger_distance_m
 FROM public.pins p
 JOIN public.routes r ON r.id = p.route_id
