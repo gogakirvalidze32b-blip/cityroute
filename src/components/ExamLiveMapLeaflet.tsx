@@ -8,7 +8,7 @@ import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
-const USER_SCREEN_Y = 0.74
+const USER_SCREEN_Y = 0.5 // GPS marker in center
 
 function createNavArrowIcon(counterHeading: number) {
   return L.divIcon({

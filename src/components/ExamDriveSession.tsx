@@ -206,11 +206,25 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         if (!pending || phase !== 'active' || !features.routeAudio) return
 
         const dist = distanceToPinMeters(raw, [pending.lat, pending.lng])
+        const headingOk = headingMatches(raw, [pending.lat, pending.lng], pos.heading)
+        const alreadySpoken = isStartPinAlreadyAnnounced(route.slug, pending.id)
+        
+        console.log('📍 Pin check:', {
+          pinId: pending.id,
+          instruction: pending.instruction_ka,
+          distance: Math.round(dist) + 'm',
+          triggerDistance: pending.trigger_distance_m + 'm',
+          headingOk,
+          alreadySpoken,
+          audioUrl: pending.audio_url,
+        })
+
         if (
           dist <= pending.trigger_distance_m &&
-          headingMatches(raw, [pending.lat, pending.lng], pos.heading) &&
-          !isStartPinAlreadyAnnounced(route.slug, pending.id)
+          headingOk &&
+          !alreadySpoken
         ) {
+          console.log('🔊 Audio trigger!', pending.instruction_ka)
           triggeredRef.current.add(pending.id)
           setLastSpoken(pending.instruction_ka)
           void audioEngine.play(pending.audio_url, pending.id, pending.instruction_ka)
