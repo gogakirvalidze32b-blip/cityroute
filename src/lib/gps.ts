@@ -129,9 +129,9 @@ export function requestGpsOnce(options?: { allowCached?: boolean }): Promise<Gps
       },
       (err) => reject(new Error(formatGpsError(err))),
       {
-        enableHighAccuracy: true,
+        enableHighAccuracy: true, // GPS სატელიტები (არა WiFi/IP)
         maximumAge: options?.allowCached ? 60_000 : 0,
-        timeout: 15000,
+        timeout: 20000, // 15→20 წამი უფრო დიდი timeout
       },
     )
   })
@@ -166,9 +166,9 @@ export function watchGps(
     },
     (err) => onError?.(err),
     {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 15000,
+      enableHighAccuracy: true, // GPS სატელიტები - ზუსტი პოზიცია
+      maximumAge: 0, // არასოდეს გამოიყენოს cache-ირებული ლოკაცია
+      timeout: 20000, // 15→20 წამი უფრო დიდი timeout GPS-ისთვის
     },
   )
 

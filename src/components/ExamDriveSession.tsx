@@ -5,6 +5,7 @@ import { ExamLiveMap } from '@/components/ExamLiveMap'
 import { ExamScoreboard } from '@/components/ExamScoreboard'
 import { ExamSummary } from '@/components/ExamSummary'
 import { ExamViewSwitcher, type ExamDriveView } from '@/components/ExamViewSwitcher'
+import { GpsAccuracyBadge } from '@/components/GpsAccuracyBadge'
 import { RoutePreviewMap } from '@/components/RoutePreviewMap'
 import { usePlanFeatures } from '@/context/AuthContext'
 import { audioEngine } from '@/lib/audio'
@@ -345,13 +346,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           <div className="exam-preview__panel">
             {gpsError && <p className="error-text">{gpsError}</p>}
             {gpsStarted && (
-              <p className="session-hint">
-                GPS {rawPos ? `±${Math.round(rawPos.accuracy)} მ` : '...'}
-                {pinsActive ? ` · ${sortedPins.length} ხმოვანი წერტილი` : ''}
-                {mapOnly && ' · ნავიგაცია'}
-                {features.canSwitchViews && ' · სრული პაკეტი'}
-                {panelOnly && ' · გამოცდის პანელი'}
-              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
+                <GpsAccuracyBadge accuracy={rawPos?.accuracy ?? null} />
+                <p className="session-hint" style={{ margin: 0 }}>
+                  {pinsActive ? `${sortedPins.length} ხმოვანი წერტილი` : ''}
+                  {mapOnly && (pinsActive ? ' · ' : '') + 'ნავიგაცია'}
+                  {features.canSwitchViews && (pinsActive || mapOnly ? ' · ' : '') + 'სრული პაკეტი'}
+                  {panelOnly && (pinsActive ? ' · ' : '') + 'გამოცდის პანელი'}
+                </p>
+              </div>
             )}
             <button type="button" className="nav-start-btn" onClick={() => void handleStartSession()} disabled={gpsStarting}>
               {gpsStarting ? 'GPS იტვირთება...' : '▶ გამოცდის დაწყება'}
