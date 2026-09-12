@@ -209,15 +209,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         const headingOk = headingMatches(raw, [pending.lat, pending.lng], pos.heading)
         const alreadySpoken = isStartPinAlreadyAnnounced(route.slug, pending.id)
         
-        console.log('📍 Pin check:', {
-          pinId: pending.id,
-          instruction: pending.instruction_ka,
-          distance: Math.round(dist) + 'm',
-          triggerDistance: pending.trigger_distance_m + 'm',
-          headingOk,
-          alreadySpoken,
-          audioUrl: pending.audio_url,
-        })
+        console.log('📍 Pin check:', 
+          'ID:', pending.id,
+          '| Instruction:', pending.instruction_ka,
+          '| Distance:', Math.round(dist) + 'm',
+          '| Trigger:', pending.trigger_distance_m + 'm',
+          '| Heading OK:', headingOk,
+          '| Already spoken:', alreadySpoken
+        )
 
         if (
           dist <= pending.trigger_distance_m &&
