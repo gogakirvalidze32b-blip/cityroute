@@ -1266,8 +1266,18 @@ button:disabled {
   width: 100%;
   height: 100%;
   min-height: 12rem;
-  background: #1e293b; /* Dark gray background while loading */
+  background: #1e293b !important; /* Force dark background */
   position: relative;
+}
+
+/* Force dark background on leaflet container */
+.exam-live-map__canvas .leaflet-container {
+  background: #1e293b !important;
+}
+
+/* Hide white flash on tile loading */
+.exam-live-map__canvas .leaflet-tile-container {
+  background: #1e293b !important;
 }
 
 .exam-live-map__canvas::before {
@@ -1283,6 +1293,7 @@ button:disabled {
   border-radius: 50%;
   animation: spin 1s linear infinite;
   z-index: 1;
+  pointer-events: none;
 }
 
 @keyframes spin {
