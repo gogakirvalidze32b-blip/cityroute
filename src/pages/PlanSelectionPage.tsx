@@ -22,8 +22,22 @@ export function PlanSelectionPage() {
   const isFirstPick = needsPlanSelection
 
   async function onContinue() {
-    // DEMO MODE: Go to demo home page
-    navigate('/demo-home')
+    if (!user) {
+      setError('გთხოვთ გაიაროთ ავტორიზაცია')
+      return
+    }
+
+    setSubmitting(true)
+    setError(null)
+
+    try {
+      await selectPlan(chosen)
+      navigate('/')
+    } catch (err) {
+      console.error('Plan selection failed:', err)
+      setError(err instanceof Error ? err.message : 'დაფიქსირდა შეცდომა')
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -32,13 +46,8 @@ export function PlanSelectionPage() {
         <AppBrand centered />
         <h1>პრემიუმ პაკეტი</h1>
         <p className="muted plan-page__lead">
-          ინსტრუქტორისთვის · <strong>24 საათი</strong> სრული საცდელი · შემდეგ გადახდა 99 ₾/თვე
+          ინსტრუქტორისთვის · <strong>24 საათი უფასოდ</strong> · შემდეგ 99 ₾/თვე
         </p>
-        {error && (
-          <p className="muted" style={{ fontSize: '0.85rem', color: '#ff9800', marginTop: '0.5rem' }}>
-            ⚠️ Supabase არ არის ხელმისაწვდომი - Demo რეჟიმი
-          </p>
-        )}
       </header>
 
       <div className="plan-summary">
