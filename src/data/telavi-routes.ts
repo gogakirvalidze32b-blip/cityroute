@@ -67,8 +67,8 @@ function line(slug: string, fallback: [number, number][]): [number, number][] {
 
 const route1Fallback: [number, number][] = route1Official.full_path.map((p) => [p.lat, p.lng])
 const route2Fallback: [number, number][] = route2Official.full_path.map((p) => [p.lat, p.lng])
-const route3Fallback: [number, number][] = [L.tbilisi_hwy_far, L.archil_ii, L.erekle_n, L.tbilisi_hwy_far]
 const route4Fallback: [number, number][] = [L.sekhniashvili_agency, L.kavkasioni_s, L.saakadze, L.tbilisi_hwy_far, L.alazani_n, L.agency]
+const route4PreviewFallback: [number, number][] = [L.agency, L.alazani_ave, L.agmashenebeli_c, L.chavchavadze_e, L.tbilisi_hwy, L.saakadze, L.agency]
 const route5Fallback: [number, number][] = [L.agency, L.kurdgelauri, L.tbilisi_st, L.tbilisi_hwy, L.saakadze, L.agency]
 
 export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
@@ -78,6 +78,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     slug: 'route-1',
     name_ka: 'მარშრუტი 1',
     official_label: null,
+    license_category: 'B',
     sort_order: 1,
     active: true,
     polyline: line('route-1', route1Fallback),
@@ -89,35 +90,20 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     slug: 'route-2',
     name_ka: 'მარშრუტი 2',
     official_label: null,
+    license_category: 'B',
     sort_order: 2,
     active: true,
     polyline: line('route-2', route2Fallback),
     pins: ROUTE2_PINS_ENABLED ? route2Pins('local-route-2') : [],
   },
   {
-    id: 'local-route-3',
-    city_id: 'telavi',
-    slug: 'route-3',
-    name_ka: 'მარშრუტი 3',
-    official_label: null,
-    sort_order: 3,
-    active: true,
-    polyline: line('route-3', route3Fallback),
-    pins: [
-      pin('p3-1', 'local-route-3', L.tbilisi_hwy_far, 'დაწყება — თბილისის გზატკეცილი', 1),
-      pin('p3-2', 'local-route-3', L.archil_ii, 'დასავლით — საცხოვრებელი ლუპი', 2),
-      pin('p3-3', 'local-route-3', L.erekle_n, 'ერეკლე II-ის გამზირით ჩრდილოვნით', 3),
-      pin('p3-4', 'local-route-3', L.erekle_w, 'U-turn — ერეკლე II-ზე შებრუნება', 4),
-      pin('p3-5', 'local-route-3', L.tbilisi_hwy_far, 'დასრულება — საწყისი წერტილი', 5),
-    ],
-  },
-  {
     id: 'local-route-4',
     city_id: 'telavi',
     slug: 'route-4',
-    name_ka: 'მარშრუტი 4',
+    name_ka: 'მარშრუტი 3',
     official_label: null,
-    sort_order: 4,
+    license_category: 'B',
+    sort_order: 3,
     active: true,
     polyline: line('route-4', route4Fallback),
     pins: [
@@ -131,11 +117,32 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     ],
   },
   {
+    id: 'local-route-4-preview',
+    city_id: 'telavi',
+    slug: 'route-4-preview',
+    name_ka: 'მარშრუტი 4',
+    official_label: null,
+    license_category: 'B',
+    sort_order: 4,
+    active: true,
+    polyline: line('route-4-preview', route4PreviewFallback),
+    pins: [
+      pin('p4p-1', 'local-route-4-preview', L.agency, 'დაწყება — სააგენტო', 1),
+      pin('p4p-2', 'local-route-4-preview', L.alazani_ave, 'ალაზნის გამზირზე', 2),
+      pin('p4p-3', 'local-route-4-preview', L.agmashenebeli_c, 'აღმაშენებლის გამზირზე', 3),
+      pin('p4p-4', 'local-route-4-preview', L.chavchavadze_e, 'ჭავჭავაძის გამზირზე', 4),
+      pin('p4p-5', 'local-route-4-preview', L.tbilisi_hwy, 'თბილისის გზატკეცილი', 5),
+      pin('p4p-6', 'local-route-4-preview', L.saakadze, 'სააკაძის ქუჩით დაბრუნება', 6),
+      pin('p4p-7', 'local-route-4-preview', L.agency, 'დასრულება — სააგენტო', 7),
+    ],
+  },
+  {
     id: 'local-route-5',
     city_id: 'telavi',
     slug: 'route-5',
-    name_ka: 'მარშრუტი 5',
+    name_ka: 'C, D კატეგორია',
     official_label: null,
+    license_category: 'C,D',
     sort_order: 5,
     active: true,
     polyline: line('route-5', route5Fallback),

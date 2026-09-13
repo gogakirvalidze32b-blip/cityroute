@@ -17,6 +17,12 @@ body,
 #root {
   margin: 0;
   min-height: 100%;
+  overflow: hidden;
+  position: fixed;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  touch-action: pan-x pan-y;
 }
 
 a {
@@ -52,9 +58,15 @@ button:disabled {
 
 .page {
   min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   padding: 1rem;
   max-width: 720px;
   margin: 0 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 .page.center {
@@ -370,9 +382,15 @@ button:disabled {
   font-weight: 600;
 }
 
+.route-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
 .tag {
   display: inline-block;
-  margin-top: 0.35rem;
   font-size: 0.7rem;
   font-weight: 600;
   background: rgba(255, 255, 255, 0.25);
@@ -1029,6 +1047,15 @@ button:disabled {
   color: #94a3b8;
 }
 
+.tag--category {
+  font-size: 0.72rem;
+  background: #1e40af;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  color: #ffffff;
+  font-weight: 600;
+}
+
 .exam-session {
   flex: 1;
   display: flex;
@@ -1239,6 +1266,38 @@ button:disabled {
   width: 100%;
   height: 100%;
   min-height: 12rem;
+  background: #1e293b !important; /* Force dark background */
+  position: relative;
+}
+
+/* Force dark background on leaflet container */
+.exam-live-map__canvas .leaflet-container {
+  background: #1e293b !important;
+}
+
+/* Hide white flash on tile loading */
+.exam-live-map__canvas .leaflet-tile-container {
+  background: #1e293b !important;
+}
+
+.exam-live-map__canvas::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(94, 234, 212, 0.2);
+  border-top-color: #5eead4;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  z-index: 1;
+  pointer-events: none;
+}
+
+@keyframes spin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
 .exam-live-map__recenter {
@@ -1728,68 +1787,100 @@ button:disabled {
   display: flex;
   flex-direction: column;
   padding: 0;
-  background: #e3e3e3;
+  background: #fff;
+  width: 100%;
 }
 
 .exam-preview__map {
   flex: 1;
-  min-height: min(58vh, 520px);
+  min-height: 0;
   position: relative;
-  background: #e3e3e3;
+  background: #fff;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (min-width: 900px) {
   .exam-preview__map {
-    min-height: min(72vh, 720px);
+    min-height: 0;
   }
 }
 
 .exam-preview__map--official {
-  --official-map-paper: #e3e3e3;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  justify-content: stretch;
-  background: var(--official-map-paper);
+  align-items: center;
+  justify-content: center;
+  background: #fff;
   padding: 0;
+  width: 100%;
+  height: 100%;
+  flex: 1;
 }
 
 .exam-preview__official-viewport {
-  flex: 0 1 auto;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  max-height: min(72vh, 720px);
-  margin: auto 0;
-  min-height: 0;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
   position: relative;
   overflow: hidden;
   touch-action: none;
   cursor: grab;
-  background: var(--official-map-paper, #e3e3e3);
+  background: #fff;
   border-radius: 0;
   box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Portrait mode: use aspect ratio to prevent distortion */
+@media (orientation: portrait) {
+  .exam-preview__official-viewport {
+    aspect-ratio: 1209 / 672;
+    height: auto;
+  }
+}
+
+/* Landscape mode: fill available space while maintaining aspect ratio via object-fit */
+@media (orientation: landscape) {
+  .exam-preview__official-viewport {
+    width: 100%;
+    height: 100%;
+  }
+  
+  .exam-preview__map {
+    min-height: calc(100vh - 200px);
+  }
+}
+
+/* Tablet landscape optimization */
+@media (orientation: landscape) and (min-width: 600px) and (max-width: 1024px) {
+  .exam-preview__map {
+    min-height: calc(100vh - 180px);
+  }
+  
+  .exam-preview__panel {
+    padding: 0.75rem 1rem max(0.75rem, calc(env(safe-area-inset-bottom) + 0.35rem)) !important;
+  }
+}
+
+/* Large landscape screens (desktop, car monitors) */
+@media (orientation: landscape) and (min-width: 1025px) {
+  .exam-preview__map {
+    min-height: calc(100vh - 160px);
+  }
 }
 
 .exam-preview__official-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  pointer-events: none;
-  background: var(--official-map-paper, #e3e3e3);
+  display: none;
 }
 
 .exam-preview__official-backdrop-img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  transform: scale(1.12);
-  filter: blur(14px) saturate(0.92);
-  opacity: 0.9;
-  user-select: none;
-  -webkit-user-drag: none;
+  display: none;
 }
 
 .exam-preview__official-viewport--dragging {

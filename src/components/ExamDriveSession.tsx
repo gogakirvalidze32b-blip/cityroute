@@ -5,6 +5,7 @@ import { ExamLiveMap } from '@/components/ExamLiveMap'
 import { ExamScoreboard } from '@/components/ExamScoreboard'
 import { ExamSummary } from '@/components/ExamSummary'
 import { ExamViewSwitcher, type ExamDriveView } from '@/components/ExamViewSwitcher'
+import { GpsAccuracyBadge } from '@/components/GpsAccuracyBadge'
 import { RoutePreviewMap } from '@/components/RoutePreviewMap'
 import { usePlanFeatures } from '@/context/AuthContext'
 import { audioEngine } from '@/lib/audio'
@@ -201,14 +202,28 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         const pending = voicePins.find((p) => !triggeredRef.current.has(p.id))
         setNextPin(pending ?? null)
 
+        // აუდიო ყოველთვის ითამაშოს თუ routeAudio feature enabled-ია, view-ის მიუხედავად
         if (!pending || phase !== 'active' || !features.routeAudio) return
 
         const dist = distanceToPinMeters(raw, [pending.lat, pending.lng])
+        const headingOk = headingMatches(raw, [pending.lat, pending.lng], pos.heading)
+        const alreadySpoken = isStartPinAlreadyAnnounced(route.slug, pending.id)
+        
+        console.log('📍 Pin check:', 
+          'ID:', pending.id,
+          '| Instruction:', pending.instruction_ka,
+          '| Distance:', Math.round(dist) + 'm',
+          '| Trigger:', pending.trigger_distance_m + 'm',
+          '| Heading OK:', headingOk,
+          '| Already spoken:', alreadySpoken
+        )
+
         if (
           dist <= pending.trigger_distance_m &&
-          headingMatches(raw, [pending.lat, pending.lng], pos.heading) &&
-          !isStartPinAlreadyAnnounced(route.slug, pending.id)
+          headingOk &&
+          !alreadySpoken
         ) {
+          console.log('🔊 Audio trigger!', pending.instruction_ka)
           triggeredRef.current.add(pending.id)
           setLastSpoken(pending.instruction_ka)
           void audioEngine.play(pending.audio_url, pending.id, pending.instruction_ka)
@@ -344,13 +359,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           <div className="exam-preview__panel">
             {gpsError && <p className="error-text">{gpsError}</p>}
             {gpsStarted && (
-              <p className="session-hint">
-                GPS {rawPos ? `±${Math.round(rawPos.accuracy)} მ` : '...'}
-                {pinsActive ? ` · ${sortedPins.length} ხმოვანი წერტილი` : ''}
-                {mapOnly && ' · ნავიგაცია'}
-                {features.canSwitchViews && ' · სრული პაკეტი'}
-                {panelOnly && ' · გამოცდის პანელი'}
-              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
+                <GpsAccuracyBadge accuracy={rawPos?.accuracy ?? null} />
+                <p className="session-hint" style={{ margin: 0 }}>
+                  {pinsActive ? `${sortedPins.length} ხმოვანი წერტილი` : ''}
+                  {mapOnly && (pinsActive ? ' · ' : '') + 'ნავიგაცია'}
+                  {features.canSwitchViews && (pinsActive || mapOnly ? ' · ' : '') + 'სრული პაკეტი'}
+                  {panelOnly && (pinsActive ? ' · ' : '') + 'გამოცდის პანელი'}
+                </p>
+              </div>
             )}
             <button type="button" className="nav-start-btn" onClick={() => void handleStartSession()} disabled={gpsStarting}>
               {gpsStarting ? 'GPS იტვირთება...' : '▶ გამოცდის დაწყება'}

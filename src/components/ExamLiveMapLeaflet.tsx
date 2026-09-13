@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Circle, CircleMarker, MapContainer, Marker, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -8,7 +8,7 @@ import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
-const USER_SCREEN_Y = 0.74
+const USER_SCREEN_Y = 0.5 // GPS marker in center
 
 function createNavArrowIcon(counterHeading: number) {
   return L.divIcon({
@@ -59,15 +59,9 @@ function DrivingCamera({
     }
 
     const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
-    const size = map.getSize()
-    if (size.x === 0 || size.y === 0) {
-      map.invalidateSize()
-      return
-    }
-
-    const projected = map.project(position, zoom)
-    projected.y += size.y * (0.5 - USER_SCREEN_Y)
-    map.setView(map.unproject(projected, zoom), zoom, { animate: true, duration: 0.2 })
+    
+    // Center user on map WITHOUT animation to prevent jumping
+    map.setView(position, zoom, { animate: false })
 
     const applyRotation = () => {
       const pane = map.getPane('mapPane')
@@ -110,10 +104,13 @@ type Props = {
 export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge }: Props) {
   const [followPaused, setFollowPaused] = useState(false)
   const navArrowIcon = useMemo(() => createNavArrowIcon(heading), [heading])
+  const pins = route.pins // Get pins from route
 
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
-  const nextPinPulse = nextPin != null
+  
+  // პინი იციმციმოს მხოლოდ როცა ძალიან ახლოს ხარ (trigger distance-ის ფარგლებში)
+  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
 
   return (
     <div className="exam-live-map">
@@ -141,26 +138,25 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
         <MapSizeFix />
         <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
-        {nextPin && (
-          <>
-            <Circle
-              center={[nextPin.lat, nextPin.lng]}
-              radius={nextPin.trigger_distance_m}
-              pathOptions={{ color: '#14b8a6', fillColor: '#14b8a6', fillOpacity: 0.12, weight: 2 }}
-            />
+        {/* All pins - only center dot with pulse */}
+        {pins.map((pin) => {
+          const isNext = nextPin?.id === pin.id
+          const isPulse = isNext && nextPinPulse
+          return (
             <CircleMarker
-              center={[nextPin.lat, nextPin.lng]}
-              radius={nextPinPulse ? 14 : 10}
+              key={pin.id}
+              center={[pin.lat, pin.lng]}
+              radius={isPulse ? 20 : 14}
               pathOptions={{
-                color: '#0f766e',
-                fillColor: '#5eead4',
-                fillOpacity: 1,
-                weight: 2,
-                className: nextPinPulse ? 'exam-pin-pulse' : undefined,
+                color: isNext ? '#0d9488' : '#047857',
+                fillColor: isNext ? '#5eead4' : '#10b981',
+                fillOpacity: isPulse ? 0.9 : 1,
+                weight: isPulse ? 3 : 2,
+                className: isPulse ? 'exam-pin-pulse' : undefined,
               }}
             />
-          </>
-        )}
+          )
+        })}
 
         <Marker position={userPos} icon={navArrowIcon} zIndexOffset={1000} />
 

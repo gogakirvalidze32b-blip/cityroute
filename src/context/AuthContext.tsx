@@ -158,19 +158,45 @@ async function bindDevice(): Promise<string | null> {
 
   if (import.meta.env.DEV) return null
 
-  const supabase = getSupabase()
+  try {
 
-  const fp = getDeviceFingerprint()
+    const supabase = getSupabase()
 
-  const { data, error } = await supabase.rpc('bind_device', { fp })
+    const fp = getDeviceFingerprint()
 
-  if (error) return error.message
+    const { data, error } = await Promise.race([
 
-  const result = parseDeviceBindResult(data)
+      supabase.rpc('bind_device', { fp }),
 
-  if (result.status === 'blocked') return result.message
+      new Promise<{ data: null; error: { message: string } }>((resolve) =>
 
-  return null
+        setTimeout(() => resolve({ data: null, error: { message: 'timeout' } }), 3000)
+
+      ),
+
+    ])
+
+    if (error) {
+
+      if (error.message === 'timeout') return null // Timeout არ უნდა აბლოკოს login-ს
+
+      return error.message
+
+    }
+
+    const result = parseDeviceBindResult(data)
+
+    if (result.status === 'blocked') return result.message
+
+    return null
+
+  } catch (err) {
+
+    console.error('bindDevice error:', err)
+
+    return null // არ უნდა აბლოკოს login-ს
+
+  }
 
 }
 
@@ -322,7 +348,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
 
-    const safety = window.setTimeout(finish, 8000)
+    const safety = window.setTimeout(finish, 5000)
 
 
 
@@ -330,11 +356,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
 
+        console.log('🔄 AuthContext: Starting auth initialization...')
+
         const {
 
           data: { session: initialSession },
 
         } = await supabase.auth.getSession()
+
+        console.log('✅ AuthContext: Got session:', initialSession ? 'logged in' : 'not logged in')
 
         if (!mounted) return
 
@@ -343,6 +373,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(initialSession)
 
         if (initialSession?.user) {
+
+          console.log('👤 AuthContext: Loading profile for user:', initialSession.user.id)
 
           await loadProfile(initialSession.user.id)
 
@@ -354,7 +386,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       } catch (e) {
 
-        console.error(e)
+        console.error('❌ AuthContext: Error during initialization:', e)
 
         if (mounted) setProfileReady(true)
 
@@ -363,6 +395,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.clearTimeout(safety)
 
         finish()
+
+        console.log('✅ AuthContext: Initialization complete')
 
       }
 
@@ -456,9 +490,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (email: string, password: string) => {
 
+    console.log('🔑 signIn: Starting login for:', email)
+
     const supabase = getSupabase()
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+
+    if (error) {
+
+      console.error('❌ signIn: Login failed:', error)
+
+      console.error('Error details:', { message: error.message, status: error.status, name: error.name })
+
+    } else {
+
+      console.log('✅ signIn: Login successful', data)
+
+    }
 
     return error?.message ?? null
 

@@ -10,6 +10,7 @@ import { DemoPaymentPage } from '@/pages/DemoPaymentPage'
 import { DemoHomePage } from '@/pages/DemoHomePage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { RoutePage } from '@/pages/RoutePage'
+import { DebugLoginPage } from '@/pages/DebugLoginPage'
 import '@/styles/payment.css'
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/debug-login" element={<DebugLoginPage />} />
           <Route path="/payment/return" element={<PaymentReturnPage />} />
           <Route path="/demo-payment" element={<DemoPaymentPage />} />
           <Route path="/demo-home" element={<DemoHomePage />} />

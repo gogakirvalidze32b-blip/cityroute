@@ -12,16 +12,41 @@ export function RegisterPage() {
   const [success, setSuccess] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
-  if (!loading && user) return <Navigate to="/" replace />
+  if (loading) {
+    return (
+      <div className="page center auth-page">
+        <div className="auth-brand">
+          <AppBrand centered />
+        </div>
+        <div className="auth-card">
+          <p className="muted">იტვირთება...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (user) return <Navigate to="/" replace />
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setSubmitting(true)
     setError(null)
-    const err = await signUp(email.trim(), password, fullName.trim())
-    if (err) setError(err)
-    else setSuccess(true)
-    setSubmitting(false)
+    
+    try {
+      const timeoutPromise = new Promise<string>((resolve) => 
+        setTimeout(() => resolve('მოთხოვნა ძალიან დიდხანს გრძელდება. სცადეთ თავიდან.'), 15000)
+      )
+      
+      const signUpPromise = signUp(email.trim(), password, fullName.trim())
+      const err = await Promise.race([signUpPromise, timeoutPromise])
+      
+      if (err) setError(err)
+      else setSuccess(true)
+    } catch (err) {
+      setError('შეცდომა დაფიქსირდა. გთხოვთ სცადოთ თავიდან.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   if (success) {

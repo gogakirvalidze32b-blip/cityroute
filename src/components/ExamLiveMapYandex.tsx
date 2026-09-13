@@ -12,20 +12,20 @@ import type { YMaps21GeoObject, YMaps21Map } from '@/types/yandex-maps-21-global
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 type MapLayers = {
-  trigger?: YMaps21GeoObject
-  pin?: YMaps21GeoObject
+  pinObjects?: YMaps21GeoObject[]
   user?: YMaps21GeoObject
 }
 
 type Props = {
   route: RouteWithPins
+  pins: PinRow[]
   userPos: LatLng
   heading: number
   nextPin: PinRow | null
   onFallback?: (reason: string) => void
 }
 
-export function ExamLiveMapYandex({ userPos, heading: _heading, nextPin, onFallback }: Props) {
+export function ExamLiveMapYandex({ pins, userPos, heading: _heading, nextPin, onFallback }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<YMaps21Map | null>(null)
   const layersRef = useRef<MapLayers>({})
@@ -35,7 +35,9 @@ export function ExamLiveMapYandex({ userPos, heading: _heading, nextPin, onFallb
 
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
-  const nextPinPulse = nextPin != null
+  
+  // პინი იციმციმოს მხოლოდ როცა ძალიან ახლოს ხარ (trigger distance-ის ფარგლებში)
+  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
 
   useEffect(() => {
     const apiKey = getYandexMapsApiKey()
@@ -110,37 +112,48 @@ export function ExamLiveMapYandex({ userPos, heading: _heading, nextPin, onFallb
 
     const layers = layersRef.current
 
-    if (layers.trigger) map.geoObjects.remove(layers.trigger)
-    if (layers.pin) map.geoObjects.remove(layers.pin)
-
-    if (!nextPin) {
-      layers.trigger = undefined
-      layers.pin = undefined
-      return
+    // Remove old pin objects
+    if (layers.pinObjects) {
+      layers.pinObjects.forEach((obj) => map.geoObjects.remove(obj))
+      layers.pinObjects = []
     }
 
-    layers.trigger = new ymaps.Circle(
-      [toYandex21Coords([nextPin.lat, nextPin.lng]), nextPin.trigger_distance_m],
-      {},
-      {
-        fillColor: 'rgba(20, 184, 166, 0.12)',
-        strokeColor: '#14b8a6',
-        strokeWidth: 2,
-      },
-    )
-    map.geoObjects.add(layers.trigger)
+    if (!pins || pins.length === 0) return
 
-    layers.pin = new ymaps.Placemark(
-      toYandex21Coords([nextPin.lat, nextPin.lng]),
-      {},
-      {
-        iconLayout: createPinLayout(ymaps, Boolean(nextPinPulse)),
-        iconShape: { type: 'Circle', coordinates: [0, 0], radius: 12 },
-        zIndex: 500,
-      },
-    )
-    map.geoObjects.add(layers.pin)
-  }, [nextPin, nextPinPulse, ready])
+    layers.pinObjects = []
+
+    // Render all pins with trigger zones
+    pins.forEach((pin) => {
+      const isNext = nextPin?.id === pin.id
+      const isPulse = isNext && Boolean(nextPinPulse)
+
+      // Trigger zone circle
+      const trigger = new ymaps.Circle(
+        [toYandex21Coords([pin.lat, pin.lng]), pin.trigger_distance_m],
+        {},
+        {
+          fillColor: isNext ? 'rgba(20, 184, 166, 0.12)' : 'rgba(16, 185, 129, 0.08)',
+          strokeColor: isNext ? '#14b8a6' : '#10b981',
+          strokeWidth: isNext ? 2 : 1.5,
+        },
+      )
+      map.geoObjects.add(trigger)
+      layers.pinObjects.push(trigger)
+
+      // Pin marker
+      const pinMarker = new ymaps.Placemark(
+        toYandex21Coords([pin.lat, pin.lng]),
+        {},
+        {
+          iconLayout: createPinLayout(ymaps, isPulse),
+          iconShape: { type: 'Circle', coordinates: [0, 0], radius: 12 },
+          zIndex: isNext ? 500 : 400,
+        },
+      )
+      map.geoObjects.add(pinMarker)
+      layers.pinObjects.push(pinMarker)
+    })
+  }, [pins, nextPin, nextPinPulse, ready])
 
   useEffect(() => {
     layersRef.current.user?.geometry?.setCoordinates(toYandex21Coords(userPos))

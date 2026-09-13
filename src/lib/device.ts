@@ -8,12 +8,23 @@ function randomId() {
 }
 
 export function getDeviceFingerprint(): string {
-  let fp = localStorage.getItem(STORAGE_KEY)
-  if (!fp) {
-    fp = randomId()
-    localStorage.setItem(STORAGE_KEY, fp)
+  try {
+    let fp = localStorage.getItem(STORAGE_KEY)
+    if (!fp) {
+      fp = randomId()
+      try {
+        localStorage.setItem(STORAGE_KEY, fp)
+      } catch (storageError) {
+        // თუ localStorage არ მუშაობს (private mode და სხვა), მაინც დავაბრუნოთ fp
+        console.warn('Could not save fingerprint to localStorage:', storageError)
+      }
+    }
+    return fp
+  } catch (err) {
+    // თუ localStorage საერთოდ არ არის ხელმისაწვდომი
+    console.warn('localStorage not accessible, generating temp fingerprint:', err)
+    return randomId()
   }
-  return fp
 }
 
 export type DeviceBindResult =

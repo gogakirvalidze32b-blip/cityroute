@@ -98,6 +98,13 @@ function InteractiveRoutePreviewMap({ route }: { route: RouteWithPins }) {
       </MapContainer>
       <div className="exam-preview__map-label">
         <strong>{route.name_ka}</strong>
+        {route.license_category && (
+          <span className="tag tag--category">
+            {route.license_category === 'B' && '🚗 B'}
+            {route.license_category === 'C' && '🚛 C'}
+            {route.license_category === 'C,D' && '🚛🚌 C+D'}
+          </span>
+        )}
         {route.official_label && <span>{route.official_label}</span>}
       </div>
     </div>

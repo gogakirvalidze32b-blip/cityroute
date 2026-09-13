@@ -56,6 +56,7 @@ export type Database = {
           polyline: [number, number][]
           sort_order: number
           active: boolean
+          license_category: string | null
         }
         Insert: Omit<Database['public']['Tables']['routes']['Row'], 'id'> & { id?: string }
         Update: Partial<Database['public']['Tables']['routes']['Row']>
