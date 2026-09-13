@@ -59,15 +59,9 @@ function DrivingCamera({
     }
 
     const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
-    const size = map.getSize()
-    if (size.x === 0 || size.y === 0) {
-      map.invalidateSize()
-      return
-    }
-
-    const projected = map.project(position, zoom)
-    projected.y += size.y * (0.5 - USER_SCREEN_Y)
-    map.setView(map.unproject(projected, zoom), zoom, { animate: true, duration: 0.2 })
+    
+    // Center user on map WITHOUT animation to prevent jumping
+    map.setView(position, zoom, { animate: false })
 
     const applyRotation = () => {
       const pane = map.getPane('mapPane')
@@ -152,12 +146,12 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
             <CircleMarker
               key={pin.id}
               center={[pin.lat, pin.lng]}
-              radius={isPulse ? 16 : 12}
+              radius={isPulse ? 20 : 14}
               pathOptions={{
-                color: isNext ? '#0f766e' : '#047857',
+                color: isNext ? '#0d9488' : '#047857',
                 fillColor: isNext ? '#5eead4' : '#10b981',
-                fillOpacity: 1,
-                weight: 2,
+                fillOpacity: isPulse ? 0.9 : 1,
+                weight: isPulse ? 3 : 2,
                 className: isPulse ? 'exam-pin-pulse' : undefined,
               }}
             />
