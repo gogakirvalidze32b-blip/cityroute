@@ -1788,6 +1788,7 @@ button:disabled {
   flex-direction: column;
   padding: 0;
   background: #fff;
+  width: 100%;
 }
 
 .exam-preview__map {
@@ -1796,6 +1797,8 @@ button:disabled {
   position: relative;
   background: #fff;
   width: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (min-width: 900px) {
@@ -1807,19 +1810,21 @@ button:disabled {
 .exam-preview__map--official {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  justify-content: stretch;
+  align-items: center;
+  justify-content: center;
   background: #fff;
   padding: 0;
   width: 100%;
+  height: 100%;
+  flex: 1;
 }
 
 .exam-preview__official-viewport {
-  flex: 1;
   width: 100%;
-  aspect-ratio: 1209 / 672;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   margin: 0;
-  min-height: 0;
   position: relative;
   overflow: hidden;
   touch-action: none;
@@ -1827,6 +1832,47 @@ button:disabled {
   background: #fff;
   border-radius: 0;
   box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Portrait mode: use aspect ratio to prevent distortion */
+@media (orientation: portrait) {
+  .exam-preview__official-viewport {
+    aspect-ratio: 1209 / 672;
+    height: auto;
+  }
+}
+
+/* Landscape mode: fill available space while maintaining aspect ratio via object-fit */
+@media (orientation: landscape) {
+  .exam-preview__official-viewport {
+    width: 100%;
+    height: 100%;
+  }
+  
+  .exam-preview__map {
+    min-height: calc(100vh - 200px);
+  }
+}
+
+/* Tablet landscape optimization */
+@media (orientation: landscape) and (min-width: 600px) and (max-width: 1024px) {
+  .exam-preview__map {
+    min-height: calc(100vh - 180px);
+  }
+  
+  .exam-preview__panel {
+    padding: 0.75rem 1rem max(0.75rem, calc(env(safe-area-inset-bottom) + 0.35rem)) !important;
+  }
+}
+
+/* Large landscape screens (desktop, car monitors) */
+@media (orientation: landscape) and (min-width: 1025px) {
+  .exam-preview__map {
+    min-height: calc(100vh - 160px);
+  }
 }
 
 .exam-preview__official-backdrop {
