@@ -14,19 +14,19 @@ export const ROUTE_OFFICIAL_PREVIEW_MAPS: Partial<Record<string, RouteOfficialPr
     height: 672,
   },
   'route-4': {
-    src: '/routes/route-2-official-map.png',
-    alt: 'მარშრუტი 2 — ოფიციალური საგამოცდო რუკა, ყვითელი ზოლი',
-    width: 1206,
-    height: 670,
-  },
-  'route-2': {
     src: '/routes/route-3-official-map.png',
-    alt: 'მარშრუტი 3 — ოფიციალური საგამოცდო რუკა, ყვითელი ზოლი',
+    alt: 'მარშრუტი 2 — ოფიციალური საგამოცდო რუკა, ყვითელი ზოლი',
     width: 1213,
     height: 673,
   },
+  'route-2': {
+    src: '/routes/route-2-official-map.png',
+    alt: 'მარშრუტი 3 — ოფიციალური საგამოცდო რუკა, ყვითელი ზოლი',
+    width: 1206,
+    height: 670,
+  },
   'route-4-preview': {
-    src: '/routes/route-4-preview-official-map.jpg',
+    src: '/routes/route-4-official-map.png',
     alt: 'მარშრუტი 4 — ოფიციალური საგამოცდო რუკა, ყვითელი ზოლი',
     width: 1210,
     height: 674,
