@@ -40,27 +40,47 @@ function DrivingCamera({
   position,
   heading,
   followPaused,
+  onRecenter,
 }: {
   position: LatLng
   heading: number
   followPaused: boolean
+  onRecenter?: () => void
 }) {
   const map = useMap()
   const headingRef = useRef(heading)
   const hasInitialized = useRef(false)
+  const forceCenterRef = useRef(false)
 
   useEffect(() => {
     headingRef.current = heading
   }, [heading])
 
+  // Expose recenter function
   useEffect(() => {
-    if (followPaused) {
+    if (onRecenter) {
+      (window as any).__mapRecenter = () => {
+        forceCenterRef.current = true
+        const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
+        map.setView(position, zoom, { animate: false })
+        setTimeout(() => {
+          forceCenterRef.current = false
+        }, 100)
+      }
+    }
+    return () => {
+      delete (window as any).__mapRecenter
+    }
+  }, [map, position, onRecenter])
+
+  useEffect(() => {
+    if (followPaused && !forceCenterRef.current) {
       resetMapRotation(map)
       return
     }
 
     // Initialize zoom only once
-    if (!hasInitialized.current) {
+    if (!hasInitialized.current || forceCenterRef.current) {
       const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
       map.setView(position, zoom, { animate: false })
       hasInitialized.current = true
@@ -125,14 +145,27 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
   // პინი იციმციმოს მხოლოდ როცა ძალიან ახლოს ხარ (trigger distance-ის ფარგლებში)
   const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
 
+  const handleRecenter = () => {
+    setFollowPaused(false)
+    // Force instant recenter
+    if ((window as any).__mapRecenter) {
+      (window as any).__mapRecenter()
+    }
+  }
+
   return (
     <div className="exam-live-map">
       {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
-      {followPaused && (
-        <button type="button" className="map-recenter-btn exam-live-map__recenter" onClick={() => setFollowPaused(false)}>
-          ⊕ ცენტრში
-        </button>
-      )}
+      
+      {/* Always show recenter button */}
+      <button 
+        type="button" 
+        className="map-recenter-btn exam-live-map__recenter" 
+        onClick={handleRecenter}
+        title="ცენტრში დაბრუნება"
+      >
+        🎯
+      </button>
 
       {nextPin && (
         <div className="exam-live-map__hud">
@@ -174,7 +207,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
         <Marker position={userPos} icon={navArrowIcon} zIndexOffset={1000} />
 
         <MapFollowPause onPause={() => setFollowPaused(true)} />
-        <DrivingCamera position={userPos} heading={heading} followPaused={followPaused} />
+        <DrivingCamera position={userPos} heading={heading} followPaused={followPaused} onRecenter={handleRecenter} />
       </MapContainer>
     </div>
   )
