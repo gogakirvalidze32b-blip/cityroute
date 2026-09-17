@@ -47,6 +47,7 @@ function DrivingCamera({
 }) {
   const map = useMap()
   const headingRef = useRef(heading)
+  const hasInitialized = useRef(false)
 
   useEffect(() => {
     headingRef.current = heading
@@ -58,10 +59,22 @@ function DrivingCamera({
       return
     }
 
-    const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
-    
-    // Center user on map WITHOUT animation to prevent jumping
-    map.setView(position, zoom, { animate: false })
+    // Initialize zoom only once
+    if (!hasInitialized.current) {
+      const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
+      map.setView(position, zoom, { animate: false })
+      hasInitialized.current = true
+    } else {
+      // After initialization, ONLY pan - NEVER call setView
+      // This keeps the marker perfectly centered without jumping
+      const currentCenter = map.getCenter()
+      const distance = map.distance(currentCenter, position)
+      
+      // Only pan if position changed significantly (> 1 meter)
+      if (distance > 1) {
+        map.panTo(position, { animate: false, noMoveStart: true, duration: 0 })
+      }
+    }
 
     const applyRotation = () => {
       const pane = map.getPane('mapPane')

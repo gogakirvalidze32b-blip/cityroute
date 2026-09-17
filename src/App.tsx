@@ -4,10 +4,12 @@ import { PlanGate } from '@/components/PlanGate'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { HomePage } from '@/pages/HomePage'
 import { LoginPage } from '@/pages/LoginPage'
+import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
+import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { PlanSelectionPage } from '@/pages/PlanSelectionPage'
 import { PaymentReturnPage } from '@/pages/PaymentReturnPage'
-import { DemoPaymentPage } from '@/pages/DemoPaymentPage'
-import { DemoHomePage } from '@/pages/DemoHomePage'
+import { DemoPreviewPage } from '@/pages/DemoPreviewPage'
+import { PrivacyPolicyPage } from '@/pages/PrivacyPolicyPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { RoutePage } from '@/pages/RoutePage'
 import { DebugLoginPage } from '@/pages/DebugLoginPage'
@@ -20,10 +22,12 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/debug-login" element={<DebugLoginPage />} />
           <Route path="/payment/return" element={<PaymentReturnPage />} />
-          <Route path="/demo-payment" element={<DemoPaymentPage />} />
-          <Route path="/demo-home" element={<DemoHomePage />} />
+          <Route path="/demo-preview" element={<DemoPreviewPage />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/choose-plan" element={<PlanSelectionPage />} />
             <Route element={<PlanGate />}>

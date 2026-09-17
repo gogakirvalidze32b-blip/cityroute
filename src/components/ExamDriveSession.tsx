@@ -20,6 +20,12 @@ import {
   type ExamSessionSummary,
 } from '@/lib/exam-session'
 import {
+  loadActiveExam,
+  saveActiveExam,
+  clearActiveExam,
+  hasSavedExam,
+} from '@/lib/exam-persistence'
+import {
   distanceToPinMeters,
   formatGpsError,
   getGpsEnvironmentIssue,
@@ -55,26 +61,29 @@ type Props = {
 
 export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const features = usePlanFeatures()
-  const [phase, setPhase] = useState<Phase>('preview')
+  
+  // Try to restore saved exam state
+  const savedState = useMemo(() => loadActiveExam(route.id), [route.id])
+  const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
   const [driveView, setDriveView] = useState<ExamDriveView>('map')
-  const [exam, setExam] = useState(() => createExamSession(route.id, route.name_ka))
+  const [exam, setExam] = useState(() => savedState?.exam || createExamSession(route.id, route.name_ka))
   const [examSummary, setExamSummary] = useState<ExamSessionSummary | null>(null)
   const [lastHistory] = useState(() => loadExamHistory(route.id))
 
-  const [gpsStarted, setGpsStarted] = useState(false)
+  const [gpsStarted, setGpsStarted] = useState(savedState ? true : false)
   const [gpsStarting, setGpsStarting] = useState(false)
   const [gpsError, setGpsError] = useState<string | null>(() => getGpsEnvironmentIssue())
   const [rawPos, setRawPos] = useState<GpsPosition | null>(null)
-  const [userPos, setUserPos] = useState<LatLng | null>(null)
-  const [heading, setHeading] = useState(0)
-  const [speedKmh, setSpeedKmh] = useState(0)
-  const [elapsedMs, setElapsedMs] = useState(0)
+  const [userPos, setUserPos] = useState<LatLng | null>(savedState?.userPos || null)
+  const [heading, setHeading] = useState(savedState?.heading || 0)
+  const [speedKmh, setSpeedKmh] = useState(savedState?.speedKmh || 0)
+  const [elapsedMs, setElapsedMs] = useState(savedState?.elapsedMs || 0)
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
 
-  const triggeredRef = useRef<Set<string>>(new Set())
+  const triggeredRef = useRef<Set<string>>(savedState ? new Set(savedState.triggeredPins) : new Set())
   const releaseWake = useRef<(() => void) | null>(null)
-  const sessionStartRef = useRef(0)
+  const sessionStartRef = useRef(savedState ? Date.now() - savedState.elapsedMs : 0)
   const prevGpsRef = useRef<GpsPosition | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
 
@@ -182,6 +191,33 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     return () => window.clearInterval(id)
   }, [phase])
 
+  // Auto-save exam state every 5 seconds when active
+  useEffect(() => {
+    if (phase !== 'active') return
+    
+    const saveState = () => {
+      saveActiveExam({
+        routeId: route.id,
+        routeName: route.name_ka,
+        phase: 'active',
+        exam,
+        userPos,
+        heading,
+        speedKmh,
+        elapsedMs,
+        triggeredPins: Array.from(triggeredRef.current),
+        savedAt: Date.now(),
+      })
+    }
+
+    // Save immediately
+    saveState()
+
+    // Then save every 5 seconds
+    const id = window.setInterval(saveState, 5000)
+    return () => window.clearInterval(id)
+  }, [phase, route.id, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs])
+
   useEffect(() => {
     if (!gpsStarted) return
     return watchGps(
@@ -274,6 +310,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setPhase('summary')
     releaseWake.current?.()
     audioEngine.stopAll()
+    clearActiveExam() // Clear saved state when finishing
     // Play success audio only if passed (not failed)
     const passed = !summary.failedMinor && summary.severeTotal === 0
     if (passed) {
@@ -289,6 +326,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setNextPin(sortedPins[0] ?? null)
     setLastSpoken(null)
     setElapsedMs(0)
+    clearActiveExam() // Clear saved state when restarting
   }
 
   const nextPinDistanceLabel =
@@ -357,6 +395,22 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         <div className="exam-preview">
           <RoutePreviewMap route={route} />
           <div className="exam-preview__panel">
+            {savedState && (
+              <div style={{ 
+                background: '#fef3c7', 
+                padding: '0.75rem', 
+                borderRadius: '8px', 
+                marginBottom: '0.5rem',
+                border: '2px solid #f59e0b'
+              }}>
+                <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#92400e' }}>
+                  ⏱️ გაქვთ დაუსრულებელი სესია
+                </p>
+                <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#78350f' }}>
+                  დრო: {formatExamDuration(savedState.elapsedMs)} · შეცდომები: {Object.values(savedState.exam.counts).reduce((sum, c) => sum + c.minor + c.severe, 0)}
+                </p>
+              </div>
+            )}
             {gpsError && <p className="error-text">{gpsError}</p>}
             {gpsStarted && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
@@ -370,9 +424,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
               </div>
             )}
             <button type="button" className="nav-start-btn" onClick={() => void handleStartSession()} disabled={gpsStarting}>
-              {gpsStarting ? 'GPS იტვირთება...' : '▶ გამოცდის დაწყება'}
+              {gpsStarting ? 'GPS იტვირთება...' : savedState ? '▶ გაგრძელება' : '▶ გამოცდის დაწყება'}
             </button>
-            {lastHistory[0] && features.errorPanel && (
+            {lastHistory[0] && features.errorPanel && !savedState && (
               <p className="session-hint">
                 ბოლო: {formatExamDuration(lastHistory[0].elapsedMs)} · ქვედი {lastHistory[0].minorTotal} · მძიმე{' '}
                 {lastHistory[0].severeTotal}
