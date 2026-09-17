@@ -7,7 +7,7 @@ import { useAuth } from '@/context/AuthContext'
 import { accessLabel, routeSourceLabel } from '@/types/database'
 
 import { useRoutes } from '@/hooks/useRoutes'
-import { planName } from '@/data/subscription-plans'
+import { planName, calculatePrice } from '@/data/subscription-plans'
 import { useState } from 'react'
 
 export function HomePage() {
@@ -15,6 +15,9 @@ export function HomePage() {
   const { routes, source } = useRoutes()
   const onTrial = profile?.subscription_status === 'trial' && hasAccess
   const [paymentError, setPaymentError] = useState<string | null>(null)
+  
+  const deviceSlots = profile?.device_slots ?? 1
+  const monthlyPrice = profile?.subscription_plan ? calculatePrice(profile.subscription_plan, deviceSlots) : 99
 
   function handlePaymentInitiated(paymentId: string, paymentUrl: string) {
     console.log('Payment initiated:', paymentId, paymentUrl)
@@ -45,14 +48,14 @@ export function HomePage() {
           <AppBrand centered />
           <h1>საცდელი პერიოდი დასრულებულია</h1>
           <p className="muted plan-page__lead">
-            გააქტიურე გამოწერა - 99 ₾/თვე
+            გააქტიურე გამოწერა - {monthlyPrice} ₾/თვე
           </p>
           {profile && <p className="home-trial">{accessLabel(profile)}</p>}
         </header>
 
         <div className="plan-summary">
           <h2>პრემიუმ პაკეტი</h2>
-          <p className="plan-price">99 ₾/თვე</p>
+          <p className="plan-price">{monthlyPrice} ₾/თვე</p>
           <ul className="plan-features">
             <li>GPS ხმოვანი მარშრუტი</li>
             <li>Live რუკა მძღოლობისას</li>
@@ -60,6 +63,11 @@ export function HomePage() {
             <li>გადართვა: რუკა ↔ შეცდომები</li>
             <li>ყველა მომავალი ფუნქცია</li>
           </ul>
+          {deviceSlots > 1 && (
+            <p className="muted" style={{ textAlign: 'center', marginTop: '0.5rem' }}>
+              {deviceSlots} მოწყობილობა · 99 ₾/მანქანა
+            </p>
+          )}
         </div>
 
         <footer className="plan-page__footer">
@@ -71,13 +79,13 @@ export function HomePage() {
           <div className="payment-buttons">
             <PaymentButton
               provider="tbc"
-              amount={99}
+              amount={monthlyPrice}
               onPaymentInitiated={handlePaymentInitiated}
               onError={handlePaymentError}
             />
             <PaymentButton
               provider="bog"
-              amount={99}
+              amount={monthlyPrice}
               onPaymentInitiated={handlePaymentInitiated}
               onError={handlePaymentError}
             />

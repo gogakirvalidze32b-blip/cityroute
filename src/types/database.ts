@@ -21,6 +21,7 @@ export type Database = {
           subscription_status: 'trial' | 'active' | 'expired' | 'cancelled'
           subscription_expires_at: string
           subscription_plan: SubscriptionPlan | null
+          device_slots: number
           device_fingerprint: string | null
           device_bound_at: string | null
           created_at: string

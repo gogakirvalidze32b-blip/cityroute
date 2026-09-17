@@ -4,7 +4,7 @@ export type PlanDefinition = {
   id: SubscriptionPlan
   name: string
   tagline: string
-  price: number
+  pricePerDevice: number
   badge?: string
   highlights: string[]
 }
@@ -14,7 +14,7 @@ export const SUBSCRIPTION_PLANS: PlanDefinition[] = [
     id: 'premium',
     name: 'პრემიუმ',
     tagline: 'სრული ფუნქციონალი',
-    price: 99,
+    pricePerDevice: 99,
     highlights: [
       'GPS ხმოვანი მარშრუტი',
       'Live რუკა მძღოლობისას',
@@ -33,10 +33,15 @@ export function planById(id: SubscriptionPlan): PlanDefinition {
   return SUBSCRIPTION_PLANS.find((p) => p.id === id) ?? SUBSCRIPTION_PLANS[0]
 }
 
-export function planPriceLabel(plan: SubscriptionPlan): string {
-  return `${planById(plan).price} ₾/თვე`
+export function planPriceLabel(plan: SubscriptionPlan, deviceSlots = 1): string {
+  const total = planById(plan).pricePerDevice * deviceSlots
+  return `${total} ₾/თვე`
 }
 
 export function planName(plan: SubscriptionPlan): string {
   return planById(plan).name
+}
+
+export function calculatePrice(plan: SubscriptionPlan, deviceSlots: number): number {
+  return planById(plan).pricePerDevice * deviceSlots
 }

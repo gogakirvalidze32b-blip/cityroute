@@ -3034,3 +3034,97 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+
+/* Device Selector */
+.device-selector {
+  margin: 1.5rem 0;
+  padding: 0 1rem;
+}
+
+.device-selector__label {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  color: #e2e8f0;
+}
+
+.device-selector__buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.device-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1rem 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.device-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.device-btn--active {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border-color: #10b981;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.device-btn--active:hover {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  transform: translateY(-2px);
+}
+
+.device-btn__icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.device-btn strong {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.device-btn__price {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.device-btn--active strong,
+.device-btn--active .device-btn__price {
+  color: #fff;
+}
+
+.device-selector__note {
+  margin: 0;
+  font-size: 0.85rem;
+  text-align: center;
+  color: #94a3b8;
+}
+
+/* Premium CTA button */
+.premium-cta {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4) !important;
+  font-weight: 700 !important;
+  font-size: 1.05rem !important;
+}
+
+.premium-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5) !important;
+}
