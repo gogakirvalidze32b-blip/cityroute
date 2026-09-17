@@ -63,9 +63,10 @@ function DrivingCamera({
         forceCenterRef.current = true
         const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
         map.setView(position, zoom, { animate: false })
+        // Block pan logic for 300ms to prevent drift
         setTimeout(() => {
           forceCenterRef.current = false
-        }, 100)
+        }, 300)
       }
     }
     return () => {
@@ -90,8 +91,8 @@ function DrivingCamera({
       const currentCenter = map.getCenter()
       const distance = map.distance(currentCenter, position)
       
-      // Only pan if position changed significantly (> 1 meter)
-      if (distance > 1) {
+      // Only pan if position changed significantly (> 0.5 meters)
+      if (distance > 0.5) {
         map.panTo(position, { animate: false, noMoveStart: true, duration: 0 })
       }
     }
@@ -146,11 +147,12 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
   const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
 
   const handleRecenter = () => {
-    setFollowPaused(false)
     // Force instant recenter
     if ((window as any).__mapRecenter) {
       (window as any).__mapRecenter()
     }
+    // Resume following immediately after recenter
+    setFollowPaused(false)
   }
 
   return (
