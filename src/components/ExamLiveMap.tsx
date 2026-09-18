@@ -10,8 +10,8 @@ type Props = {
   nextPin: PinRow | null
 }
 
-// Toggle between Leaflet (old) and MapLibre+Mapbox (new)
-const USE_MAPLIBRE = true // ← MapLibre GL for smooth 60fps rotation, no black corners! 🚀
+// Toggle between Leaflet (optimized) and MapLibre+Mapbox
+const USE_MAPLIBRE = false // ← Back to Leaflet - properly optimized for Android tablets
 
 /** Live GPS map — MapLibre/Leaflet, follows user while driving. */
 export function ExamLiveMap(props: Props) {
