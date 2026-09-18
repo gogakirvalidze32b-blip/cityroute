@@ -63,10 +63,10 @@ function DrivingCamera({
         forceCenterRef.current = true
         const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
         map.setView(position, zoom, { animate: false })
-        // Block pan logic for 300ms to prevent drift
+        // Block ALL pan logic for 500ms after recenter
         setTimeout(() => {
           forceCenterRef.current = false
-        }, 300)
+        }, 500)
       }
     }
     return () => {
@@ -85,6 +85,19 @@ function DrivingCamera({
       const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
       map.setView(position, zoom, { animate: false })
       hasInitialized.current = true
+      
+      // If force centering, skip pan logic entirely
+      if (forceCenterRef.current) {
+        const applyRotation = () => {
+          const pane = map.getPane('mapPane')
+          if (!pane) return
+          const anchor = map.latLngToContainerPoint(position)
+          pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
+          pane.style.transform = `rotate(${-headingRef.current}deg)`
+        }
+        applyRotation()
+        return // Exit early - no pan logic
+      }
     } else {
       // After initialization, ONLY pan - NEVER call setView
       // This keeps the marker perfectly centered without jumping
