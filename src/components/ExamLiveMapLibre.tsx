@@ -4,7 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
-const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'DEMO_KEY'
+const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'get_your_own_OpIi9ZULNHzrESv6T2vL'
 
 // Map styles - change this to switch map appearance
 const MAP_STYLES = {
