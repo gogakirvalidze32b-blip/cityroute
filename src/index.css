@@ -1340,6 +1340,10 @@ button:disabled {
   min-height: 12rem;
   background: #1e293b !important; /* Force dark background */
   position: relative;
+  /* Performance optimization */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform;
 }
 
 /* Force dark background on leaflet container */
@@ -1350,6 +1354,17 @@ button:disabled {
 /* Hide white flash on tile loading */
 .exam-live-map__canvas .leaflet-tile-container {
   background: #1e293b !important;
+}
+
+/* Performance optimization for map pane */
+.exam-live-map__canvas .leaflet-map-pane {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* Optimize marker rendering */
+.exam-live-map__canvas .leaflet-marker-pane {
+  transform: translateZ(0);
 }
 
 .exam-live-map__canvas::before {

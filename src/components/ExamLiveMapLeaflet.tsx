@@ -13,7 +13,7 @@ const USER_SCREEN_Y = 0.5 // GPS marker in center
 function createNavArrowIcon(counterHeading: number) {
   return L.divIcon({
     className: 'nav-arrow-marker',
-    html: `<div class="nav-arrow-wrap" style="transform:rotate(${counterHeading}deg)"><div class="nav-arrow"></div><div class="nav-arrow-dot"></div></div>`,
+    html: `<div class="nav-arrow-wrap" style="transform:rotate(${counterHeading}deg); will-change: transform;"><div class="nav-arrow"></div><div class="nav-arrow-dot"></div></div>`,
     iconSize: [36, 36],
     iconAnchor: [18, 22],
   })
@@ -24,6 +24,7 @@ function resetMapRotation(map: L.Map) {
   if (!pane) return
   pane.style.transform = ''
   pane.style.transformOrigin = ''
+  pane.style.willChange = ''
 }
 
 function MapSizeFix() {
@@ -51,6 +52,7 @@ function DrivingCamera({
   const headingRef = useRef(heading)
   const hasInitialized = useRef(false)
   const forceCenterRef = useRef(false)
+  const rafRef = useRef<number>()
 
   useEffect(() => {
     headingRef.current = heading
@@ -94,40 +96,52 @@ function DrivingCamera({
           const anchor = map.latLngToContainerPoint(position)
           pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
           pane.style.transform = `rotate(${-headingRef.current}deg)`
+          pane.style.willChange = 'transform'
         }
         applyRotation()
         return // Exit early - no pan logic
       }
     } else {
       // After initialization, ONLY pan - NEVER call setView
-      // This keeps the marker perfectly centered without jumping
       const currentCenter = map.getCenter()
       const distance = map.distance(currentCenter, position)
       
       // Only pan if position changed significantly (> 0.5 meters)
       if (distance > 0.5) {
-        map.panTo(position, { animate: false, noMoveStart: true, duration: 0 })
+        // Use requestAnimationFrame for smooth pan
+        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+        rafRef.current = requestAnimationFrame(() => {
+          map.panTo(position, { animate: false, noMoveStart: true, duration: 0 })
+        })
       }
     }
 
+    // Optimized rotation with RAF
     const applyRotation = () => {
-      const pane = map.getPane('mapPane')
-      if (!pane) return
-      const anchor = map.latLngToContainerPoint(position)
-      pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
-      pane.style.transform = `rotate(${-headingRef.current}deg)`
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      rafRef.current = requestAnimationFrame(() => {
+        const pane = map.getPane('mapPane')
+        if (!pane) return
+        const anchor = map.latLngToContainerPoint(position)
+        pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
+        pane.style.transform = `rotate(${-headingRef.current}deg)`
+        pane.style.willChange = 'transform'
+      })
     }
 
     applyRotation()
-    map.on('move', applyRotation)
-    map.on('moveend', applyRotation)
+    
     return () => {
-      map.off('move', applyRotation)
-      map.off('moveend', applyRotation)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
   }, [map, position, followPaused])
 
-  useEffect(() => () => resetMapRotation(map), [map])
+  useEffect(() => {
+    return () => {
+      resetMapRotation(map)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [map])
 
   return null
 }
