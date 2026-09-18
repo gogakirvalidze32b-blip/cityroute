@@ -982,9 +982,21 @@ button:disabled {
   transform: translate(-50%, -50%);
   z-index: 1000;
   pointer-events: none;
+  width: 0;
+  height: 0;
+  /* No transition on position - it never moves */
+}
+
+.nav-arrow-rotator {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 36px;
   height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
   will-change: transform;
+  /* Only rotation should transition */
   transition: transform 0.15s ease-out;
 }
 

@@ -70,11 +70,11 @@ function DrivingCamera({
         rafRef.current = requestAnimationFrame(() => {
           map.panTo(state.position, { animate: false, noMoveStart: true, duration: 0 })
           
-          // Apply rotation
+          // Apply rotation around screen center (not GPS position)
           const pane = map.getPane('mapPane')
           if (pane) {
-            const anchor = map.latLngToContainerPoint(state.position)
-            pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
+            const center = map.getSize().divideBy(2) // Fixed screen center
+            pane.style.transformOrigin = `${center.x}px ${center.y}px`
             pane.style.transform = `rotate(${-state.heading}deg)`
             pane.style.willChange = 'transform'
           }
@@ -155,11 +155,44 @@ function DrivingCamera({
   return null
 }
 
-function MapFollowPause({ onPause }: { onPause: () => void }) {
+function MapFollowPause({ onPause, isNavigating }: { onPause: () => void; isNavigating: boolean }) {
+  const map = useMap()
+  
+  // Block manual pan/zoom during active navigation
+  useEffect(() => {
+    if (isNavigating) {
+      // Disable all user interactions during navigation
+      map.dragging.disable()
+      map.touchZoom.disable()
+      map.doubleClickZoom.disable()
+      map.scrollWheelZoom.disable()
+      map.boxZoom.disable()
+      map.keyboard.disable()
+    } else {
+      // Re-enable when navigation paused
+      map.dragging.enable()
+      map.touchZoom.enable()
+      map.doubleClickZoom.enable()
+      map.scrollWheelZoom.enable()
+      map.boxZoom.enable()
+      map.keyboard.enable()
+    }
+  }, [map, isNavigating])
+  
+  // Only trigger pause events when navigation is active
   useMapEvents({
-    dragstart: onPause,
-    zoomstart: onPause,
+    dragstart: () => {
+      if (isNavigating) {
+        onPause()
+      }
+    },
+    zoomstart: () => {
+      if (isNavigating) {
+        onPause()
+      }
+    },
   })
+  
   return null
 }
 
@@ -195,10 +228,12 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
     <div className="exam-live-map">
       {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
       
-      {/* Fixed center arrow overlay - CSS only, no Leaflet marker */}
-      <div className="nav-arrow-overlay" style={{ transform: `rotate(${heading}deg)` }}>
-        <div className="nav-arrow-fixed"></div>
-        <div className="nav-arrow-dot-fixed"></div>
+      {/* Fixed center arrow overlay - perfectly centered, only rotates */}
+      <div className="nav-arrow-overlay">
+        <div className="nav-arrow-rotator" style={{ transform: `rotate(${heading}deg)` }}>
+          <div className="nav-arrow-fixed"></div>
+          <div className="nav-arrow-dot-fixed"></div>
+        </div>
       </div>
       
       {/* Always show recenter button */}
@@ -248,7 +283,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
           )
         })}
 
-        <MapFollowPause onPause={() => setFollowPaused(true)} />
+        <MapFollowPause onPause={() => setFollowPaused(true)} isNavigating={!followPaused} />
         <DrivingCamera 
           position={userPos} 
           heading={heading} 

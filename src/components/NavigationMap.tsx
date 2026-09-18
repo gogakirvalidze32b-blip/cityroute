@@ -196,8 +196,9 @@ function NavigationCamera({
       }
       const pane = map.getPane('mapPane')
       if (!pane) return
-      const anchor = map.latLngToContainerPoint(position)
-      pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
+      // Rotate around screen center, not GPS position
+      const center = map.getSize().divideBy(2)
+      pane.style.transformOrigin = `${center.x}px ${center.y}px`
       pane.style.transform = `rotate(${-headingRef.current}deg)`
     }
 
