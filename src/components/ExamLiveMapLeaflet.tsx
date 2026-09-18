@@ -25,7 +25,7 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 
 const YANDEX_STREET_ZOOM = 17
 const MAP_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-const OVERSCAN_PADDING = 300 // Extra pixels to prevent black corners during rotation
+const OVERSCAN_PADDING = 500 // Increased to prevent black corners during rotation
 
 // ==================== CAMERA CONTROLLER ====================
 // Handles smooth GPS following, interpolation, and rotation
