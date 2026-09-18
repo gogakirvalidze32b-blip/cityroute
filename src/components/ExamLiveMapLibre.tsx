@@ -52,7 +52,6 @@ type Props = {
 export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }: Props) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
-  const userMarker = useRef<maplibregl.Marker | null>(null)
   const [mapLoaded, setMapLoaded] = useState(false)
 
   const pins = route.pins
@@ -76,9 +75,12 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
       accessToken: MAP_PROVIDER === 'mapbox' ? MAPBOX_API_KEY : undefined,
       center: [userPos[1], userPos[0]],
       zoom: 17,
-      pitch: 0,
-      bearing: 0,
+      pitch: 0, // Keep flat for driving
+      bearing: -heading, // Rotate map, not arrow
       attributionControl: false,
+      // Performance optimizations
+      maxTileCacheSize: 100,
+      renderWorldCopies: false,
     })
 
     map.current.on('load', () => {
@@ -96,42 +98,16 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     }
   }, [])
 
-  // Add user marker with arrow
+  // Update camera to follow user - smooth 60fps animation
   useEffect(() => {
     if (!map.current || !mapLoaded) return
 
-    // Create custom arrow element
-    const el = document.createElement('div')
-    el.className = 'maptiler-user-marker'
-    el.innerHTML = `
-      <div class="nav-arrow-wrap" style="transform: rotate(${heading}deg); will-change: transform;">
-        <div class="nav-arrow"></div>
-        <div class="nav-arrow-dot"></div>
-      </div>
-    `
-
-    if (userMarker.current) {
-      userMarker.current.remove()
-    }
-
-    userMarker.current = new maplibregl.Marker({ element: el, anchor: 'center' })
-      .setLngLat([userPos[1], userPos[0]])
-      .addTo(map.current)
-
-    return () => {
-      userMarker.current?.remove()
-    }
-  }, [mapLoaded, userPos, heading])
-
-  // Update camera to follow user
-  useEffect(() => {
-    if (!map.current || !mapLoaded) return
-
+    // MapLibre handles smooth interpolation internally
     map.current.easeTo({
       center: [userPos[1], userPos[0]],
-      bearing: -heading,
-      duration: 0,
-      easing: (t) => t,
+      bearing: -heading, // Rotate map to keep arrow pointing up
+      duration: 200, // Smooth animation
+      easing: (t) => t, // Linear easing
     })
   }, [mapLoaded, userPos, heading])
 
@@ -140,7 +116,7 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     if (!map.current || !mapLoaded) return
 
     // Remove existing pin markers
-    const existingMarkers = document.querySelectorAll('.maptiler-pin-marker')
+    const existingMarkers = document.querySelectorAll('.maplibre-pin-marker')
     existingMarkers.forEach((marker) => marker.remove())
 
     pins.forEach((pin) => {
@@ -148,7 +124,7 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
       const isPulse = isNext && nextPinPulse
 
       const el = document.createElement('div')
-      el.className = 'maptiler-pin-marker'
+      el.className = 'maplibre-pin-marker'
       el.style.width = isPulse ? '40px' : '28px'
       el.style.height = isPulse ? '40px' : '28px'
       el.style.borderRadius = '50%'
@@ -156,6 +132,7 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
       el.style.border = `${isPulse ? 3 : 2}px solid ${isNext ? '#0d9488' : '#047857'}`
       el.style.opacity = isPulse ? '0.9' : '1'
       el.style.transition = 'all 0.3s ease'
+      el.style.boxShadow = isPulse ? '0 0 20px rgba(94, 234, 212, 0.6)' : 'none'
 
       new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([pin.lng, pin.lat])
@@ -176,6 +153,14 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
   return (
     <div className="exam-live-map">
       {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
+
+      {/* Fixed center arrow overlay - NEVER moves, always at screen center */}
+      <div className="nav-arrow-overlay">
+        <div className="nav-arrow-rotator">
+          <div className="nav-arrow-fixed"></div>
+          <div className="nav-arrow-dot-fixed"></div>
+        </div>
+      </div>
 
       <button
         type="button"

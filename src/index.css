@@ -3266,20 +3266,33 @@ button:disabled {
 }
 
 /* MapLibre GL styling */
-.maptiler-user-marker {
-  width: 36px;
-  height: 36px;
+.maplibre-pin-marker {
   cursor: pointer;
 }
 
 .maplibregl-map {
   font-family: inherit;
+  /* Prevent black corners during rotation */
+  background: #1e293b !important;
 }
 
-.maplibregl-ctrl-attrib {
-  display: none !important;
+.maplibregl-canvas-container {
+  /* Prevent black corners - expand canvas */
+  width: 200% !important;
+  height: 200% !important;
+  position: absolute;
+  top: -50%;
+  left: -50%;
 }
 
 .maplibregl-canvas {
   outline: none;
+  /* Force hardware acceleration */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform;
+}
+
+.maplibregl-ctrl-attrib {
+  display: none !important;
 }
