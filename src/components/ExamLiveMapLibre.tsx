@@ -5,7 +5,7 @@ import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'get_your_own_OpIi9ZULNHzrESv6T2vL'
-const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY || ''
+const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY || 'pk.eyJ1IjoiZHJ1bXN0aWNrIiwiYSI6ImNtdTdlMWM1dTBrMmMyeHNsZjdiOGtkaW4ifQ.W_M3-S-HKDgKsVIigf6Zjg'
 
 // Map provider - switch between 'mapbox' or 'maptiler'
 const MAP_PROVIDER = 'mapbox' as const
