@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Circle, CircleMarker, MapContainer, Marker, useMap, useMapEvents } from 'react-leaflet'
+import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
@@ -7,17 +7,12 @@ import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
+import { GpsInterpolator, type GpsState } from '@/lib/gps-interpolation'
+import { snapToRoute } from '@/lib/route-snapping'
 
 const USER_SCREEN_Y = 0.5 // GPS marker in center
 
-function createNavArrowIcon(counterHeading: number) {
-  return L.divIcon({
-    className: 'nav-arrow-marker',
-    html: `<div class="nav-arrow-wrap" style="transform:rotate(${counterHeading}deg); will-change: transform;"><div class="nav-arrow"></div><div class="nav-arrow-dot"></div></div>`,
-    iconSize: [36, 36],
-    iconAnchor: [18, 22],
-  })
-}
+// Arrow is now CSS overlay, no longer a Leaflet marker
 
 function resetMapRotation(map: L.Map) {
   const pane = map.getPane('mapPane')
@@ -42,21 +37,72 @@ function DrivingCamera({
   heading,
   followPaused,
   onRecenter,
+  polyline,
 }: {
   position: LatLng
   heading: number
   followPaused: boolean
   onRecenter?: () => void
+  polyline: LatLng[]
 }) {
   const map = useMap()
+  const interpolatorRef = useRef<GpsInterpolator | null>(null)
   const headingRef = useRef(heading)
   const hasInitialized = useRef(false)
   const forceCenterRef = useRef(false)
   const rafRef = useRef<number>()
+  const currentPositionRef = useRef<LatLng>(position)
 
+  // Initialize interpolator
   useEffect(() => {
-    headingRef.current = heading
-  }, [heading])
+    if (!interpolatorRef.current) {
+      interpolatorRef.current = new GpsInterpolator()
+      
+      // Set up callback for interpolated updates
+      interpolatorRef.current.setOnUpdate((state) => {
+        if (followPaused && !forceCenterRef.current) return
+        
+        currentPositionRef.current = state.position
+        headingRef.current = state.heading
+        
+        // Pan map to interpolated position
+        if (rafRef.current) cancelAnimationFrame(rafRef.current)
+        rafRef.current = requestAnimationFrame(() => {
+          map.panTo(state.position, { animate: false, noMoveStart: true, duration: 0 })
+          
+          // Apply rotation
+          const pane = map.getPane('mapPane')
+          if (pane) {
+            const anchor = map.latLngToContainerPoint(state.position)
+            pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
+            pane.style.transform = `rotate(${-state.heading}deg)`
+            pane.style.willChange = 'transform'
+          }
+        })
+      })
+    }
+
+    return () => {
+      interpolatorRef.current?.stop()
+    }
+  }, [map, followPaused])
+
+  // Update interpolator when GPS position/heading changes
+  useEffect(() => {
+    if (!interpolatorRef.current) return
+    
+    // Snap position to route before interpolating
+    const snappedPosition = snapToRoute(position, polyline, 50)
+    
+    const gpsState: GpsState = {
+      position: snappedPosition,
+      heading,
+      speed: 0,
+      timestamp: Date.now(),
+    }
+    
+    interpolatorRef.current.updateTarget(gpsState)
+  }, [position, heading, polyline])
 
   // Expose recenter function
   useEffect(() => {
@@ -64,8 +110,9 @@ function DrivingCamera({
       (window as any).__mapRecenter = () => {
         forceCenterRef.current = true
         const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
-        map.setView(position, zoom, { animate: false })
-        // Block ALL pan logic for 500ms after recenter
+        map.setView(currentPositionRef.current, zoom, { animate: false })
+        
+        // Block pan logic for 500ms after recenter
         setTimeout(() => {
           forceCenterRef.current = false
         }, 500)
@@ -74,72 +121,34 @@ function DrivingCamera({
     return () => {
       delete (window as any).__mapRecenter
     }
-  }, [map, position, onRecenter])
+  }, [map, onRecenter])
 
+  // Initialize zoom once
+  useEffect(() => {
+    if (!hasInitialized.current) {
+      const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
+      map.setView(position, zoom, { animate: false })
+      
+      // Increase padding to prevent black corners during rotation
+      map.options.padding = [200, 200]
+      
+      hasInitialized.current = true
+    }
+  }, [map, position])
+
+  // Handle follow pause
   useEffect(() => {
     if (followPaused && !forceCenterRef.current) {
       resetMapRotation(map)
-      return
+      interpolatorRef.current?.stop()
     }
-
-    // Initialize zoom only once
-    if (!hasInitialized.current || forceCenterRef.current) {
-      const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
-      map.setView(position, zoom, { animate: false })
-      hasInitialized.current = true
-      
-      // If force centering, skip pan logic entirely
-      if (forceCenterRef.current) {
-        const applyRotation = () => {
-          const pane = map.getPane('mapPane')
-          if (!pane) return
-          const anchor = map.latLngToContainerPoint(position)
-          pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
-          pane.style.transform = `rotate(${-headingRef.current}deg)`
-          pane.style.willChange = 'transform'
-        }
-        applyRotation()
-        return // Exit early - no pan logic
-      }
-    } else {
-      // After initialization, ONLY pan - NEVER call setView
-      const currentCenter = map.getCenter()
-      const distance = map.distance(currentCenter, position)
-      
-      // Only pan if position changed significantly (> 0.5 meters)
-      if (distance > 0.5) {
-        // Use requestAnimationFrame for smooth pan
-        if (rafRef.current) cancelAnimationFrame(rafRef.current)
-        rafRef.current = requestAnimationFrame(() => {
-          map.panTo(position, { animate: false, noMoveStart: true, duration: 0 })
-        })
-      }
-    }
-
-    // Optimized rotation with RAF
-    const applyRotation = () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
-      rafRef.current = requestAnimationFrame(() => {
-        const pane = map.getPane('mapPane')
-        if (!pane) return
-        const anchor = map.latLngToContainerPoint(position)
-        pane.style.transformOrigin = `${anchor.x}px ${anchor.y}px`
-        pane.style.transform = `rotate(${-headingRef.current}deg)`
-        pane.style.willChange = 'transform'
-      })
-    }
-
-    applyRotation()
-    
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
-    }
-  }, [map, position, followPaused])
+  }, [followPaused, map])
 
   useEffect(() => {
     return () => {
       resetMapRotation(map)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      interpolatorRef.current?.stop()
     }
   }, [map])
 
@@ -164,8 +173,8 @@ type Props = {
 
 export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge }: Props) {
   const [followPaused, setFollowPaused] = useState(false)
-  const navArrowIcon = useMemo(() => createNavArrowIcon(heading), [heading])
   const pins = route.pins // Get pins from route
+  const polyline = route.polyline as LatLng[]
 
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
@@ -185,6 +194,12 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
   return (
     <div className="exam-live-map">
       {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
+      
+      {/* Fixed center arrow overlay - CSS only, no Leaflet marker */}
+      <div className="nav-arrow-overlay" style={{ transform: `rotate(${heading}deg)` }}>
+        <div className="nav-arrow-fixed"></div>
+        <div className="nav-arrow-dot-fixed"></div>
+      </div>
       
       {/* Always show recenter button */}
       <button 
@@ -233,10 +248,14 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
           )
         })}
 
-        <Marker position={userPos} icon={navArrowIcon} zIndexOffset={1000} />
-
         <MapFollowPause onPause={() => setFollowPaused(true)} />
-        <DrivingCamera position={userPos} heading={heading} followPaused={followPaused} onRecenter={handleRecenter} />
+        <DrivingCamera 
+          position={userPos} 
+          heading={heading} 
+          followPaused={followPaused} 
+          onRecenter={handleRecenter}
+          polyline={polyline}
+        />
       </MapContainer>
     </div>
   )

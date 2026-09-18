@@ -11,7 +11,7 @@ type Props = {
 }
 
 // Toggle between Leaflet (old) and MapLibre+Mapbox (new)
-const USE_MAPTILER = true // ← Now using Mapbox via MapLibre GL
+const USE_MAPTILER = false // ← Back to stable Leaflet (Mapbox had cache issues)
 
 /** Live GPS map — MapLibre/Leaflet, follows user while driving. */
 export function ExamLiveMap(props: Props) {

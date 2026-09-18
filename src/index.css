@@ -974,6 +974,43 @@ button:disabled {
   box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.35);
 }
 
+/* Fixed center arrow overlay - CSS only, no Leaflet marker */
+.nav-arrow-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  pointer-events: none;
+  width: 36px;
+  height: 36px;
+  will-change: transform;
+  transition: transform 0.15s ease-out;
+}
+
+.nav-arrow-fixed {
+  width: 0;
+  height: 0;
+  margin: 0 auto;
+  border-left: 11px solid transparent;
+  border-right: 11px solid transparent;
+  border-bottom: 24px solid #4285f4;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+}
+
+.nav-arrow-dot-fixed {
+  position: absolute;
+  left: 50%;
+  top: 22px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: #4285f4;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.35);
+}
+
 .user-marker {
   background: transparent;
   border: none;

@@ -50,6 +50,7 @@ import {
   isStartPinAlreadyAnnounced,
 } from '@/data/route-audio'
 import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } from '@/lib/route-nav'
+import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 type Phase = 'preview' | 'active' | 'summary'
@@ -86,6 +87,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const sessionStartRef = useRef(savedState ? Date.now() - savedState.elapsedMs : 0)
   const prevGpsRef = useRef<GpsPosition | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
+  const gpsFilterRef = useRef(createGpsFilter())
 
   const polyline = route.polyline as LatLng[]
   const sortedPins = useMemo(
@@ -127,6 +129,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setNextPin(sortedPins[0] ?? null)
     prevGpsRef.current = null
     speedTrackerRef.current = createSpeedTracker()
+    gpsFilterRef.current.reset()
     setSpeedKmh(0)
     setHeading(0)
   }, [route.id, route.name_ka, sortedPins, features.mapNav])
@@ -222,9 +225,24 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (!gpsStarted) return
     return watchGps(
       (pos) => {
+        // Apply GPS filter
+        const reading: GpsReading = {
+          position: gpsToLatLng(pos),
+          accuracy: pos.accuracy,
+          speed: pos.speed ?? 0,
+          timestamp: pos.timestamp,
+        }
+        
+        const filtered = gpsFilterRef.current.filter(reading)
+        
+        // Reject invalid readings
+        if (!filtered) {
+          return
+        }
+        
         setRawPos(pos)
         setGpsError(null)
-        const raw = gpsToLatLng(pos)
+        const raw = filtered.position
         setUserPos(raw)
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
         setHeading(resolveHeading(pos, prevRaw, raw, polyline))
@@ -289,6 +307,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setLastSpoken(EXAM_START_TEXT)
     setNextPin(voicePins.find((p) => !triggeredRef.current.has(p.id)) ?? null)
     speedTrackerRef.current = createSpeedTracker()
+    gpsFilterRef.current.reset()
     setSpeedKmh(0)
     setDriveView(features.mapNav ? 'map' : 'panel')
     setPhase('active')
