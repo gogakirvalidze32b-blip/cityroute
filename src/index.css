@@ -3215,3 +3215,22 @@ button:disabled {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5) !important;
 }
+
+/* MapLibre GL styling */
+.maptiler-user-marker {
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+}
+
+.maplibregl-map {
+  font-family: inherit;
+}
+
+.maplibregl-ctrl-attrib {
+  display: none !important;
+}
+
+.maplibregl-canvas {
+  outline: none;
+}

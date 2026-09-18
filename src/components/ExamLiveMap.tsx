@@ -1,4 +1,5 @@
 import { ExamLiveMapLeaflet } from '@/components/ExamLiveMapLeaflet'
+import { ExamLiveMapLibre } from '@/components/ExamLiveMapLibre'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import type { LatLng } from '@/lib/gps'
 
@@ -9,7 +10,13 @@ type Props = {
   nextPin: PinRow | null
 }
 
-/** Live GPS map — Leaflet + CARTO tiles, follows user while driving. */
+// Toggle between Leaflet (old) and MapLibre (new)
+const USE_MAPTILER = true
+
+/** Live GPS map — MapLibre/Leaflet, follows user while driving. */
 export function ExamLiveMap(props: Props) {
+  if (USE_MAPTILER) {
+    return <ExamLiveMapLibre {...props} />
+  }
   return <ExamLiveMapLeaflet {...props} />
 }
