@@ -11,7 +11,7 @@ type Props = {
 }
 
 // Toggle between Leaflet (old) and MapLibre (new)
-const USE_MAPTILER = false // ← Temporarily disabled until API key works
+const USE_MAPTILER = true // ← MapTiler enabled with debug logs
 
 /** Live GPS map — MapLibre/Leaflet, follows user while driving. */
 export function ExamLiveMap(props: Props) {
