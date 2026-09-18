@@ -858,17 +858,6 @@ button:disabled {
   background: rgba(255, 255, 255, 1);
 }
 
-.map-recenter-btn--active {
-  background: #0d9488 !important;
-  color: white !important;
-  animation: recenter-pulse 2s infinite;
-}
-
-@keyframes recenter-pulse {
-  0%, 100% { box-shadow: 0 3px 12px rgba(13, 148, 136, 0.4); }
-  50% { box-shadow: 0 3px 20px rgba(13, 148, 136, 0.7); }
-}
-
 .nav-finish-fab {
   position: absolute;
   left: 50%;
@@ -1392,87 +1381,28 @@ button:disabled {
   min-width: 0;
   height: 100%;
   background: #0f172a;
-  overflow: hidden; /* Critical: prevents black corners */
 }
 
 .exam-live-map__canvas {
   width: 100%;
   height: 100%;
   min-height: 12rem;
-  background: #1e293b !important;
+  background: #1e293b !important; /* Force dark background */
   position: relative;
   /* Performance optimization */
   transform: translateZ(0);
   backface-visibility: hidden;
   will-change: transform;
-  /* Prevent black corners during rotation */
-  overflow: hidden !important;
-}
-
-/* Pseudo-element to cover corners during rotation */
-.exam-live-map__canvas::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: #1e293b;
-  mask-image: radial-gradient(
-    ellipse at center,
-    transparent 0%,
-    transparent 60%,
-    black 100%
-  );
-  -webkit-mask-image: radial-gradient(
-    ellipse at center,
-    transparent 0%,
-    transparent 60%,
-    black 100%
-  );
 }
 
 /* Force dark background on leaflet container */
 .exam-live-map__canvas .leaflet-container {
   background: #1e293b !important;
-  position: relative;
-  z-index: 1;
 }
 
 /* Hide white flash on tile loading */
 .exam-live-map__canvas .leaflet-tile-container {
   background: #1e293b !important;
-}
-
-/* Hide attribution and other controls */
-.exam-live-map__canvas .leaflet-control-attribution,
-.exam-live-map__canvas .leaflet-control-container {
-  display: none !important;
-}
-
-/* Corner masks to hide black triangles */
-.exam-live-map__canvas .leaflet-map-pane::before,
-.exam-live-map__canvas .leaflet-map-pane::after {
-  content: '';
-  position: absolute;
-  pointer-events: none;
-  z-index: 999;
-  background: #1e293b;
-}
-
-.exam-live-map__canvas .leaflet-map-pane::before {
-  bottom: 0;
-  right: 0;
-  width: 100px;
-  height: 100px;
-  clip-path: polygon(100% 0, 100% 100%, 0 100%);
-}
-
-.exam-live-map__canvas .leaflet-map-pane::after {
-  bottom: 0;
-  left: 0;
-  width: 100px;
-  height: 100px;
-  clip-path: polygon(0 0, 0 100%, 100% 100%);
 }
 
 /* Performance optimization for map pane */
