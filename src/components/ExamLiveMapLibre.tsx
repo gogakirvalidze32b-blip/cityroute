@@ -6,6 +6,19 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 
 const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'DEMO_KEY'
 
+// Map styles - change this to switch map appearance
+const MAP_STYLES = {
+  streets: 'streets',      // Default OpenStreetMap style
+  basic: 'basic',          // Minimalist, Google-like
+  bright: 'bright',        // Light, clean - MOST Google Maps-like! ✅
+  satellite: 'satellite',  // Satellite imagery
+  hybrid: 'hybrid',        // Satellite + roads overlay
+  outdoor: 'outdoor',      // Nature, hiking
+} as const
+
+// Choose your style here:
+const SELECTED_STYLE = 'basic' // ← Google Maps-like, clean
+
 type Props = {
   route: RouteWithPins
   userPos: LatLng
@@ -29,9 +42,12 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
   useEffect(() => {
     if (!mapContainer.current || map.current) return
 
+    console.log('🗺️ MapTiler: Initializing with key:', MAPTILER_API_KEY ? 'KEY EXISTS' : 'NO KEY!')
+    console.log('🗺️ MapTiler: Style:', SELECTED_STYLE)
+
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_API_KEY}`,
+      style: `https://api.maptiler.com/maps/${SELECTED_STYLE}/style.json?key=${MAPTILER_API_KEY}`,
       center: [userPos[1], userPos[0]],
       zoom: 17,
       pitch: 0,
@@ -40,7 +56,12 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     })
 
     map.current.on('load', () => {
+      console.log('✅ MapTiler: Map loaded successfully!')
       setMapLoaded(true)
+    })
+
+    map.current.on('error', (e) => {
+      console.error('❌ MapTiler Error:', e)
     })
 
     return () => {
