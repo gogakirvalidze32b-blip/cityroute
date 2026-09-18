@@ -5,8 +5,12 @@ import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'get_your_own_OpIi9ZULNHzrESv6T2vL'
+const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY || ''
 
-// Map styles - change this to switch map appearance
+// Map provider - switch between 'mapbox' or 'maptiler'
+const MAP_PROVIDER = 'mapbox' as const
+
+// MapTiler styles (for reference, not used with Mapbox)
 const MAP_STYLES = {
   streets: 'streets',      // Default OpenStreetMap style
   basic: 'basic',          // Minimalist, Google-like
@@ -16,8 +20,26 @@ const MAP_STYLES = {
   outdoor: 'outdoor',      // Nature, hiking
 } as const
 
+// Mapbox styles - vector tiles, 60fps rendering! 🚀
+const MAPBOX_STYLES = {
+  streets: 'mapbox://styles/mapbox/streets-v12',
+  light: 'mapbox://styles/mapbox/light-v11',      // Google Maps-like ✅
+  dark: 'mapbox://styles/mapbox/dark-v11',
+  satellite: 'mapbox://styles/mapbox/satellite-v9',
+  satelliteStreets: 'mapbox://styles/mapbox/satellite-streets-v12',
+  outdoors: 'mapbox://styles/mapbox/outdoors-v12',
+} as const
+
 // Choose your style here:
-const SELECTED_STYLE = 'basic' // ← Google Maps-like, clean
+const SELECTED_STYLE = 'light' // ← Mapbox light (Google Maps-like)
+
+// Get map style URL based on provider
+const getMapStyle = () => {
+  if (MAP_PROVIDER === 'mapbox') {
+    return MAPBOX_STYLES[SELECTED_STYLE as keyof typeof MAPBOX_STYLES] || MAPBOX_STYLES.light
+  }
+  return `https://api.maptiler.com/maps/${SELECTED_STYLE}/style.json?key=${MAPTILER_API_KEY}`
+}
 
 type Props = {
   route: RouteWithPins
@@ -42,12 +64,16 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
   useEffect(() => {
     if (!mapContainer.current || map.current) return
 
-    console.log('🗺️ MapTiler: Initializing with key:', MAPTILER_API_KEY ? 'KEY EXISTS' : 'NO KEY!')
-    console.log('🗺️ MapTiler: Style:', SELECTED_STYLE)
+    console.log('🗺️ Map Provider:', MAP_PROVIDER)
+    console.log('🗺️ Mapbox Key:', MAPBOX_API_KEY ? 'EXISTS' : 'MISSING')
+    console.log('🗺️ MapTiler Key:', MAPTILER_API_KEY ? 'EXISTS' : 'MISSING')
+    console.log('🗺️ Selected Style:', SELECTED_STYLE)
+    console.log('🗺️ Style URL:', getMapStyle())
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: `https://api.maptiler.com/maps/${SELECTED_STYLE}/style.json?key=${MAPTILER_API_KEY}`,
+      style: getMapStyle(),
+      accessToken: MAP_PROVIDER === 'mapbox' ? MAPBOX_API_KEY : undefined,
       center: [userPos[1], userPos[0]],
       zoom: 17,
       pitch: 0,
@@ -56,12 +82,12 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     })
 
     map.current.on('load', () => {
-      console.log('✅ MapTiler: Map loaded successfully!')
+      console.log(`✅ ${MAP_PROVIDER === 'mapbox' ? 'Mapbox' : 'MapTiler'}: Map loaded successfully!`)
       setMapLoaded(true)
     })
 
     map.current.on('error', (e) => {
-      console.error('❌ MapTiler Error:', e)
+      console.error(`❌ ${MAP_PROVIDER === 'mapbox' ? 'Mapbox' : 'MapTiler'} Error:`, e)
     })
 
     return () => {

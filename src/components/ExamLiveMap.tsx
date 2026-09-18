@@ -10,8 +10,8 @@ type Props = {
   nextPin: PinRow | null
 }
 
-// Toggle between Leaflet (old) and MapLibre (new)
-const USE_MAPTILER = true // ← MapTiler enabled
+// Toggle between Leaflet (old) and MapLibre+Mapbox (new)
+const USE_MAPTILER = true // ← Now using Mapbox via MapLibre GL
 
 /** Live GPS map — MapLibre/Leaflet, follows user while driving. */
 export function ExamLiveMap(props: Props) {
