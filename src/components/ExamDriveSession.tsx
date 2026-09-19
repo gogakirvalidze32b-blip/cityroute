@@ -2,6 +2,7 @@ import { useExamLayoutMode } from '@/hooks/useExamLayoutMode'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ExamErrorGrid } from '@/components/ExamErrorGrid'
 import { ExamLiveMap } from '@/components/ExamLiveMap'
+import { NavigationScreen } from '@/components/NavigationScreen'
 import { ExamScoreboard } from '@/components/ExamScoreboard'
 import { ExamSummary } from '@/components/ExamSummary'
 import { ExamViewSwitcher, type ExamDriveView } from '@/components/ExamViewSwitcher'
@@ -30,7 +31,6 @@ import {
   formatGpsError,
   getGpsEnvironmentIssue,
   hasGpsConsent,
-  headingMatches,
   markGpsConsentGranted,
   clearGpsConsent,
   requestGpsOnce,
@@ -51,6 +51,7 @@ import {
 } from '@/data/route-audio'
 import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } from '@/lib/route-nav'
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
+import { createNavigationStateManager, type NavigationInstruction } from '@/lib/navigation-state'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 type Phase = 'preview' | 'active' | 'summary'
@@ -79,10 +80,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [heading, setHeading] = useState(savedState?.heading || 0)
   const [speedKmh, setSpeedKmh] = useState(savedState?.speedKmh || 0)
   const [elapsedMs, setElapsedMs] = useState(savedState?.elapsedMs || 0)
-  const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
 
-  const triggeredRef = useRef<Set<string>>(savedState ? new Set(savedState.triggeredPins) : new Set())
+  // Navigation state manager
+  const navStateRef = useRef(createNavigationStateManager())
+  const [nextInstruction, setNextInstruction] = useState<NavigationInstruction | null>(null)
+  const [distanceToNextM, setDistanceToNextM] = useState<number | null>(null)
+
   const releaseWake = useRef<(() => void) | null>(null)
   const sessionStartRef = useRef(savedState ? Date.now() - savedState.elapsedMs : 0)
   const prevGpsRef = useRef<GpsPosition | null>(null)
@@ -109,6 +113,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const showToolbar = active && (features.canSwitchViews || (panelOnly && showPanelView))
   const showVoiceInToolbar = showPanelView && !mapOnly
 
+  // Use new navigation screen for map-only mode
+  const useNewNavigation = mapOnly && active
+
   useEffect(() => {
     if (mapOnly) setDriveView('map')
     else if (panelOnly) setDriveView('panel')
@@ -118,6 +125,21 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     onPhaseChange?.(phase)
   }, [phase, onPhaseChange])
 
+  // Initialize navigation state manager
+  useEffect(() => {
+    navStateRef.current.initialize(voicePins)
+    
+    // Set up instruction trigger callback
+    navStateRef.current.setOnInstructionTrigger((instruction) => {
+      setLastSpoken(instruction.instruction)
+      void audioEngine.play(instruction.audioUrl, instruction.pinId, instruction.instruction)
+    })
+    
+    // Update next instruction
+    const next = navStateRef.current.getNextInstruction()
+    setNextInstruction(next)
+  }, [voicePins])
+
   useEffect(() => {
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
@@ -125,8 +147,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setDriveView(features.mapNav ? 'map' : 'panel')
     setGpsError(getGpsEnvironmentIssue())
     setLastSpoken(null)
-    triggeredRef.current = new Set()
-    setNextPin(sortedPins[0] ?? null)
+    navStateRef.current.reset()
     prevGpsRef.current = null
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
@@ -253,39 +274,23 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         }
         prevGpsRef.current = pos
 
-        const pending = voicePins.find((p) => !triggeredRef.current.has(p.id))
-        setNextPin(pending ?? null)
-
-        // აუდიო ყოველთვის ითამაშოს თუ routeAudio feature enabled-ია, view-ის მიუხედავად
-        if (!pending || phase !== 'active' || !features.routeAudio) return
-
-        const dist = distanceToPinMeters(raw, [pending.lat, pending.lng])
-        const headingOk = headingMatches(raw, [pending.lat, pending.lng], pos.heading)
-        const alreadySpoken = isStartPinAlreadyAnnounced(route.slug, pending.id)
-        
-        console.log('📍 Pin check:', 
-          'ID:', pending.id,
-          '| Instruction:', pending.instruction_ka,
-          '| Distance:', Math.round(dist) + 'm',
-          '| Trigger:', pending.trigger_distance_m + 'm',
-          '| Heading OK:', headingOk,
-          '| Already spoken:', alreadySpoken
-        )
-
-        if (
-          dist <= pending.trigger_distance_m &&
-          headingOk &&
-          !alreadySpoken
-        ) {
-          console.log('🔊 Audio trigger!', pending.instruction_ka)
-          triggeredRef.current.add(pending.id)
-          setLastSpoken(pending.instruction_ka)
-          void audioEngine.play(pending.audio_url, pending.id, pending.instruction_ka)
+        // Update navigation state manager
+        if (phase === 'active' && features.routeAudio) {
+          const instruction = navStateRef.current.update(raw, pos.heading)
+          setNextInstruction(instruction)
+          
+          // Calculate distance to next instruction
+          if (instruction) {
+            const distance = distanceToPinMeters(raw, instruction.position)
+            setDistanceToNextM(Math.round(distance))
+          } else {
+            setDistanceToNextM(null)
+          }
         }
       },
       (err) => setGpsError(formatGpsError(err)),
     )
-  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline])
+  }, [gpsStarted, phase, features.routeAudio, polyline])
 
   const handleError = useCallback((errorId: string) => {
     setExam((prev) => recordExamError(prev, errorId, false))
@@ -296,16 +301,18 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [])
 
   function startSession(position: LatLng | null = userPos) {
-    triggeredRef.current = new Set()
+    // Mark start pin as already announced if applicable
     const firstPin = voicePins[0]
     if (firstPin && isStartPinAlreadyAnnounced(route.slug, firstPin.id)) {
-      triggeredRef.current.add(firstPin.id)
+      navStateRef.current.triggerInstruction(`instruction-0`)
     }
+    
+    navStateRef.current.reset()
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
     setElapsedMs(0)
     setLastSpoken(EXAM_START_TEXT)
-    setNextPin(voicePins.find((p) => !triggeredRef.current.has(p.id)) ?? null)
+    setNextInstruction(navStateRef.current.getNextInstruction())
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
@@ -341,17 +348,17 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setPhase('preview')
     setExamSummary(null)
     setExam(createExamSession(route.id, route.name_ka))
-    triggeredRef.current = new Set()
-    setNextPin(sortedPins[0] ?? null)
+    navStateRef.current.reset()
+    setNextInstruction(navStateRef.current.getNextInstruction())
     setLastSpoken(null)
     setElapsedMs(0)
     clearActiveExam() // Clear saved state when restarting
   }
 
   const nextPinDistanceLabel =
-    active && pinsActive && nextPin && userPos && showVoiceInToolbar
+    active && pinsActive && nextInstruction && userPos && showVoiceInToolbar
       ? (() => {
-          const meters = Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng]))
+          const meters = distanceToNextM ?? 0
           return meters <= 9999 ? `${meters} მ` : '—'
         })()
       : null
@@ -379,10 +386,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
               {features.canSwitchViews && <ExamViewSwitcher view={driveView} onChange={setDriveView} />}
               {showVoiceInToolbar && (
                 <div className="exam-voice-bar exam-voice-bar--toolbar">
-                  {nextPinDistanceLabel && nextPin && (
+                  {nextPinDistanceLabel && nextInstruction && (
                     <p className="exam-voice-next">
                       <small>შემდეგი · {nextPinDistanceLabel}</small>
-                      <strong>{nextPin.instruction_ka}</strong>
+                      <strong>{nextInstruction.instruction}</strong>
                     </p>
                   )}
                   {lastSpoken && (
@@ -397,16 +404,40 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             </div>
           )}
 
-          <div className="exam-drive-main">
-            {showMapView && (userPos || polyline[0]) && (
-              <ExamLiveMap route={route} userPos={userPos ?? polyline[0]} heading={heading} nextPin={nextPin} />
-            )}
-            {showPanelView && <ExamErrorGrid counts={exam.counts} onError={handleError} />}
-          </div>
+          {useNewNavigation && userPos ? (
+            <NavigationScreen
+              position={userPos}
+              heading={heading}
+              speed={speedKmh}
+              polyline={polyline}
+              instructions={navStateRef.current.getAllInstructions()}
+              nextInstruction={nextInstruction}
+              distanceToNextM={distanceToNextM}
+              elapsedMs={elapsedMs}
+              onStop={finishSession}
+              showViewSwitcher={false}
+              enableInstructionsView={false}
+              enableRoundaboutButton={false}
+            />
+          ) : (
+            <>
+              <div className="exam-drive-main">
+                {showMapView && (userPos || polyline[0]) && (
+                  <ExamLiveMap 
+                    route={route} 
+                    userPos={userPos ?? polyline[0]} 
+                    heading={heading} 
+                    nextPin={voicePins.find(p => p.id === nextInstruction?.pinId) ?? null}
+                  />
+                )}
+                {showPanelView && <ExamErrorGrid counts={exam.counts} onError={handleError} />}
+              </div>
 
-          <button type="button" className="exam-finish-fab" onClick={finishSession}>
-            დასრულება
-          </button>
+              <button type="button" className="exam-finish-fab" onClick={finishSession}>
+                დასრულება
+              </button>
+            </>
+          )}
         </>
       )}
 
