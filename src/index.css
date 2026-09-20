@@ -997,7 +997,7 @@ button:disabled {
    Used by ExamLiveMapLeaflet.tsx
    =========================================================================== */
 .nav-arrow-overlay {
-  position: absolute; /* Absolute relative to .exam-live-map container */
+  position: fixed; /* FIXED to viewport - NEVER affected by map pan/scroll */
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
