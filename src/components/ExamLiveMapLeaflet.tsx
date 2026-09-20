@@ -33,12 +33,14 @@ const OVERSCAN_PADDING = 300 // Extra pixels to prevent black corners during rot
 function DrivingCamera({
   position,
   heading,
+  speed,
   polyline,
   isFollowing,
   onFollowStateChange,
 }: {
   position: LatLng
   heading: number
+  speed: number
   polyline: LatLng[]
   isFollowing: boolean
   onFollowStateChange: (following: boolean) => void
@@ -104,12 +106,12 @@ function DrivingCamera({
     const gpsState: GpsState = {
       position: snappedPosition,
       heading,
-      speed: 0,
+      speed: speed / 3.6, // Convert km/h to m/s for stationary detection
       timestamp: Date.now(),
     }
 
     interpolatorRef.current.updateTarget(gpsState)
-  }, [position, heading, polyline])
+  }, [position, heading, speed, polyline])
 
   // Initialize map view once
   useEffect(() => {
@@ -199,9 +201,10 @@ type Props = {
   heading: number
   nextPin: PinRow | null
   mapBadge?: string
+  speedKmh?: number // Add speed prop for heading stabilization
 }
 
-export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge }: Props) {
+export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge, speedKmh = 0 }: Props) {
   const [isFollowing, setIsFollowing] = useState(true)
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
@@ -307,6 +310,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
         <DrivingCamera
           position={userPos}
           heading={heading}
+          speed={speedKmh}
           polyline={polyline}
           isFollowing={isFollowing}
           onFollowStateChange={setIsFollowing}

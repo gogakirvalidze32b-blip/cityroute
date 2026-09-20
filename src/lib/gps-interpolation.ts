@@ -49,9 +49,22 @@ function lerpAngle(start: number, end: number, t: number): number {
 }
 
 /**
+ * Calculate angular difference between two headings
+ */
+function angleDifference(a: number, b: number): number {
+  a = ((a % 360) + 360) % 360
+  b = ((b % 360) + 360) % 360
+  let diff = b - a
+  if (diff > 180) diff -= 360
+  if (diff < -180) diff += 360
+  return Math.abs(diff)
+}
+
+/**
  * GPS Interpolation Engine
  * 
  * Provides smooth 60fps animation between low-frequency GPS updates
+ * with heading stabilization to prevent jitter when stationary
  */
 export class GpsInterpolator {
   private currentState: GpsState | null = null
@@ -60,6 +73,7 @@ export class GpsInterpolator {
   private interpolationDuration = 1000 // Default 1 second
   private rafId: number | null = null
   private onUpdate: ((state: InterpolatedState) => void) | null = null
+  private lockedHeading: number | null = null // Locked heading when stationary
 
   /**
    * Update the target GPS state
@@ -70,8 +84,32 @@ export class GpsInterpolator {
     if (!this.currentState) {
       this.currentState = state
       this.targetState = state
+      this.lockedHeading = state.heading
       this.notifyUpdate(state)
       return
+    }
+
+    // Check if vehicle is moving (stationary detection)
+    const isStationary = state.speed < 1.5 // Below ~5 km/h
+
+    // Heading stabilization
+    let targetHeading = state.heading
+    if (isStationary) {
+      // When stationary, lock heading to prevent GPS noise rotation
+      if (this.lockedHeading === null) {
+        this.lockedHeading = this.currentState.heading
+      }
+      targetHeading = this.lockedHeading
+    } else {
+      // Moving - check if heading change is significant
+      const headingChange = angleDifference(this.currentState.heading, state.heading)
+      if (headingChange < 5) {
+        // Small change - might be GPS noise, keep current heading
+        targetHeading = this.currentState.heading
+      } else {
+        // Significant change - accept new heading
+        this.lockedHeading = null
+      }
     }
 
     // Calculate interpolation duration based on distance and speed
@@ -80,8 +118,11 @@ export class GpsInterpolator {
     // Use actual time delta, clamped between 100ms and 2000ms
     this.interpolationDuration = Math.max(100, Math.min(2000, timeDelta))
     
-    // Set new target
-    this.targetState = state
+    // Set new target with stabilized heading
+    this.targetState = {
+      ...state,
+      heading: targetHeading,
+    }
     this.interpolationStartTime = Date.now()
     
     // Start animation loop if not running
@@ -174,5 +215,6 @@ export class GpsInterpolator {
     this.stop()
     this.currentState = null
     this.targetState = null
+    this.lockedHeading = null
   }
 }

@@ -987,12 +987,12 @@ button:disabled {
 
 /* Fixed center arrow overlay - CSS only, no Leaflet marker */
 .nav-arrow-overlay {
-  position: absolute;
+  position: fixed; /* Changed to fixed - never affected by scroll/pan */
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 1000;
-  pointer-events: none;
+  pointer-events: none; /* Never blocks map interaction */
   width: 0;
   height: 0;
   /* No transition on position - it never moves */
@@ -1009,6 +1009,7 @@ button:disabled {
   will-change: transform;
   /* Only rotation should transition */
   transition: transform 0.15s ease-out;
+  pointer-events: none; /* Never blocks map interaction */
 }
 
 .nav-arrow-fixed {

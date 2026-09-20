@@ -8,6 +8,7 @@ type Props = {
   userPos: LatLng
   heading: number
   nextPin: PinRow | null
+  speedKmh?: number
 }
 
 // Toggle between Leaflet (optimized) and MapLibre+Mapbox
