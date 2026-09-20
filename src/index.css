@@ -949,6 +949,12 @@ button:disabled {
   font-size: 0.95rem;
 }
 
+/* ===========================================================================
+   OLD ARROW STYLES (DEPRECATED - kept for NavigationMap.tsx backup only)
+   These styles were used by the old Leaflet marker-based arrow.
+   Active navigation now uses .nav-arrow-overlay (fixed CSS overlay).
+   =========================================================================== */
+
 .nav-arrow-marker {
   background: transparent;
   border: none;
@@ -985,7 +991,11 @@ button:disabled {
   box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.35);
 }
 
-/* Fixed center arrow overlay - CSS only, no Leaflet marker */
+/* ===========================================================================
+   ACTIVE ARROW STYLES (Current implementation)
+   Fixed center arrow overlay - CSS only, NOT a Leaflet marker
+   Used by ExamLiveMapLeaflet.tsx
+   =========================================================================== */
 .nav-arrow-overlay {
   position: absolute; /* Absolute relative to .exam-live-map container */
   top: 50%;

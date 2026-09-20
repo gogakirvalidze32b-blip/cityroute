@@ -209,6 +209,9 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
 
+  // Verify this is the active navigation implementation
+  console.log('✅ ACTIVE NAVIGATION: ExamLiveMapLeaflet (CSS arrow overlay)')
+
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
 

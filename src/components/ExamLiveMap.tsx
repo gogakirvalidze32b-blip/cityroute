@@ -12,9 +12,17 @@ type Props = {
 }
 
 // Toggle between Leaflet (optimized) and MapLibre+Mapbox
-const USE_MAPLIBRE = false // ← Back to Leaflet - properly optimized for Android tablets
+const USE_MAPLIBRE = false // ← ACTIVE: ExamLiveMapLeaflet (CSS overlay arrow - FIXED center)
 
-/** Live GPS map — MapLibre/Leaflet, follows user while driving. */
+/** 
+ * Live GPS map — MapLibre/Leaflet, follows user while driving.
+ * 
+ * Current active implementation: ExamLiveMapLeaflet
+ * - Vehicle arrow is CSS overlay (position: absolute, center)
+ * - Arrow NEVER moves from screen center
+ * - Map moves underneath fixed arrow
+ * - No Leaflet markers for vehicle arrow
+ */
 export function ExamLiveMap(props: Props) {
   if (USE_MAPLIBRE) {
     return <ExamLiveMapLibre {...props} />
