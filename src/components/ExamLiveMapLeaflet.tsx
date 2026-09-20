@@ -201,11 +201,13 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
   }
 
   return (
-    <>
+    <div className="exam-live-map">
+      {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
+
       {/* ==================== FIXED CENTER ARROW ====================
-          CRITICAL: Arrow MUST be outside .exam-live-map container
-          because .exam-live-map has transform context that breaks position: fixed.
-          Arrow is rendered as a sibling, NOT a child of the map. */}
+          This is a CSS overlay, NOT a Leaflet marker.
+          It stays perfectly centered at all times.
+          Only the rotation changes. */}
       <div className="nav-arrow-overlay">
         <div className="nav-arrow-rotator" style={{ transform: `rotate(${heading}deg)` }}>
           <div className="nav-arrow-fixed"></div>
@@ -213,10 +215,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
         </div>
       </div>
 
-      <div className="exam-live-map">
-        {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
-
-        {/* ==================== RECENTER BUTTON ==================== */}
+      {/* ==================== RECENTER BUTTON ==================== */}
       <button
         type="button"
         className={`map-recenter-btn exam-live-map__recenter ${!isFollowing ? 'map-recenter-btn--active' : ''}`}
@@ -301,6 +300,5 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
         <InteractionController isFollowing={isFollowing} />
       </MapContainer>
     </div>
-    </>
   )
 }
