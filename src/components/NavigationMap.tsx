@@ -1,19 +1,3 @@
-/**
- * NavigationMap.tsx
- * 
- * ⚠️ DEPRECATED / NOT USED
- * 
- * This file contains the OLD Leaflet marker-based vehicle arrow implementation.
- * It is NO LONGER used in active navigation.
- * 
- * Active navigation now uses:
- * - ExamLiveMapLeaflet.tsx (CSS overlay arrow - FIXED center)
- * 
- * This file is kept for reference/backup only.
- * 
- * DO NOT import or use this component in production code.
- */
-
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { MapContainer, Marker, Circle, CircleMarker, Tooltip, useMap } from 'react-leaflet'
 import { RoutePolyline } from '@/components/RoutePolyline'

@@ -33,14 +33,12 @@ const OVERSCAN_PADDING = 300 // Extra pixels to prevent black corners during rot
 function DrivingCamera({
   position,
   heading,
-  speed,
   polyline,
   isFollowing,
   onFollowStateChange,
 }: {
   position: LatLng
   heading: number
-  speed: number
   polyline: LatLng[]
   isFollowing: boolean
   onFollowStateChange: (following: boolean) => void
@@ -70,13 +68,22 @@ function DrivingCamera({
 
         // Schedule next frame
         rafRef.current = requestAnimationFrame(() => {
-          // ONLY pan map to interpolated position
-          // DO NOT rotate the map - only the arrow rotates
+          // Pan map smoothly to interpolated position
           map.panTo(state.position, {
             animate: false,
             noMoveStart: true,
             duration: 0,
           })
+
+          // Rotate map around SCREEN CENTER (not GPS position!)
+          const pane = map.getPane('mapPane')
+          if (pane) {
+            const size = map.getSize()
+            const center = size.divideBy(2) // Fixed screen center
+            pane.style.transformOrigin = `${center.x}px ${center.y}px`
+            pane.style.transform = `rotate(${-state.heading}deg)`
+            pane.style.willChange = 'transform'
+          }
         })
       })
     }
@@ -97,17 +104,19 @@ function DrivingCamera({
     const gpsState: GpsState = {
       position: snappedPosition,
       heading,
-      speed: speed / 3.6, // Convert km/h to m/s for stationary detection
+      speed: 0,
       timestamp: Date.now(),
     }
 
     interpolatorRef.current.updateTarget(gpsState)
-  }, [position, heading, speed, polyline])
+  }, [position, heading, polyline])
 
   // Initialize map view once
   useEffect(() => {
     if (!initializedRef.current) {
       map.setView(position, YANDEX_STREET_ZOOM, { animate: false })
+      // Increase padding to prevent black corners during rotation
+      map.options.padding = [OVERSCAN_PADDING, OVERSCAN_PADDING]
       initializedRef.current = true
     }
   }, [map, position])
@@ -131,6 +140,18 @@ function DrivingCamera({
       map.off('dragend', handleDragEnd)
     }
   }, [map, onFollowStateChange])
+
+  // Cleanup rotation on unmount
+  useEffect(() => {
+    return () => {
+      const pane = map.getPane('mapPane')
+      if (pane) {
+        pane.style.transform = ''
+        pane.style.transformOrigin = ''
+        pane.style.willChange = ''
+      }
+    }
+  }, [map])
 
   return null
 }
@@ -178,16 +199,12 @@ type Props = {
   heading: number
   nextPin: PinRow | null
   mapBadge?: string
-  speedKmh?: number // Add speed prop for heading stabilization
 }
 
-export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge, speedKmh = 0 }: Props) {
+export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge }: Props) {
   const [isFollowing, setIsFollowing] = useState(true)
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
-
-  // Verify this is the active navigation implementation
-  console.log('✅ ACTIVE NAVIGATION: ExamLiveMapLeaflet (CSS arrow overlay)')
 
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
@@ -290,7 +307,6 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
         <DrivingCamera
           position={userPos}
           heading={heading}
-          speed={speedKmh}
           polyline={polyline}
           isFollowing={isFollowing}
           onFollowStateChange={setIsFollowing}

@@ -399,7 +399,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
           <div className="exam-drive-main">
             {showMapView && (userPos || polyline[0]) && (
-              <ExamLiveMap route={route} userPos={userPos ?? polyline[0]} heading={heading} nextPin={nextPin} speedKmh={speedKmh} />
+              <ExamLiveMap route={route} userPos={userPos ?? polyline[0]} heading={heading} nextPin={nextPin} />
             )}
             {showPanelView && <ExamErrorGrid counts={exam.counts} onError={handleError} />}
           </div>
