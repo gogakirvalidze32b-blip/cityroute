@@ -987,7 +987,7 @@ button:disabled {
 
 /* Fixed center arrow overlay - CSS only, no Leaflet marker */
 .nav-arrow-overlay {
-  position: fixed; /* Changed to fixed - never affected by scroll/pan */
+  position: absolute; /* Absolute relative to .exam-live-map container */
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
@@ -1388,7 +1388,7 @@ button:disabled {
 }
 
 .exam-live-map {
-  position: relative;
+  position: relative; /* Critical: allows absolute positioning of arrow overlay */
   min-height: 0;
   min-width: 0;
   height: 100%;
