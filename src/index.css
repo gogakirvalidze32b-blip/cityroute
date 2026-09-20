@@ -1001,11 +1001,11 @@ button:disabled {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 1000;
+  z-index: 2000; /* Must be above all map elements */
   pointer-events: none; /* Never blocks map interaction */
   width: 0;
   height: 0;
-  /* No transition on position - it never moves */
+  /* CRITICAL: X/Y position NEVER changes - only rotation changes */
 }
 
 .nav-arrow-rotator {
@@ -1412,11 +1412,6 @@ button:disabled {
   min-height: 12rem;
   background: #1e293b !important;
   position: relative;
-  /* Performance optimization */
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  will-change: transform;
-  /* Prevent black corners during rotation */
   overflow: hidden !important;
 }
 

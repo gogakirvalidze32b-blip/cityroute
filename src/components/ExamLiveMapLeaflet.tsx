@@ -70,22 +70,13 @@ function DrivingCamera({
 
         // Schedule next frame
         rafRef.current = requestAnimationFrame(() => {
-          // Pan map smoothly to interpolated position
+          // ONLY pan map to interpolated position
+          // DO NOT rotate the map - only the arrow rotates
           map.panTo(state.position, {
             animate: false,
             noMoveStart: true,
             duration: 0,
           })
-
-          // Rotate map around SCREEN CENTER (not GPS position!)
-          const pane = map.getPane('mapPane')
-          if (pane) {
-            const size = map.getSize()
-            const center = size.divideBy(2) // Fixed screen center
-            pane.style.transformOrigin = `${center.x}px ${center.y}px`
-            pane.style.transform = `rotate(${-state.heading}deg)`
-            pane.style.willChange = 'transform'
-          }
         })
       })
     }
@@ -117,8 +108,6 @@ function DrivingCamera({
   useEffect(() => {
     if (!initializedRef.current) {
       map.setView(position, YANDEX_STREET_ZOOM, { animate: false })
-      // Increase padding to prevent black corners during rotation
-      map.options.padding = [OVERSCAN_PADDING, OVERSCAN_PADDING]
       initializedRef.current = true
     }
   }, [map, position])
@@ -142,18 +131,6 @@ function DrivingCamera({
       map.off('dragend', handleDragEnd)
     }
   }, [map, onFollowStateChange])
-
-  // Cleanup rotation on unmount
-  useEffect(() => {
-    return () => {
-      const pane = map.getPane('mapPane')
-      if (pane) {
-        pane.style.transform = ''
-        pane.style.transformOrigin = ''
-        pane.style.willChange = ''
-      }
-    }
-  }, [map])
 
   return null
 }
