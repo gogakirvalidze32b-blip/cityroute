@@ -68,22 +68,12 @@ function DrivingCamera({
 
         // Schedule next frame
         rafRef.current = requestAnimationFrame(() => {
-          // Pan map smoothly to interpolated position
+          // The map follows the vehicle while the arrow remains fixed in screen space.
           map.panTo(state.position, {
             animate: false,
             noMoveStart: true,
             duration: 0,
           })
-
-          // Rotate map around SCREEN CENTER (not GPS position!)
-          const pane = map.getPane('mapPane')
-          if (pane) {
-            const size = map.getSize()
-            const center = size.divideBy(2) // Fixed screen center
-            pane.style.transformOrigin = `${center.x}px ${center.y}px`
-            pane.style.transform = `rotate(${-state.heading}deg)`
-            pane.style.willChange = 'transform'
-          }
         })
       })
     }
@@ -140,18 +130,6 @@ function DrivingCamera({
       map.off('dragend', handleDragEnd)
     }
   }, [map, onFollowStateChange])
-
-  // Cleanup rotation on unmount
-  useEffect(() => {
-    return () => {
-      const pane = map.getPane('mapPane')
-      if (pane) {
-        pane.style.transform = ''
-        pane.style.transformOrigin = ''
-        pane.style.willChange = ''
-      }
-    }
-  }, [map])
 
   return null
 }
@@ -226,7 +204,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
           It stays perfectly centered at all times.
           Only the rotation changes. */}
       <div className="nav-arrow-overlay">
-        <div className="nav-arrow-rotator" style={{ transform: `rotate(${heading}deg)` }}>
+        <div className="nav-arrow-rotator">
           <div className="nav-arrow-fixed"></div>
           <div className="nav-arrow-dot-fixed"></div>
         </div>
@@ -251,70 +229,75 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
       )}
 
       {/* ==================== LEAFLET MAP ==================== */}
-      <MapContainer
-        center={userPos}
-        zoom={YANDEX_STREET_ZOOM}
-        className="exam-live-map__canvas"
-        zoomControl={false}
-        attributionControl={false}
-        // Performance optimizations
-        preferCanvas={false} // Use SVG for better rotation
-        updateWhenZooming={false}
-        updateWhenIdle={true}
+      <div
+        className="exam-live-map__camera"
+        style={{ transform: `rotate(${-heading}deg)` }}
       >
-        <MapSizeFix />
-
-        {/* Base map tiles */}
-        <TileLayer
-          url={MAP_TILES}
-          maxZoom={19}
-          updateWhenIdle={true}
+        <MapContainer
+          center={userPos}
+          zoom={YANDEX_STREET_ZOOM}
+          className="exam-live-map__canvas"
+          zoomControl={false}
+          attributionControl={false}
+          // Performance optimizations
+          preferCanvas={false} // Use SVG for better rotation
           updateWhenZooming={false}
-          keepBuffer={4} // Keep more tiles in memory
-        />
+          updateWhenIdle={true}
+        >
+          <MapSizeFix />
 
-        {/* Route polyline */}
-        <Polyline
-          positions={polyline}
-          pathOptions={{
-            color: '#3b82f6',
-            weight: 5,
-            opacity: 0.8,
-          }}
-        />
+          {/* Base map tiles */}
+          <TileLayer
+            url={MAP_TILES}
+            maxZoom={19}
+            updateWhenIdle={true}
+            updateWhenZooming={false}
+            keepBuffer={4} // Keep more tiles in memory
+          />
 
-        {/* Route pins */}
-        {pins.map((pin) => {
-          const isNext = nextPin?.id === pin.id
-          const isPulse = isNext && nextPinPulse
-          return (
-            <CircleMarker
-              key={pin.id}
-              center={[pin.lat, pin.lng]}
-              radius={isPulse ? 20 : 14}
-              pathOptions={{
-                color: isNext ? '#0d9488' : '#047857',
-                fillColor: isNext ? '#5eead4' : '#10b981',
-                fillOpacity: isPulse ? 0.9 : 1,
-                weight: isPulse ? 3 : 2,
-                className: isPulse ? 'exam-pin-pulse' : undefined,
-              }}
-            />
-          )
-        })}
+          {/* Route polyline */}
+          <Polyline
+            positions={polyline}
+            pathOptions={{
+              color: '#3b82f6',
+              weight: 5,
+              opacity: 0.8,
+            }}
+          />
 
-        {/* Camera controller */}
-        <DrivingCamera
-          position={userPos}
-          heading={heading}
-          polyline={polyline}
-          isFollowing={isFollowing}
-          onFollowStateChange={setIsFollowing}
-        />
+          {/* Route pins */}
+          {pins.map((pin) => {
+            const isNext = nextPin?.id === pin.id
+            const isPulse = isNext && nextPinPulse
+            return (
+              <CircleMarker
+                key={pin.id}
+                center={[pin.lat, pin.lng]}
+                radius={isPulse ? 20 : 14}
+                pathOptions={{
+                  color: isNext ? '#0d9488' : '#047857',
+                  fillColor: isNext ? '#5eead4' : '#10b981',
+                  fillOpacity: isPulse ? 0.9 : 1,
+                  weight: isPulse ? 3 : 2,
+                  className: isPulse ? 'exam-pin-pulse' : undefined,
+                }}
+              />
+            )
+          })}
 
-        {/* Interaction controller */}
-        <InteractionController isFollowing={isFollowing} />
-      </MapContainer>
+          {/* Camera controller */}
+          <DrivingCamera
+            position={userPos}
+            heading={heading}
+            polyline={polyline}
+            isFollowing={isFollowing}
+            onFollowStateChange={setIsFollowing}
+          />
+
+          {/* Interaction controller */}
+          <InteractionController isFollowing={isFollowing} />
+        </MapContainer>
+      </div>
     </div>
   )
 }

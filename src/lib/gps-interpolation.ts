@@ -101,10 +101,10 @@ export class GpsInterpolator {
       }
       targetHeading = this.lockedHeading
     } else {
-      // Moving - check if heading change is significant
+      // Moving - accept small real turns without letting the camera stall.
       const headingChange = angleDifference(this.currentState.heading, state.heading)
-      if (headingChange < 5) {
-        // Small change - might be GPS noise, keep current heading
+      if (headingChange < 2) {
+        // Tiny change: ignore GPS wobble but keep the heading responsive.
         targetHeading = this.currentState.heading
       } else {
         // Significant change - accept new heading
