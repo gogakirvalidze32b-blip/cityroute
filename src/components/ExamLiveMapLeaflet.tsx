@@ -1,79 +1,80 @@
-/**
- * Optimized Leaflet Navigation Map
- * 
- * Requirements:
- * 1. Vehicle arrow FIXED at screen center (CSS overlay, not Leaflet marker)
- * 2. Map moves underneath arrow (smooth panning)
- * 3. No black corners during rotation (overscan padding)
- * 4. Smooth GPS interpolation (60fps)
- * 5. Route snapping to prevent GPS drift
- * 6. Manual pan mode - arrow stays centered, map moves freely
- * 7. Recenter button to resume following
- * 8. Audio triggers only once per pin
- * 9. No map recreation on GPS updates
- * 10. Performance optimized for Android tablets
- */
-
-import { useEffect, useRef, useState } from 'react'
-import { MapContainer, TileLayer, CircleMarker, Polyline, useMap, useMapEvents } from 'react-leaflet'
-import type L from 'leaflet'
+import React, { useEffect, useRef, useState } from 'react'
+import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
+import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { MapBasemapLayers } from '@/components/MapBasemapLayers'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
+import { MAP_TILES } from '@/lib/map-tiles'
+import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
+import type { PinRow, RouteWithPins } from '@/types/database'
 import { GpsInterpolator, type GpsState } from '@/lib/gps-interpolation'
 import { snapToRoute } from '@/lib/route-snapping'
-import type { PinRow, RouteWithPins } from '@/types/database'
 
-const YANDEX_STREET_ZOOM = 17
-const MAP_TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-const OVERSCAN_PADDING = 300 // Extra pixels to prevent black corners during rotation
+// ============================================================================
+// GOOGLE MAPS-STYLE NAVIGATION ARCHITECTURE
+// ============================================================================
+// 
+// CRITICAL RULES:
+// 1. Vehicle arrow is FIXED to screen center - NEVER moves
+// 2. Map camera moves underneath the arrow
+// 3. Arrow is NOT a Leaflet marker - it's a pure CSS overlay
+// 4. Arrow is OUTSIDE the Leaflet map container (sibling, not child)
+// 5. NO rotation of mapPane.style.transform (causes black triangles)
+// 6. Map stays north-up for stability (rotation removed to fix black corners)
+// ============================================================================
 
-// ==================== CAMERA CONTROLLER ====================
-// Handles smooth GPS following, interpolation, and rotation
+function MapSizeFix() {
+  const map = useMap()
+  useEffect(() => {
+    map.invalidateSize()
+    const id = window.setTimeout(() => map.invalidateSize(), 80)
+    return () => window.clearTimeout(id)
+  }, [map])
+  return null
+}
 
-function DrivingCamera({
+/**
+ * Smooth GPS Camera - moves map to follow vehicle position
+ * NEVER touches the arrow - arrow is completely separate
+ */
+function SmoothGpsCamera({
   position,
   heading,
-  polyline,
   isFollowing,
-  onFollowStateChange,
+  polyline,
 }: {
   position: LatLng
   heading: number
-  polyline: LatLng[]
   isFollowing: boolean
-  onFollowStateChange: (following: boolean) => void
+  polyline: LatLng[]
 }) {
   const map = useMap()
   const interpolatorRef = useRef<GpsInterpolator | null>(null)
-  const rafRef = useRef<number>()
-  const currentPosRef = useRef<LatLng>(position)
-  const currentHeadingRef = useRef(heading)
-  const initializedRef = useRef(false)
-  const userDraggingRef = useRef(false)
+  const hasInitialized = useRef(false)
+  const rafRef = useRef<number | undefined>(undefined)
 
-  // Initialize interpolator once
+  // Initialize interpolator for smooth movement
   useEffect(() => {
     if (!interpolatorRef.current) {
       interpolatorRef.current = new GpsInterpolator()
-
-      // Set up 60fps interpolation callback
+      
       interpolatorRef.current.setOnUpdate((state) => {
-        if (!isFollowing || userDraggingRef.current) return
-
-        currentPosRef.current = state.position
-        currentHeadingRef.current = state.heading
-
-        // Cancel any pending animation frame
+        if (!isFollowing) return
+        
+        // Only move the map - arrow stays fixed
         if (rafRef.current) cancelAnimationFrame(rafRef.current)
-
-        // Schedule next frame
         rafRef.current = requestAnimationFrame(() => {
-          // The map follows the vehicle while the arrow remains fixed in screen space.
-          map.panTo(state.position, {
-            animate: false,
-            noMoveStart: true,
-            duration: 0,
+          map.panTo(state.position, { 
+            animate: false, 
+            noMoveStart: true, 
+            duration: 0 
           })
+          
+          // NO ROTATION - keeps map north-up to prevent black triangles
+          // Map rotation via mapPane.style.transform causes:
+          // - Black triangular corners (undersized rotated rectangle)
+          // - Overwrites Leaflet's internal pan transform
+          // - Arrow movement issues
         })
       })
     }
@@ -84,92 +85,87 @@ function DrivingCamera({
     }
   }, [map, isFollowing])
 
-  // Update interpolator when GPS changes
+  // Update interpolator target when GPS changes
   useEffect(() => {
     if (!interpolatorRef.current) return
-
-    // Snap to route to prevent GPS drift
+    
+    // Snap to route for stability
     const snappedPosition = snapToRoute(position, polyline, 50)
-
+    
     const gpsState: GpsState = {
       position: snappedPosition,
       heading,
       speed: 0,
       timestamp: Date.now(),
     }
-
+    
     interpolatorRef.current.updateTarget(gpsState)
   }, [position, heading, polyline])
 
-  // Initialize map view once
+  // Initialize zoom once
   useEffect(() => {
-    if (!initializedRef.current) {
-      map.setView(position, YANDEX_STREET_ZOOM, { animate: false })
-      // Increase padding to prevent black corners during rotation
-      map.options.padding = [OVERSCAN_PADDING, OVERSCAN_PADDING]
-      initializedRef.current = true
+    if (!hasInitialized.current) {
+      const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
+      map.setView(position, zoom, { animate: false })
+      hasInitialized.current = true
     }
   }, [map, position])
 
-  // Stop following when user drags manually
+  // Stop following when user manually pans
   useEffect(() => {
-    const handleDragStart = () => {
-      userDraggingRef.current = true
-      onFollowStateChange(false)
+    if (!isFollowing && interpolatorRef.current) {
+      interpolatorRef.current.stop()
     }
-
-    const handleDragEnd = () => {
-      userDraggingRef.current = false
-    }
-
-    map.on('dragstart', handleDragStart)
-    map.on('dragend', handleDragEnd)
-
-    return () => {
-      map.off('dragstart', handleDragStart)
-      map.off('dragend', handleDragEnd)
-    }
-  }, [map, onFollowStateChange])
+  }, [isFollowing])
 
   return null
 }
 
-// ==================== MAP SIZE FIX ====================
-
-function MapSizeFix() {
+/**
+ * Detects manual map interaction
+ */
+function InteractionController({ 
+  isFollowing, 
+  onPause 
+}: { 
+  isFollowing: boolean
+  onPause: () => void
+}) {
   const map = useMap()
-  useEffect(() => {
-    map.invalidateSize()
-    const id = window.setTimeout(() => map.invalidateSize(), 100)
-    return () => window.clearTimeout(id)
-  }, [map])
-  return null
-}
-
-// ==================== INTERACTION HANDLER ====================
-// Prevents map interactions during auto-follow mode (optional)
-
-function InteractionController({ isFollowing }: { isFollowing: boolean }) {
-  const map = useMap()
-
+  
+  // Enable/disable map interactions based on follow state
   useEffect(() => {
     if (isFollowing) {
-      // During auto-follow, allow dragging to pause
-      map.dragging.enable()
-      map.scrollWheelZoom.enable()
-      map.touchZoom.enable()
+      // Disable manual interaction during navigation
+      map.dragging.disable()
+      map.touchZoom.disable()
+      map.doubleClickZoom.disable()
+      map.scrollWheelZoom.disable()
+      map.boxZoom.disable()
+      map.keyboard.disable()
     } else {
-      // When paused, allow free interaction
+      // Enable when paused
       map.dragging.enable()
-      map.scrollWheelZoom.enable()
       map.touchZoom.enable()
+      map.doubleClickZoom.enable()
+      map.scrollWheelZoom.enable()
+      map.boxZoom.enable()
+      map.keyboard.enable()
     }
   }, [map, isFollowing])
-
+  
+  // Detect user interaction
+  useMapEvents({
+    dragstart: () => {
+      if (isFollowing) onPause()
+    },
+    zoomstart: () => {
+      if (isFollowing) onPause()
+    },
+  })
+  
   return null
 }
-
-// ==================== MAIN COMPONENT ====================
 
 type Props = {
   route: RouteWithPins
@@ -186,84 +182,66 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
 
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
-
+  
   const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
 
-  // Recenter button handler
   const handleRecenter = () => {
     setIsFollowing(true)
-    // Map will automatically resume following via DrivingCamera
   }
 
+  // ============================================================================
+  // CRITICAL ARCHITECTURE:
+  // Arrow overlay is OUTSIDE (sibling) of .exam-live-map container
+  // This prevents any map transforms from affecting the arrow
+  // ============================================================================
+  
   return (
-    <div className="exam-live-map">
-      {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
-
-      {/* ==================== FIXED CENTER ARROW ====================
-          This is a CSS overlay, NOT a Leaflet marker.
-          It stays perfectly centered at all times.
-          Only the rotation changes. */}
-      <div className="nav-arrow-overlay">
-        <div className="nav-arrow-rotator">
-          <div className="nav-arrow-fixed"></div>
-          <div className="nav-arrow-dot-fixed"></div>
+    <>
+      {/* ==================== FIXED VEHICLE ARROW ====================
+          CRITICAL: Arrow must be OUTSIDE the map container!
+          - position: fixed (to viewport, not parent)
+          - Sibling of map, NOT child
+          - NEVER moves - only rotates
+          - NOT affected by any map transforms */}
+      <div className="fixed-navigation-arrow-overlay">
+        <div className="fixed-navigation-arrow-rotator" style={{ transform: `rotate(${heading}deg)` }}>
+          <div className="fixed-navigation-arrow-icon"></div>
+          <div className="fixed-navigation-arrow-dot"></div>
         </div>
       </div>
 
-      {/* ==================== RECENTER BUTTON ==================== */}
-      <button
-        type="button"
-        className={`map-recenter-btn exam-live-map__recenter ${!isFollowing ? 'map-recenter-btn--active' : ''}`}
-        onClick={handleRecenter}
-        title="ცენტრში დაბრუნება"
-      >
-        {isFollowing ? '🎯' : '📍'}
-      </button>
+      {/* ==================== MAP CONTAINER ==================== */}
+      <div className="exam-live-map">
+        {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
+        
+        {/* Recenter button */}
+        <button 
+          type="button" 
+          className={`map-recenter-btn exam-live-map__recenter ${!isFollowing ? 'map-recenter-btn--active' : ''}`}
+          onClick={handleRecenter}
+          title="ცენტრში დაბრუნება"
+        >
+          {isFollowing ? '🎯' : '📍'}
+        </button>
 
-      {/* ==================== NEXT PIN HUD ==================== */}
-      {nextPin && (
-        <div className="exam-live-map__hud">
-          <small>შემდეგი · {nextPinDist} მ</small>
-          <strong>{nextPin.instruction_ka}</strong>
-        </div>
-      )}
+        {/* Next instruction HUD */}
+        {nextPin && (
+          <div className="exam-live-map__hud">
+            <small>შემდეგი · {nextPinDist} მ</small>
+            <strong>{nextPin.instruction_ka}</strong>
+          </div>
+        )}
 
-      {/* ==================== LEAFLET MAP ==================== */}
-      <div
-        className="exam-live-map__camera"
-        style={{ transform: `rotate(${-heading}deg)` }}
-      >
+        {/* Leaflet Map */}
         <MapContainer
           center={userPos}
           zoom={YANDEX_STREET_ZOOM}
           className="exam-live-map__canvas"
           zoomControl={false}
           attributionControl={false}
-          // Performance optimizations
-          preferCanvas={false} // Use SVG for better rotation
-          updateWhenZooming={false}
-          updateWhenIdle={true}
         >
           <MapSizeFix />
-
-          {/* Base map tiles */}
-          <TileLayer
-            url={MAP_TILES}
-            maxZoom={19}
-            updateWhenIdle={true}
-            updateWhenZooming={false}
-            keepBuffer={4} // Keep more tiles in memory
-          />
-
-          {/* Route polyline */}
-          <Polyline
-            positions={polyline}
-            pathOptions={{
-              color: '#3b82f6',
-              weight: 5,
-              opacity: 0.8,
-            }}
-          />
+          <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
           {/* Route pins */}
           {pins.map((pin) => {
@@ -285,19 +263,21 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
             )
           })}
 
-          {/* Camera controller */}
-          <DrivingCamera
-            position={userPos}
-            heading={heading}
-            polyline={polyline}
-            isFollowing={isFollowing}
-            onFollowStateChange={setIsFollowing}
-          />
-
           {/* Interaction controller */}
-          <InteractionController isFollowing={isFollowing} />
+          <InteractionController 
+            isFollowing={isFollowing} 
+            onPause={() => setIsFollowing(false)} 
+          />
+          
+          {/* Smooth GPS camera */}
+          <SmoothGpsCamera 
+            position={userPos} 
+            heading={heading} 
+            isFollowing={isFollowing}
+            polyline={polyline}
+          />
         </MapContainer>
       </div>
-    </div>
+    </>
   )
 }

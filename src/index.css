@@ -995,50 +995,54 @@ button:disabled {
    ACTIVE ARROW STYLES (Current implementation)
    Fixed center arrow overlay - CSS only, NOT a Leaflet marker
    Used by ExamLiveMapLeaflet.tsx
+   
+   CRITICAL ARCHITECTURE:
+   - position: fixed (viewport-relative, NEVER affected by parent transforms)
+   - Arrow rendered OUTSIDE Leaflet map container (sibling, not child)
+   - Only rotation changes, position NEVER changes
+   - Prevents arrow movement during map pan/drag
    =========================================================================== */
-.nav-arrow-overlay {
-  position: absolute;
-  top: 50%;
+.fixed-navigation-arrow-overlay {
+  position: fixed; /* FIXED to viewport - NEVER moves */
   left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 1000;
-  pointer-events: none;
+  top: 50%;
   width: 0;
   height: 0;
-  /* No transition on position - it never moves */
-}
-
-.nav-arrow-rotator {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 36px;
-  height: 36px;
-  margin-left: -18px;
-  margin-top: -18px;
-  will-change: transform;
-  /* Only rotation should transition */
-  transition: transform 0.15s ease-out;
+  z-index: 10000; /* Above all map elements */
   pointer-events: none; /* Never blocks map interaction */
+  transform: translate(-50%, -50%);
 }
 
-.nav-arrow-fixed {
+.fixed-navigation-arrow-rotator {
+  position: relative;
   width: 0;
   height: 0;
-  margin: 0 auto;
+  transition: transform 0.15s ease-out; /* Smooth rotation only */
+  will-change: transform;
+}
+
+.fixed-navigation-arrow-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin-left: -11px;
+  margin-top: -24px;
   border-left: 11px solid transparent;
   border-right: 11px solid transparent;
   border-bottom: 24px solid #4285f4;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
 }
 
-.nav-arrow-dot-fixed {
+.fixed-navigation-arrow-dot {
   position: absolute;
   left: 50%;
-  top: 22px;
+  top: 50%;
   width: 14px;
   height: 14px;
   margin-left: -7px;
+  margin-top: -2px;
   border-radius: 50%;
   background: #4285f4;
   border: 3px solid #fff;
@@ -1398,20 +1402,25 @@ button:disabled {
 }
 
 .exam-live-map {
-  position: relative; /* Critical: allows absolute positioning of arrow overlay */
+  position: relative;
   min-height: 0;
   min-width: 0;
   height: 100%;
   background: #0f172a;
-  overflow: hidden; /* Critical: prevents black corners */
+  overflow: hidden;
 }
 
-.exam-live-map__camera {
-  width: 100%;
-  height: 100%;
+.navigation-screen {
+  position: relative;
+  overflow: hidden;
+}
+
+.navigation-map-shell {
+  position: absolute;
+  inset: 0;
   transform-origin: center center;
   will-change: transform;
-  transition: transform 0.15s ease-out;
+  transition: transform 0.18s ease-out;
 }
 
 .exam-live-map__canvas {
@@ -1431,17 +1440,6 @@ button:disabled {
 /* Hide white flash on tile loading */
 .exam-live-map__canvas .leaflet-tile-container {
   background: #1e293b !important;
-}
-
-/* Performance optimization for map pane */
-.exam-live-map__canvas .leaflet-map-pane {
-  transform: translateZ(0);
-  will-change: transform;
-}
-
-/* Optimize marker rendering */
-.exam-live-map__canvas .leaflet-marker-pane {
-  transform: translateZ(0);
 }
 
 .exam-live-map__canvas::before {
