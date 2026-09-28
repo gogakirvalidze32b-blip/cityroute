@@ -19,13 +19,13 @@ import { snapToRoute } from '@/lib/route-snapping'
 // 2. FREE CAMERA MODE - User controls camera, can inspect freely
 //
 // CRITICAL RULES:
-// - Vehicle arrow is FIXED to screen center - NEVER moves
+// - Vehicle arrow is FIXED to screen center - NEVER moves X/Y
 // - Arrow is position:fixed CSS overlay OUTSIDE map container
-// - Map camera moves underneath the fixed arrow
+// - Map camera moves independently underneath the fixed arrow
 // - NO mapPane.style.transform rotation (causes black triangles)
-// - Zoom works in BOTH modes
-// - Only DRAG triggers FREE mode
-// - Recenter button switches back to FOLLOW mode
+// - Zoom works in BOTH modes WITHOUT triggering mode change
+// - ONLY DRAG triggers FREE mode
+// - Recenter button is the ONLY way back to FOLLOW mode
 // ============================================================================
 
 type CameraMode = 'FOLLOW' | 'FREE'
@@ -41,10 +41,11 @@ function MapSizeFix() {
 }
 
 /**
- * Smooth heading interpolation to prevent arrow jitter
+ * Smooth heading interpolation - prevents arrow jitter
+ * Handles 360° wraparound correctly
  */
 function smoothHeading(current: number, target: number, smoothFactor: number = 0.15): number {
-  // Handle 360° wraparound - always take shortest path
+  // Shortest path around circle
   let delta = target - current
   if (delta > 180) delta -= 360
   if (delta < -180) delta += 360
@@ -53,35 +54,52 @@ function smoothHeading(current: number, target: number, smoothFactor: number = 0
 }
 
 /**
- * Google Maps-style camera with FOLLOW and FREE modes
+ * Google Maps-style Navigation Camera
+ * 
+ * FOLLOW MODE:
+ * - GPS controls camera via interpolated panTo
+ * - Map follows vehicle smoothly
+ * - Arrow stays fixed at screen center
+ * 
+ * FREE CAMERA MODE:
+ * - User controls camera (drag/zoom)
+ * - GPS continues running but does NOT move camera
+ * - No automatic return to vehicle
+ * - Arrow stays fixed at screen center
+ * 
+ * RECENTER:
+ * - Smooth flyTo animation back to vehicle
+ * - Switches from FREE → FOLLOW
+ * - Arrow stays fixed during animation
  */
 function NavigationCamera({
   position,
   heading,
   mode,
   polyline,
-  onRecenterComplete,
+  triggerRecenter,
 }: {
   position: LatLng
   heading: number
   mode: CameraMode
   polyline: LatLng[]
-  onRecenterComplete?: () => void
+  triggerRecenter: number // Increment to trigger recenter
 }) {
   const map = useMap()
   const interpolatorRef = useRef<GpsInterpolator | null>(null)
   const hasInitialized = useRef(false)
   const rafRef = useRef<number | undefined>(undefined)
-  const recenteringRef = useRef(false)
+  const lastRecenterTrigger = useRef(0)
 
-  // Initialize interpolator for smooth GPS following
+  // Initialize interpolator once
   useEffect(() => {
     if (!interpolatorRef.current) {
       interpolatorRef.current = new GpsInterpolator()
       
+      // Callback for smooth GPS following
       interpolatorRef.current.setOnUpdate((state) => {
-        // Only follow GPS in FOLLOW mode or during recenter
-        if (mode !== 'FOLLOW' && !recenteringRef.current) return
+        // CRITICAL: Only follow GPS in FOLLOW mode
+        if (mode !== 'FOLLOW') return
         
         // Smooth map movement - arrow stays fixed
         if (rafRef.current) cancelAnimationFrame(rafRef.current)
@@ -92,7 +110,7 @@ function NavigationCamera({
             duration: 0 
           })
           
-          // NO MAP ROTATION to prevent black triangles
+          // NO MAP ROTATION - prevents black triangles
           // Arrow rotation is handled separately via CSS
         })
       })
@@ -104,7 +122,7 @@ function NavigationCamera({
     }
   }, [map, mode])
 
-  // Update GPS target when position/heading changes
+  // Update GPS target when position changes
   useEffect(() => {
     if (!interpolatorRef.current) return
     
@@ -121,7 +139,7 @@ function NavigationCamera({
     interpolatorRef.current.updateTarget(gpsState)
   }, [position, heading, polyline])
 
-  // Initialize map once
+  // Initialize map once on mount
   useEffect(() => {
     if (!hasInitialized.current) {
       const zoom = Math.max(map.getZoom(), YANDEX_STREET_ZOOM)
@@ -130,43 +148,40 @@ function NavigationCamera({
     }
   }, [map, position])
 
-  // Stop interpolator in FREE mode
+  // Stop interpolator in FREE mode to prevent camera fighting
   useEffect(() => {
-    if (mode === 'FREE' && interpolatorRef.current && !recenteringRef.current) {
+    if (mode === 'FREE' && interpolatorRef.current) {
       interpolatorRef.current.stop()
     }
   }, [mode])
 
-  // Smooth recenter animation
+  // Handle recenter trigger
   useEffect(() => {
-    if (mode === 'FOLLOW' && !hasInitialized.current) {
-      // User pressed recenter - smooth camera transition
-      recenteringRef.current = true
+    if (triggerRecenter > lastRecenterTrigger.current) {
+      lastRecenterTrigger.current = triggerRecenter
       
       // Get current GPS position
       const snappedPosition = snapToRoute(position, polyline, 50)
       
-      // Smooth flyTo animation
+      // Smooth animation back to vehicle
       map.flyTo(snappedPosition, map.getZoom(), {
         animate: true,
-        duration: 0.8, // 800ms smooth transition
+        duration: 0.8,
         easeLinearity: 0.25,
       })
       
-      // Mark recenter complete after animation
-      setTimeout(() => {
-        recenteringRef.current = false
-        if (onRecenterComplete) onRecenterComplete()
-      }, 850)
+      // Note: Mode switch to FOLLOW is handled by parent component
     }
-  }, [mode, map, position, polyline, onRecenterComplete])
+  }, [triggerRecenter, map, position, polyline])
 
   return null
 }
 
 /**
- * Detects manual map interaction (drag only - NOT zoom)
- * Zoom is allowed in both FOLLOW and FREE modes
+ * Interaction Detector
+ * 
+ * CRITICAL: Only DRAG triggers FREE mode
+ * Zoom is allowed in BOTH modes without triggering mode change
  */
 function InteractionDetector({ 
   mode,
@@ -177,37 +192,34 @@ function InteractionDetector({
 }) {
   const map = useMap()
   
-  // CRITICAL: Always keep zoom enabled
-  // Only disable dragging in FOLLOW mode
+  // CRITICAL: ALWAYS enable zoom regardless of mode
+  // Only dragging behavior changes between modes
   useEffect(() => {
+    // Zoom is ALWAYS enabled
+    map.touchZoom.enable()
+    map.doubleClickZoom.enable()
+    map.scrollWheelZoom.enable()
+    map.boxZoom.enable()
+    map.keyboard.enable()
+    
     if (mode === 'FOLLOW') {
-      // FOLLOW MODE: Disable drag but ALLOW zoom
+      // FOLLOW MODE: Disable drag only
       map.dragging.disable()
-      map.touchZoom.enable() // ✅ Zoom allowed
-      map.doubleClickZoom.enable() // ✅ Zoom allowed
-      map.scrollWheelZoom.enable() // ✅ Zoom allowed
-      map.boxZoom.enable()
-      map.keyboard.enable()
     } else {
       // FREE MODE: Enable everything
       map.dragging.enable()
-      map.touchZoom.enable()
-      map.doubleClickZoom.enable()
-      map.scrollWheelZoom.enable()
-      map.boxZoom.enable()
-      map.keyboard.enable()
     }
   }, [map, mode])
   
-  // Detect drag ONLY (not zoom) to enter FREE mode
+  // Detect ONLY drag (not zoom) to enter FREE mode
   useMapEvents({
     dragstart: () => {
       if (mode === 'FOLLOW') {
         onEnterFreeMode()
       }
     },
-    // IMPORTANT: Do NOT listen to zoomstart
-    // Zoom should work in FOLLOW mode without triggering FREE mode
+    // IMPORTANT: Do NOT listen to zoomstart/zoomend
+    // Zoom must work in FOLLOW mode without triggering FREE mode
   })
   
   return null
@@ -224,16 +236,14 @@ type Props = {
 export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge }: Props) {
   const [cameraMode, setCameraMode] = useState<CameraMode>('FOLLOW')
   const [smoothedHeading, setSmoothedHeading] = useState(heading)
+  const [recenterTrigger, setRecenterTrigger] = useState(0)
+  
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
 
   // Smooth heading for arrow rotation (prevents jitter)
   useEffect(() => {
-    setSmoothedHeading(prev => {
-      // When stopped (low speed), maintain stable heading
-      const newHeading = smoothHeading(prev, heading, 0.15)
-      return newHeading
-    })
+    setSmoothedHeading(prev => smoothHeading(prev, heading, 0.15))
   }, [heading])
 
   const nextPinDist =
@@ -242,7 +252,10 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
   const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
 
   const handleRecenter = () => {
-    // Switch to FOLLOW mode - camera will smoothly animate back
+    // CRITICAL: This is the ONLY way to return to FOLLOW mode
+    // Trigger recenter animation
+    setRecenterTrigger(prev => prev + 1)
+    // Switch to FOLLOW mode
     setCameraMode('FOLLOW')
   }
 
@@ -254,19 +267,19 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
   // ============================================================================
   // CRITICAL ARCHITECTURE:
   // Arrow overlay is OUTSIDE (sibling) of .exam-live-map container
-  // This prevents any map transforms from affecting the arrow
-  // Arrow position is FIXED, only rotation changes based on smoothed heading
+  // Arrow position is FIXED to viewport - NEVER changes X/Y
+  // Only rotation changes based on smoothed heading
+  // Map camera moves independently underneath the arrow
   // ============================================================================
   
   return (
     <>
       {/* ==================== FIXED VEHICLE ARROW ====================
-          CRITICAL: Arrow must be OUTSIDE the map container!
-          - position: fixed (to viewport, not parent)
-          - Sibling of map, NOT child
-          - NEVER moves X/Y - only rotates
-          - NOT affected by any map transforms
-          - Uses smoothed heading to prevent jitter */}
+          REPRESENTS: Current real vehicle GPS location
+          POSITION: Fixed at screen center - NEVER moves X/Y
+          ROTATION: Based on smoothed vehicle heading
+          DOM: Sibling of map (not child) to avoid transform context issues
+          CSS: position:fixed (viewport-relative, immune to map transforms) */}
       <div className="fixed-navigation-arrow-overlay">
         <div className="fixed-navigation-arrow-rotator" style={{ transform: `rotate(${smoothedHeading}deg)` }}>
           <div className="fixed-navigation-arrow-icon"></div>
@@ -278,12 +291,12 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
       <div className="exam-live-map">
         {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
         
-        {/* Recenter button - highlighted in FREE mode */}
+        {/* Recenter button - ONLY way to return to FOLLOW mode */}
         <button 
           type="button" 
           className={`map-recenter-btn exam-live-map__recenter ${cameraMode === 'FREE' ? 'map-recenter-btn--active' : ''}`}
           onClick={handleRecenter}
-          title="ცენტრში დაბრუნება"
+          title="დაბრუნება ცენტრში"
         >
           {cameraMode === 'FOLLOW' ? '🎯' : '📍'}
         </button>
@@ -327,7 +340,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
             )
           })}
 
-          {/* Interaction detector - only drag triggers FREE mode */}
+          {/* Interaction detector - ONLY drag triggers FREE mode */}
           <InteractionDetector 
             mode={cameraMode} 
             onEnterFreeMode={handleEnterFreeMode} 
@@ -339,9 +352,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
             heading={heading} 
             mode={cameraMode}
             polyline={polyline}
-            onRecenterComplete={() => {
-              // Recenter animation complete
-            }}
+            triggerRecenter={recenterTrigger}
           />
         </MapContainer>
       </div>
