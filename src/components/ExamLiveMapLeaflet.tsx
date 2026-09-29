@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
@@ -331,23 +331,36 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
           <MapSizeFix />
           <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
-          {/* Route pins */}
+          {/* All pins with trigger zones */}
           {pins.map((pin) => {
             const isNext = nextPin?.id === pin.id
             const isPulse = isNext && nextPinPulse
             return (
-              <CircleMarker
-                key={pin.id}
-                center={[pin.lat, pin.lng]}
-                radius={isPulse ? 20 : 14}
-                pathOptions={{
-                  color: isNext ? '#0d9488' : '#047857',
-                  fillColor: isNext ? '#5eead4' : '#10b981',
-                  fillOpacity: isPulse ? 0.9 : 1,
-                  weight: isPulse ? 3 : 2,
-                  className: isPulse ? 'exam-pin-pulse' : undefined,
-                }}
-              />
+              <React.Fragment key={pin.id}>
+                {/* Green trigger zone circle */}
+                <Circle
+                  center={[pin.lat, pin.lng]}
+                  radius={pin.trigger_distance_m}
+                  pathOptions={{
+                    color: isNext ? '#14b8a6' : '#10b981',
+                    fillColor: isNext ? '#14b8a6' : '#10b981',
+                    fillOpacity: isNext ? 0.12 : 0.08,
+                    weight: isNext ? 2 : 1.5,
+                  }}
+                />
+                {/* Center dot */}
+                <CircleMarker
+                  center={[pin.lat, pin.lng]}
+                  radius={isPulse ? 14 : 10}
+                  pathOptions={{
+                    color: isNext ? '#0f766e' : '#047857',
+                    fillColor: isNext ? '#5eead4' : '#10b981',
+                    fillOpacity: 1,
+                    weight: 2,
+                    className: isPulse ? 'exam-pin-pulse' : undefined,
+                  }}
+                />
+              </React.Fragment>
             )
           })}
 
