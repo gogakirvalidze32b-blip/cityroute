@@ -253,7 +253,26 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         }
         prevGpsRef.current = pos
 
-        const pending = voicePins.find((p) => !triggeredRef.current.has(p.id))
+        // Sequence-based pin activation logic for Route 1
+        // Finish pins (last 3: indices 31, 32, 33) must not activate until route progress reaches them
+        const triggeredCount = triggeredRef.current.size
+        const totalPins = voicePins.length
+        const finishSectionStart = Math.max(0, totalPins - 3) // Last 3 pins are Finish section
+        
+        // Find next untriggered pin that is eligible based on route progress
+        const pending = voicePins.find((p, idx) => {
+          if (triggeredRef.current.has(p.id)) return false
+          
+          // Finish pins (last 3) only become eligible after reaching finish section
+          // This prevents them from triggering at the start due to geographic proximity
+          if (idx >= finishSectionStart && triggeredCount < finishSectionStart) {
+            console.log(`🚫 Finish pin blocked: "${p.instruction_ka}" (index ${idx}) - Progress: ${triggeredCount}/${finishSectionStart}`)
+            return false
+          }
+          
+          return true
+        })
+        
         setNextPin(pending ?? null)
 
         // აუდიო ყოველთვის ითამაშოს თუ routeAudio feature enabled-ია, view-ის მიუხედავად
@@ -265,11 +284,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         
         console.log('📍 Pin check:', 
           'ID:', pending.id,
+          '| Sort order:', pending.sort_order,
           '| Instruction:', pending.instruction_ka,
           '| Distance:', Math.round(dist) + 'm',
           '| Trigger:', pending.trigger_distance_m + 'm',
           '| Heading OK:', headingOk,
-          '| Already spoken:', alreadySpoken
+          '| Already spoken:', alreadySpoken,
+          '| Route progress:', triggeredCount + '/' + totalPins
         )
 
         if (
@@ -277,7 +298,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           headingOk &&
           !alreadySpoken
         ) {
-          console.log('🔊 Audio trigger!', pending.instruction_ka)
+          console.log('🔊 Audio trigger!', pending.instruction_ka, '| Progress:', (triggeredCount + 1) + '/' + totalPins)
           triggeredRef.current.add(pending.id)
           setLastSpoken(pending.instruction_ka)
           void audioEngine.play(pending.audio_url, pending.id, pending.instruction_ka)
@@ -305,7 +326,19 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setExamSummary(null)
     setElapsedMs(0)
     setLastSpoken(EXAM_START_TEXT)
-    setNextPin(voicePins.find((p) => !triggeredRef.current.has(p.id)) ?? null)
+    
+    // Apply sequence logic: Finish pins (last 3) should not be shown as next pin at start
+    const triggeredCount = triggeredRef.current.size
+    const totalPins = voicePins.length
+    const finishSectionStart = Math.max(0, totalPins - 3)
+    
+    const nextPinCandidate = voicePins.find((p, idx) => {
+      if (triggeredRef.current.has(p.id)) return false
+      if (idx >= finishSectionStart && triggeredCount < finishSectionStart) return false
+      return true
+    })
+    
+    setNextPin(nextPinCandidate ?? null)
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
