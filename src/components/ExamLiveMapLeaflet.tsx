@@ -372,15 +372,15 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
               const isPulse = isNext && nextPinPulse
               return (
                 <React.Fragment key={pin.id}>
-                  {/* Green pin marker (no large trigger zone circle) */}
+                  {/* Green pin marker - 25% larger for better mobile visibility */}
                   <CircleMarker
                     center={[pin.lat, pin.lng]}
-                    radius={isPulse ? 14 : 10}
+                    radius={isPulse ? 18 : 13}
                     pathOptions={{
                       color: isNext ? '#0f766e' : '#047857',
                       fillColor: isNext ? '#5eead4' : '#10b981',
                       fillOpacity: 1,
-                      weight: 2,
+                      weight: 3,
                       className: isPulse ? 'exam-pin-pulse' : undefined,
                     }}
                   />
