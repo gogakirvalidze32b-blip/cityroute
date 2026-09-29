@@ -73,7 +73,7 @@ function NavigationCameraController({
   onCameraUpdate: (position: LatLng, heading: number) => void
 }) {
   const map = useMap()
-  const rafRef = useRef<number>()
+  const rafRef = useRef<number | undefined>(undefined)
   const hasInitialized = useRef(false)
   const currentDisplayPosition = useRef<LatLng | null>(null)
   const currentDisplayHeading = useRef(0)
