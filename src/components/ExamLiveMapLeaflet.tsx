@@ -10,7 +10,7 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type CameraMode } from '@/lib/navigation-state'
 
 // ============================================================================
-// GOOGLE MAPS-STYLE NAVIGATION SYSTEM
+// GOOGLE MAPS-STYLE NAVIGATION SYSTEM - CAMERA FIX
 // ============================================================================
 //
 // ARCHITECTURE:
@@ -19,11 +19,14 @@ import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type Cam
 // 3. Fixed arrow overlay - Never moves X/Y, only rotates
 // 4. Map camera - Moves underneath fixed arrow
 //
-// KEY FIX for PROBLEMS:
+// CRITICAL FIXES:
 // - GPS timestamps prevent old callbacks from corrupting state
 // - Route progress is monotonic (never moves backward)
 // - Camera state is separate from GPS state
 // - FREE mode lets user inspect map without GPS interference
+// - Dragging ALWAYS enabled, triggers FREE mode immediately
+// - GPS cannot move camera in FREE mode (uses ref to avoid stale closures)
+// - Animation loop stops fighting user in FREE mode
 // ============================================================================
 
 function MapSizeFix() {
@@ -54,15 +57,19 @@ function lerpAngle(current: number, target: number, factor: number): number {
  * Navigation Camera Controller
  * 
  * FOLLOW MODE: Camera follows GPS navigation state
- * FREE MODE: Camera controlled by user, GPS doesn't interfere
+ * FREE MODE: Camera controlled by user - GPS MUST NOT INTERFERE
+ * 
+ * CRITICAL: Uses refs to avoid stale closures
  */
 function NavigationCameraController({
   navManager,
   cameraManager,
+  cameraModeRef,
   onCameraUpdate,
 }: {
   navManager: React.MutableRefObject<NavigationStateManager | null>
   cameraManager: React.MutableRefObject<CameraStateManager>
+  cameraModeRef: React.MutableRefObject<CameraMode>
   onCameraUpdate: (position: LatLng, heading: number) => void
 }) {
   const map = useMap()
@@ -75,7 +82,6 @@ function NavigationCameraController({
   useEffect(() => {
     const animate = () => {
       const navState = navManager.current?.getState()
-      const cameraState = cameraManager.current.getState()
       
       if (!navState) {
         rafRef.current = requestAnimationFrame(animate)
@@ -93,8 +99,13 @@ function NavigationCameraController({
       // Update camera target from navigation state
       cameraManager.current.updateTarget(navState.snappedPosition, navState.heading)
       
-      // In FOLLOW mode: smoothly move camera to navigation position
-      if (cameraState.mode === 'FOLLOW') {
+      // ============================================================
+      // CRITICAL: Check CURRENT camera mode via ref (not stale closure)
+      // ============================================================
+      const currentMode = cameraModeRef.current
+      
+      if (currentMode === 'FOLLOW') {
+        // FOLLOW MODE: GPS controls camera
         // Smooth position interpolation
         if (currentDisplayPosition.current) {
           const [currentLat, currentLng] = currentDisplayPosition.current
@@ -124,8 +135,22 @@ function NavigationCameraController({
         
         // Notify parent of camera update
         onCameraUpdate(currentDisplayPosition.current || navState.snappedPosition, currentDisplayHeading.current)
+      } else {
+        // FREE MODE: User controls camera
+        // GPS MUST NOT move camera
+        // Only update heading for arrow rotation
+        currentDisplayHeading.current = lerpAngle(
+          currentDisplayHeading.current,
+          navState.heading,
+          0.1
+        )
+        
+        // Keep current display position from map center
+        currentDisplayPosition.current = [map.getCenter().lat, map.getCenter().lng]
+        
+        // Notify parent of heading update only
+        onCameraUpdate(currentDisplayPosition.current, currentDisplayHeading.current)
       }
-      // In FREE mode: do nothing, user controls camera
       
       rafRef.current = requestAnimationFrame(animate)
     }
@@ -135,44 +160,42 @@ function NavigationCameraController({
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [map, navManager, cameraManager, onCameraUpdate])
+  }, [map, navManager, cameraManager, cameraModeRef, onCameraUpdate])
   
   return null
 }
 
 /**
  * Interaction Handler
- * Switches to FREE camera mode on drag
+ * CRITICAL FIX: Dragging must ALWAYS be enabled
+ * Drag immediately triggers FREE camera mode
  * Zoom does NOT trigger mode change
  */
 function InteractionHandler({
-  cameraMode,
+  cameraModeRef,
   onEnterFreeMode,
 }: {
-  cameraMode: CameraMode
+  cameraModeRef: React.MutableRefObject<CameraMode>
   onEnterFreeMode: () => void
 }) {
   const map = useMap()
   
-  // Always enable zoom regardless of mode
+  // ALWAYS enable all interactions
   useEffect(() => {
+    map.dragging.enable() // ← CRITICAL: Must ALWAYS be enabled
     map.touchZoom.enable()
     map.scrollWheelZoom.enable()
     map.doubleClickZoom.enable()
     map.boxZoom.enable()
     map.keyboard.enable()
-    
-    if (cameraMode === 'FOLLOW') {
-      map.dragging.disable()
-    } else {
-      map.dragging.enable()
-    }
-  }, [map, cameraMode])
+  }, [map])
   
-  // Only drag triggers FREE mode
+  // Drag triggers FREE mode immediately
   useMapEvents({
     dragstart: () => {
-      if (cameraMode === 'FOLLOW') {
+      // Use ref to avoid stale closure
+      if (cameraModeRef.current === 'FOLLOW') {
+        console.log('[CAMERA] User dragged map → FREE mode')
         onEnterFreeMode()
       }
     },
@@ -194,11 +217,19 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
   const [cameraMode, setCameraMode] = useState<CameraMode>('FOLLOW')
   const [displayHeading, setDisplayHeading] = useState(heading)
   
+  // CRITICAL: Use ref to avoid stale closures in callbacks
+  const cameraModeRef = useRef<CameraMode>('FOLLOW')
+  
   const navManagerRef = useRef<NavigationStateManager | null>(null)
   const cameraManagerRef = useRef<CameraStateManager>(new CameraStateManager())
   
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
+  
+  // Sync ref with state
+  useEffect(() => {
+    cameraModeRef.current = cameraMode
+  }, [cameraMode])
   
   // Initialize navigation manager
   useEffect(() => {
@@ -217,12 +248,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
       timestamp: Date.now(),
     }
     
-    const navState = navManagerRef.current.processGpsUpdate(gpsUpdate)
-    
-    if (navState) {
-      // Navigation state updated successfully
-      console.log('[NAV] State updated:', navState)
-    }
+    navManagerRef.current.processGpsUpdate(gpsUpdate)
   }, [userPos, heading])
   
   const nextPinDist =
@@ -234,17 +260,18 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
     const navState = navManagerRef.current?.getState()
     if (!navState) return
     
-    // Switch to FOLLOW mode and recenter camera
-    setCameraMode('FOLLOW')
-    cameraManagerRef.current.recenter(navState.snappedPosition, navState.heading)
+    console.log('[CAMERA] Red button pressed → FOLLOW mode, recentering to current vehicle')
     
-    console.log('[CAMERA] Recentered to vehicle')
+    // Switch to FOLLOW mode
+    setCameraMode('FOLLOW')
+    cameraManagerRef.current.setMode('FOLLOW')
+    cameraManagerRef.current.recenter(navState.snappedPosition, navState.heading)
   }, [])
   
   const handleEnterFreeMode = useCallback(() => {
+    console.log('[CAMERA] User dragged → FREE mode (GPS will not control camera)')
     setCameraMode('FREE')
     cameraManagerRef.current.setMode('FREE')
-    console.log('[CAMERA] Entered FREE mode')
   }, [])
   
   const handleCameraUpdate = useCallback((position: LatLng, heading: number) => {
@@ -326,7 +353,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
 
           {/* Interaction handler */}
           <InteractionHandler 
-            cameraMode={cameraMode}
+            cameraModeRef={cameraModeRef}
             onEnterFreeMode={handleEnterFreeMode}
           />
           
@@ -334,6 +361,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
           <NavigationCameraController
             navManager={navManagerRef}
             cameraManager={cameraManagerRef}
+            cameraModeRef={cameraModeRef}
             onCameraUpdate={handleCameraUpdate}
           />
         </MapContainer>
