@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { Circle, CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
+import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
@@ -285,7 +285,9 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
   
-  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
+  // Visual pulse starts at 30m, audio triggers at 5m (in ExamDriveSession)
+  const VISUAL_WARNING_DISTANCE_M = 30
+  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= VISUAL_WARNING_DISTANCE_M
   
   const handleRecenter = useCallback(() => {
     const navState = navManagerRef.current?.getState()
@@ -362,7 +364,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
           <MapSizeFix />
           <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
-          {/* All pins with trigger zones */}
+          {/* All pins - visual markers only */}
           {(() => {
             console.log('[DEBUG] pins.map() executing, pins.length =', pins.length)
             return pins.map((pin) => {
@@ -370,18 +372,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
               const isPulse = isNext && nextPinPulse
               return (
                 <React.Fragment key={pin.id}>
-                  {/* Green trigger zone circle */}
-                  <Circle
-                    center={[pin.lat, pin.lng]}
-                    radius={pin.trigger_distance_m}
-                    pathOptions={{
-                      color: isNext ? '#14b8a6' : '#10b981',
-                      fillColor: isNext ? '#14b8a6' : '#10b981',
-                      fillOpacity: isNext ? 0.12 : 0.08,
-                      weight: isNext ? 2 : 1.5,
-                    }}
-                  />
-                  {/* Center dot */}
+                  {/* Green pin marker (no large trigger zone circle) */}
                   <CircleMarker
                     center={[pin.lat, pin.lng]}
                     radius={isPulse ? 14 : 10}
