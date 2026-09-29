@@ -226,6 +226,37 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
   
+  // ============================================================================
+  // DEBUG: Runtime pin verification
+  // ============================================================================
+  useEffect(() => {
+    console.log('═══════════════════════════════════════════════════')
+    console.log('[DEBUG] ExamLiveMapLeaflet - Route Data:')
+    console.log('  Route ID:', route.id)
+    console.log('  Route Name:', route.name_ka)
+    console.log('  Route Slug:', route.slug)
+    console.log('  Pins Length:', pins.length)
+    console.log('  Polyline Length:', polyline.length)
+    
+    if (pins.length > 0) {
+      console.log('  First Pin:', {
+        id: pins[0].id,
+        lat: pins[0].lat,
+        lng: pins[0].lng,
+        instruction: pins[0].instruction_ka
+      })
+      console.log('  Last Pin:', {
+        id: pins[pins.length - 1].id,
+        lat: pins[pins.length - 1].lat,
+        lng: pins[pins.length - 1].lng,
+        instruction: pins[pins.length - 1].instruction_ka
+      })
+    } else {
+      console.log('  ⚠️ NO PINS FOUND!')
+    }
+    console.log('═══════════════════════════════════════════════════')
+  }, [route.id, route.name_ka, route.slug, pins.length, pins, polyline.length])
+  
   // Sync ref with state
   useEffect(() => {
     cameraModeRef.current = cameraMode
@@ -332,37 +363,40 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
           <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
           {/* All pins with trigger zones */}
-          {pins.map((pin) => {
-            const isNext = nextPin?.id === pin.id
-            const isPulse = isNext && nextPinPulse
-            return (
-              <React.Fragment key={pin.id}>
-                {/* Green trigger zone circle */}
-                <Circle
-                  center={[pin.lat, pin.lng]}
-                  radius={pin.trigger_distance_m}
-                  pathOptions={{
-                    color: isNext ? '#14b8a6' : '#10b981',
-                    fillColor: isNext ? '#14b8a6' : '#10b981',
-                    fillOpacity: isNext ? 0.12 : 0.08,
-                    weight: isNext ? 2 : 1.5,
-                  }}
-                />
-                {/* Center dot */}
-                <CircleMarker
-                  center={[pin.lat, pin.lng]}
-                  radius={isPulse ? 14 : 10}
-                  pathOptions={{
-                    color: isNext ? '#0f766e' : '#047857',
-                    fillColor: isNext ? '#5eead4' : '#10b981',
-                    fillOpacity: 1,
-                    weight: 2,
-                    className: isPulse ? 'exam-pin-pulse' : undefined,
-                  }}
-                />
-              </React.Fragment>
-            )
-          })}
+          {(() => {
+            console.log('[DEBUG] pins.map() executing, pins.length =', pins.length)
+            return pins.map((pin) => {
+              const isNext = nextPin?.id === pin.id
+              const isPulse = isNext && nextPinPulse
+              return (
+                <React.Fragment key={pin.id}>
+                  {/* Green trigger zone circle */}
+                  <Circle
+                    center={[pin.lat, pin.lng]}
+                    radius={pin.trigger_distance_m}
+                    pathOptions={{
+                      color: isNext ? '#14b8a6' : '#10b981',
+                      fillColor: isNext ? '#14b8a6' : '#10b981',
+                      fillOpacity: isNext ? 0.12 : 0.08,
+                      weight: isNext ? 2 : 1.5,
+                    }}
+                  />
+                  {/* Center dot */}
+                  <CircleMarker
+                    center={[pin.lat, pin.lng]}
+                    radius={isPulse ? 14 : 10}
+                    pathOptions={{
+                      color: isNext ? '#0f766e' : '#047857',
+                      fillColor: isNext ? '#5eead4' : '#10b981',
+                      fillOpacity: 1,
+                      weight: 2,
+                      className: isPulse ? 'exam-pin-pulse' : undefined,
+                    }}
+                  />
+                </React.Fragment>
+              )
+            })
+          })()}
 
           {/* Interaction handler */}
           <InteractionHandler 
