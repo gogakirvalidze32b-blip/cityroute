@@ -90,14 +90,15 @@ function NavigationCameraController({
       
       // Initialize if needed
       if (!hasInitialized.current) {
-        map.setView(navState.snappedPosition, YANDEX_STREET_ZOOM, { animate: false })
-        currentDisplayPosition.current = navState.snappedPosition
+        // Start camera at RAW GPS position (not snapped)
+        map.setView(navState.rawPosition, YANDEX_STREET_ZOOM, { animate: false })
+        currentDisplayPosition.current = navState.rawPosition
         currentDisplayHeading.current = navState.heading
         hasInitialized.current = true
       }
       
       // Update camera target from navigation state
-      cameraManager.current.updateTarget(navState.snappedPosition, navState.heading)
+      cameraManager.current.updateTarget(navState.rawPosition, navState.heading)
       
       // ============================================================
       // CRITICAL: Check CURRENT camera mode via ref (not stale closure)
@@ -106,10 +107,14 @@ function NavigationCameraController({
       
       if (currentMode === 'FOLLOW') {
         // FOLLOW MODE: GPS controls camera
+        // CRITICAL: Use RAW GPS position (not snapped) for camera
+        // This matches Google Maps behavior - camera follows actual device location
+        const targetPosition = navState.rawPosition // ← RAW GPS, not snapped!
+        
         // Smooth position interpolation
         if (currentDisplayPosition.current) {
           const [currentLat, currentLng] = currentDisplayPosition.current
-          const [targetLat, targetLng] = navState.snappedPosition
+          const [targetLat, targetLng] = targetPosition
           
           // Interpolate position (smooth factor 0.15 = ~6-7 frames to reach target)
           const smoothFactor = 0.15
@@ -118,7 +123,7 @@ function NavigationCameraController({
           
           currentDisplayPosition.current = [newLat, newLng]
           
-          // Move map camera
+          // Move map camera to RAW position
           map.panTo(currentDisplayPosition.current, {
             animate: false,
             noMoveStart: true,
@@ -134,7 +139,7 @@ function NavigationCameraController({
         )
         
         // Notify parent of camera update
-        onCameraUpdate(currentDisplayPosition.current || navState.snappedPosition, currentDisplayHeading.current)
+        onCameraUpdate(currentDisplayPosition.current || navState.rawPosition, currentDisplayHeading.current)
       } else {
         // FREE MODE: User controls camera
         // GPS MUST NOT move camera
@@ -298,7 +303,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
     // Switch to FOLLOW mode
     setCameraMode('FOLLOW')
     cameraManagerRef.current.setMode('FOLLOW')
-    cameraManagerRef.current.recenter(navState.snappedPosition, navState.heading)
+    cameraManagerRef.current.recenter(navState.rawPosition, navState.heading)
   }, [])
   
   const handleEnterFreeMode = useCallback(() => {
@@ -323,9 +328,10 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
           - position: fixed (viewport-relative)
           - Never moves X/Y
           - Only rotates based on navigation heading
+          - +180° offset: CSS arrow points DOWN, turf bearing 0° = NORTH
           - Represents current vehicle direction */}
       <div className="fixed-navigation-arrow-overlay">
-        <div className="fixed-navigation-arrow-rotator" style={{ transform: `rotate(${displayHeading}deg)` }}>
+        <div className="fixed-navigation-arrow-rotator" style={{ transform: `rotate(${displayHeading + 180}deg)` }}>
           <div className="fixed-navigation-arrow-icon"></div>
           <div className="fixed-navigation-arrow-dot"></div>
         </div>
