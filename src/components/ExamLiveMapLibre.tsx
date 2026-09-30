@@ -109,11 +109,28 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
 
     map.current.on('load', () => {
       console.log('✅ MapLibre: Map loaded successfully!')
+      
+      // DIAGNOSTIC LOGGING - TEMPORARY
+      const container = mapContainer.current
+      const mapElement = map.current?.getContainer()
+      const canvas = map.current?.getCanvas()
+      
+      console.log('📏 DIAGNOSTICS:')
+      console.log('  Container rect:', container?.getBoundingClientRect())
+      console.log('  Map element rect:', mapElement?.getBoundingClientRect())
+      console.log('  Canvas rect:', canvas?.getBoundingClientRect())
+      console.log('  Canvas dimensions:', canvas?.width, 'x', canvas?.height)
+      console.log('  Style loaded:', map.current?.isStyleLoaded())
+      console.log('  Map loaded:', map.current?.loaded())
+      
       setMapLoaded(true)
     })
 
     map.current.on('error', (e) => {
-      console.error('❌ MapLibre Error:', e)
+      console.error('❌ MapLibre Error (FULL):', e)
+      console.error('  Error type:', e.error?.constructor?.name)
+      console.error('  Error message:', e.error?.message)
+      console.error('  Error stack:', e.error?.stack)
     })
     
     // Drag detection → FREE mode
