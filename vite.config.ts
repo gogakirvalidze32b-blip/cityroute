@@ -38,7 +38,7 @@ export default defineConfig({
       },
       workbox: {
         cleanupOutdatedCaches: true,
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MB limit for route map images
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB limit (increased for route-3 map photo)
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,mp3,aac,json}'],
         runtimeCaching: [
           {
