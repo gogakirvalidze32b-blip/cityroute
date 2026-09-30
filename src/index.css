@@ -3298,12 +3298,6 @@ button:disabled {
 
 .maplibregl-map {
   font-family: inherit;
-  /* Prevent black corners during rotation */
-  background: #1e293b !important;
-}
-
-.maplibregl-canvas-container {
-  /* MapLibre handles rotation natively - no manual override needed */
 }
 
 .maplibregl-canvas {
