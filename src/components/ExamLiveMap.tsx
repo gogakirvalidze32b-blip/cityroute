@@ -11,7 +11,7 @@ type Props = {
 }
 
 // Toggle between Leaflet (optimized) and MapLibre+Mapbox
-const USE_MAPLIBRE = true // ← MapLibre with Google Maps Navigation style (bearing rotation)
+const USE_MAPLIBRE = false // ← Back to Leaflet - properly optimized for Android tablets
 
 /** Live GPS map — MapLibre/Leaflet, follows user while driving. */
 export function ExamLiveMap(props: Props) {
