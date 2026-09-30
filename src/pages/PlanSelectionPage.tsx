@@ -1,4 +1,4 @@
-import { Link, Navigate, useNavigate } from 'react-router-dom'
+﻿import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { useAuth } from '@/context/AuthContext'
 import { type SubscriptionPlan, calculatePrice } from '@/data/subscription-plans'
@@ -58,19 +58,10 @@ export function PlanSelectionPage() {
           >
             <span className="device-btn__icon">🚗🚗</span>
             <strong>2 მანქანა</strong>
-            <span className="device-btn__price">198 ₾/თვე</span>
-          </button>
-          <button
-            type="button"
-            className={`device-btn ${deviceSlots === 3 ? 'device-btn--active' : ''}`}
-            onClick={() => setDeviceSlots(3)}
-          >
-            <span className="device-btn__icon">🚗🚗🚗</span>
-            <strong>3 მანქანა</strong>
-            <span className="device-btn__price">297 ₾/თვე</span>
+            <span className="device-btn__price">189 ₾/თვე</span>
           </button>
         </div>
-        <p className="device-selector__note">1 ანგარიში (ერთი ემაილი) = {deviceSlots} მოწყობილობა</p>
+        <p className="device-selector__note">1 ანგარიში (ერთი ემაილი) = მაქსიმუმ {deviceSlots} მოწყობილობა</p>
       </div>
 
       <div className="plan-summary">

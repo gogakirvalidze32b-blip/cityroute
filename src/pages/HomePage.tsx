@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+﻿import { Link } from 'react-router-dom'
 
 import { AppBrand } from '@/components/AppBrand'
 import { PaymentButton } from '@/components/PaymentButton'
@@ -33,7 +33,7 @@ export function HomePage() {
       <div className="page center">
         <h1>მოწყობილობა დაბლოკილია</h1>
         <p>{deviceBlocked}</p>
-        <p className="muted">1 ანგარიში = 1 მანქანა. მხარდაჭერასთან დაუკავშირდი მოწყობილობის გადატვირთვისთვის.</p>
+        <p className="muted">1 ანგარიში = მაქსიმუმ 2 მანქანა. მხარდაჭერასთან დაუკავშირდი მოწყობილობის გადატვირთვისთვის.</p>
         <button type="button" onClick={() => void signOut()}>
           გასვლა
         </button>
@@ -63,9 +63,9 @@ export function HomePage() {
             <li>გადართვა: რუკა ↔ შეცდომები</li>
             <li>ყველა მომავალი ფუნქცია</li>
           </ul>
-          {deviceSlots > 1 && (
+          {deviceSlots === 2 && (
             <p className="muted" style={{ textAlign: 'center', marginTop: '0.5rem' }}>
-              {deviceSlots} მოწყობილობა · 99 ₾/მანქანა
+              2 მოწყობილობა · 189 ₾
             </p>
           )}
         </div>
