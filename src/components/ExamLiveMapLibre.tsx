@@ -6,12 +6,8 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 import { NavigationStateManager, CameraStateManager, type CameraMode, type RawGpsUpdate } from '@/lib/navigation-state'
 
 const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'get_your_own_OpIi9ZULNHzrESv6T2vL'
-const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY || 'pk.eyJ1IjoiZHJ1bXN0aWNrIiwiYSI6ImNtdTdlMWM1dTBrMmMyeHNsZjdiOGtkaW4ifQ.W_M3-S-HKDgKsVIigf6Zjg'
 
-// Map provider - switch between 'mapbox' or 'maptiler'
-const MAP_PROVIDER = 'mapbox' as const
-
-// MapTiler styles (for reference, not used with Mapbox)
+// MapTiler styles - compatible with MapLibre
 const MAP_STYLES = {
   streets: 'streets',      // Default OpenStreetMap style
   basic: 'basic',          // Minimalist, Google-like
@@ -21,27 +17,14 @@ const MAP_STYLES = {
   outdoor: 'outdoor',      // Nature, hiking
 } as const
 
-// Mapbox styles - vector tiles, 60fps rendering! 🚀
-const MAPBOX_STYLES = {
-  streets: 'mapbox://styles/mapbox/streets-v12',
-  light: 'mapbox://styles/mapbox/light-v11',      // Google Maps-like ✅
-  dark: 'mapbox://styles/mapbox/dark-v11',
-  satellite: 'mapbox://styles/mapbox/satellite-v9',
-  satelliteStreets: 'mapbox://styles/mapbox/satellite-streets-v12',
-  outdoors: 'mapbox://styles/mapbox/outdoors-v12',
-} as const
-
 // Choose your style here:
-const SELECTED_STYLE = 'light' // ← Mapbox light (Google Maps-like)
+const SELECTED_STYLE = 'bright' // ← MapTiler bright (Google Maps-like)
 
 // Zoom level
 const NAVIGATION_ZOOM = 17
 
-// Get map style URL based on provider
+// Get MapTiler style URL
 const getMapStyle = () => {
-  if (MAP_PROVIDER === 'mapbox') {
-    return MAPBOX_STYLES[SELECTED_STYLE as keyof typeof MAPBOX_STYLES] || MAPBOX_STYLES.light
-  }
   return `https://api.maptiler.com/maps/${SELECTED_STYLE}/style.json?key=${MAPTILER_API_KEY}`
 }
 
@@ -108,13 +91,12 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     if (!mapContainer.current || map.current) return
 
     console.log('🗺️ MapLibre: Initializing with Google Maps Navigation style')
-    console.log('🗺️ Map Provider:', MAP_PROVIDER)
-    console.log('🗺️ Style:', SELECTED_STYLE)
+    console.log('🗺️ MapTiler Style:', SELECTED_STYLE)
+    console.log('🗺️ Style URL:', getMapStyle())
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: getMapStyle(),
-      accessToken: MAP_PROVIDER === 'mapbox' ? MAPBOX_API_KEY : undefined,
       center: [userPos[1], userPos[0]],
       zoom: NAVIGATION_ZOOM,
       pitch: 0, // Keep flat for driving
