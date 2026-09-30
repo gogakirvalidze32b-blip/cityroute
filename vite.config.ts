@@ -38,8 +38,8 @@ export default defineConfig({
       },
       workbox: {
         cleanupOutdatedCaches: true,
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB limit (increased for route-3 map photo)
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,mp3,aac,json}'],
+        // Exclude route preview photos from precache (loaded on-demand from network)
+        globPatterns: ['**/*.{js,css,html,ico,svg,woff2,mp3,aac,json}'],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/routes.*/i,
@@ -47,7 +47,7 @@ export default defineConfig({
             options: {
               cacheName: 'routes-cache',
               networkTimeoutSeconds: 5,
-              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 }, // 30 დღე
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 },
             },
           },
           {
@@ -55,7 +55,17 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'audio-cache',
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 90 }, // 90 დღე
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 90 },
+            },
+          },
+          // Route preview photos - load from network, cache in browser
+          {
+            urlPattern: /\/routes\/route-.*\.png$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'route-photos',
+              expiration: { maxEntries: 10, maxAgeSeconds: 60 * 60 * 24 * 90 },
+              cacheableResponse: { statuses: [0, 200] },
             },
           },
           // თელავის რუკის ფილები - zoom 13-18 (street level detail)
@@ -64,7 +74,7 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'telavi-map-tiles-z16',
-              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 180 }, // 6 თვე
+              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 180 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },
@@ -86,7 +96,6 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
-          // ზოგადი რუკის ფილები (სხვა zoom levels)
           {
             urlPattern: /^https:\/\/[abcd]\.basemaps\.cartocdn\.com\/.*/i,
             handler: 'CacheFirst',
