@@ -3303,12 +3303,7 @@ button:disabled {
 }
 
 .maplibregl-canvas-container {
-  /* Prevent black corners - expand canvas */
-  width: 200% !important;
-  height: 200% !important;
-  position: absolute;
-  top: -50%;
-  left: -50%;
+  /* MapLibre handles rotation natively - no manual override needed */
 }
 
 .maplibregl-canvas {
