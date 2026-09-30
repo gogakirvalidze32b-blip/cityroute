@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import * as maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import type { PinRow, RouteWithPins } from '@/types/database'
+import { NavigationStateManager, CameraStateManager, type CameraMode, type RawGpsUpdate } from '@/lib/navigation-state'
 
 const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'get_your_own_OpIi9ZULNHzrESv6T2vL'
 const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY || 'pk.eyJ1IjoiZHJ1bXN0aWNrIiwiYSI6ImNtdTdlMWM1dTBrMmMyeHNsZjdiOGtkaW4ifQ.W_M3-S-HKDgKsVIigf6Zjg'
@@ -33,6 +34,9 @@ const MAPBOX_STYLES = {
 // Choose your style here:
 const SELECTED_STYLE = 'light' // ← Mapbox light (Google Maps-like)
 
+// Zoom level
+const NAVIGATION_ZOOM = 17
+
 // Get map style URL based on provider
 const getMapStyle = () => {
   if (MAP_PROVIDER === 'mapbox') {
@@ -53,30 +57,68 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
   const [mapLoaded, setMapLoaded] = useState(false)
+  const [cameraMode, setCameraMode] = useState<CameraMode>('FOLLOW')
+  
+  // Navigation state management
+  const navManagerRef = useRef<NavigationStateManager | null>(null)
+  const cameraManagerRef = useRef<CameraStateManager>(new CameraStateManager())
+  const cameraModeRef = useRef<CameraMode>('FOLLOW')
+  
+  // Animation frame
+  const rafRef = useRef<number | null>(null)
+  const hasInitialized = useRef(false)
 
   const pins = route.pins
+  const polyline = route.polyline as LatLng[]
+  
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
-  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= nextPin.trigger_distance_m
+  
+  // Visual pulse starts at 30m
+  const VISUAL_WARNING_DISTANCE_M = 30
+  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= VISUAL_WARNING_DISTANCE_M
+  
+  // Sync ref with state
+  useEffect(() => {
+    cameraModeRef.current = cameraMode
+  }, [cameraMode])
+  
+  // Initialize navigation manager
+  useEffect(() => {
+    navManagerRef.current = new NavigationStateManager(polyline)
+  }, [polyline])
+  
+  // Process GPS updates
+  useEffect(() => {
+    if (!navManagerRef.current) return
+    
+    const gpsUpdate: RawGpsUpdate = {
+      position: userPos,
+      accuracy: 20,
+      speed: null,
+      heading: heading,
+      timestamp: Date.now(),
+    }
+    
+    navManagerRef.current.processGpsUpdate(gpsUpdate)
+  }, [userPos, heading])
 
   // Initialize map
   useEffect(() => {
     if (!mapContainer.current || map.current) return
 
+    console.log('🗺️ MapLibre: Initializing with Google Maps Navigation style')
     console.log('🗺️ Map Provider:', MAP_PROVIDER)
-    console.log('🗺️ Mapbox Key:', MAPBOX_API_KEY ? 'EXISTS' : 'MISSING')
-    console.log('🗺️ MapTiler Key:', MAPTILER_API_KEY ? 'EXISTS' : 'MISSING')
-    console.log('🗺️ Selected Style:', SELECTED_STYLE)
-    console.log('🗺️ Style URL:', getMapStyle())
+    console.log('🗺️ Style:', SELECTED_STYLE)
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: getMapStyle(),
       accessToken: MAP_PROVIDER === 'mapbox' ? MAPBOX_API_KEY : undefined,
       center: [userPos[1], userPos[0]],
-      zoom: 17,
+      zoom: NAVIGATION_ZOOM,
       pitch: 0, // Keep flat for driving
-      bearing: -heading, // Rotate map, not arrow
+      bearing: 0, // Will be updated by animation loop
       attributionControl: false,
       // Performance optimizations
       maxTileCacheSize: 100,
@@ -84,32 +126,79 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     })
 
     map.current.on('load', () => {
-      console.log(`✅ ${MAP_PROVIDER === 'mapbox' ? 'Mapbox' : 'MapTiler'}: Map loaded successfully!`)
+      console.log('✅ MapLibre: Map loaded successfully!')
       setMapLoaded(true)
     })
 
     map.current.on('error', (e) => {
-      console.error(`❌ ${MAP_PROVIDER === 'mapbox' ? 'Mapbox' : 'MapTiler'} Error:`, e)
+      console.error('❌ MapLibre Error:', e)
+    })
+    
+    // Drag detection → FREE mode
+    map.current.on('dragstart', () => {
+      if (cameraModeRef.current === 'FOLLOW') {
+        console.log('[CAMERA] User dragged map → FREE mode')
+        setCameraMode('FREE')
+        cameraManagerRef.current.setMode('FREE')
+      }
     })
 
     return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
       map.current?.remove()
       map.current = null
     }
   }, [])
-
-  // Update camera to follow user - smooth 60fps animation
+  
+  // Camera animation loop - Google Maps Navigation style
   useEffect(() => {
     if (!map.current || !mapLoaded) return
-
-    // MapLibre handles smooth interpolation internally
-    map.current.easeTo({
-      center: [userPos[1], userPos[0]],
-      bearing: -heading, // Rotate map to keep arrow pointing up
-      duration: 200, // Smooth animation
-      easing: (t) => t, // Linear easing
-    })
-  }, [mapLoaded, userPos, heading])
+    
+    const animate = () => {
+      const navState = navManagerRef.current?.getState()
+      
+      if (!navState) {
+        rafRef.current = requestAnimationFrame(animate)
+        return
+      }
+      
+      // Initialize
+      if (!hasInitialized.current) {
+        map.current!.jumpTo({
+          center: [navState.rawPosition[1], navState.rawPosition[0]],
+          bearing: -navState.heading,
+          zoom: NAVIGATION_ZOOM
+        })
+        hasInitialized.current = true
+      }
+      
+      // Update camera target
+      cameraManagerRef.current.updateTarget(navState.rawPosition, navState.heading)
+      
+      const currentMode = cameraModeRef.current
+      
+      if (currentMode === 'FOLLOW') {
+        // FOLLOW MODE: GPS controls camera
+        // Google Maps Navigation style: map rotates, vehicle stays centered
+        map.current!.easeTo({
+          center: [navState.rawPosition[1], navState.rawPosition[0]],  // RAW GPS
+          bearing: -navState.heading,  // Rotate map (negative for north-up vehicle)
+          zoom: NAVIGATION_ZOOM,
+          duration: 200,
+          easing: (t) => t  // Linear
+        })
+      }
+      // FREE MODE: User controls camera, GPS does not interfere
+      
+      rafRef.current = requestAnimationFrame(animate)
+    }
+    
+    rafRef.current = requestAnimationFrame(animate)
+    
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [mapLoaded])
 
   // Add pins
   useEffect(() => {
@@ -125,11 +214,11 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
 
       const el = document.createElement('div')
       el.className = 'maplibre-pin-marker'
-      el.style.width = isPulse ? '40px' : '28px'
-      el.style.height = isPulse ? '40px' : '28px'
+      el.style.width = isPulse ? '42px' : '32px'
+      el.style.height = isPulse ? '42px' : '32px'
       el.style.borderRadius = '50%'
       el.style.backgroundColor = isNext ? '#5eead4' : '#10b981'
-      el.style.border = `${isPulse ? 3 : 2}px solid ${isNext ? '#0d9488' : '#047857'}`
+      el.style.border = `${isPulse ? 3 : 3}px solid ${isNext ? '#0d9488' : '#047857'}`
       el.style.opacity = isPulse ? '0.9' : '1'
       el.style.transition = 'all 0.3s ease'
       el.style.boxShadow = isPulse ? '0 0 20px rgba(94, 234, 212, 0.6)' : 'none'
@@ -140,35 +229,45 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     })
   }, [mapLoaded, pins, nextPin, nextPinPulse])
 
-  const handleRecenter = () => {
-    if (!map.current || !mapLoaded) return
+  const handleRecenter = useCallback(() => {
+    const navState = navManagerRef.current?.getState()
+    if (!navState || !map.current) return
+    
+    console.log('[CAMERA] Recenter button → FOLLOW mode')
+    
+    setCameraMode('FOLLOW')
+    cameraManagerRef.current.setMode('FOLLOW')
+    cameraManagerRef.current.recenter(navState.rawPosition, navState.heading)
+    
+    // Immediate recenter
     map.current.easeTo({
-      center: [userPos[1], userPos[0]],
-      bearing: -heading,
-      zoom: 17,
-      duration: 300,
+      center: [navState.rawPosition[1], navState.rawPosition[0]],
+      bearing: -navState.heading,
+      zoom: NAVIGATION_ZOOM,
+      duration: 300
     })
-  }
+  }, [])
 
   return (
     <div className="exam-live-map">
       {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
 
-      {/* Fixed center arrow overlay - NEVER moves, always at screen center */}
-      <div className="nav-arrow-overlay">
-        <div className="nav-arrow-rotator">
-          <div className="nav-arrow-fixed"></div>
-          <div className="nav-arrow-dot-fixed"></div>
+      {/* Fixed center arrow overlay - NEVER moves, map rotates underneath
+          Google Maps Navigation style: vehicle fixed, world rotates */}
+      <div className="fixed-navigation-arrow-overlay">
+        <div className="fixed-navigation-arrow-rotator">
+          <div className="fixed-navigation-arrow-icon"></div>
+          <div className="fixed-navigation-arrow-dot"></div>
         </div>
       </div>
 
       <button
         type="button"
-        className="map-recenter-btn exam-live-map__recenter"
+        className={`map-recenter-btn exam-live-map__recenter ${cameraMode === 'FREE' ? 'map-recenter-btn--active' : ''}`}
         onClick={handleRecenter}
         title="ცენტრში დაბრუნება"
       >
-        🎯
+        {cameraMode === 'FOLLOW' ? '🎯' : '📍'}
       </button>
 
       {nextPin && (
@@ -182,3 +281,4 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
     </div>
   )
 }
+
