@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
@@ -25,14 +25,15 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
     console.log(`[DEBUG] mergeRoutes: ${local.slug}:`)
     console.log(`  - local pins: ${local.pins.length}`)
     console.log(`  - remote pins: ${remotePins.length}`)
-    console.log(`  - will use: ${local.pins.length === 0 ? 'none' : remotePins.length >= 2 ? 'remote' : 'local'}`)
+    console.log(`  - will use: ${remotePins.length >= 2 ? 'remote' : local.pins.length > 0 ? 'local' : 'none'}`)
     
     return {
       ...local,
       id: remote.id,
       city_id: remote.city_id,
       polyline: local.polyline,
-      pins: local.pins.length === 0 ? [] : remotePins.length >= 2 ? remotePins : local.pins,
+      // FIX: Always prefer remote pins if available (>=2), regardless of local pins
+      pins: remotePins.length >= 2 ? remotePins : local.pins,
     }
   })
 }

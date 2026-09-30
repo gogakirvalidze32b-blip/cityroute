@@ -52,7 +52,7 @@ function pinsFromOfficial(
 /** Set true when ready to enable voice/turn pins from official JSON manoeuvres */
 export const ROUTE1_PINS_ENABLED = true
 
-/** Street zoom  readable labels, not too close (Yandex-like mid range) */
+/** Street zoom — readable labels, not too close (Yandex-like mid range) */
 export const YANDEX_STREET_ZOOM = 16
 
 function line(slug: string, fallback: [number, number][]): [number, number][] {
@@ -71,7 +71,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     id: 'local-route-1',
     city_id: 'telavi',
     slug: 'route-1',
-    name_ka: 'მარრუტი 1',
+    name_ka: 'მარშრუტი 1',
     official_label: null,
     license_category: 'B',
     sort_order: 1,
@@ -83,7 +83,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     id: 'local-route-2',
     city_id: 'telavi',
     slug: 'route-2',
-    name_ka: 'მარრუტი 2',
+    name_ka: 'მარშრუტი 2',
     official_label: null,
     license_category: 'B',
     sort_order: 2,
@@ -95,7 +95,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     id: 'local-route-3',
     city_id: 'telavi',
     slug: 'route-3',
-    name_ka: 'მარრუტი 3',
+    name_ka: 'მარშრუტი 3',
     official_label: null,
     license_category: 'B',
     sort_order: 3,
@@ -107,7 +107,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     id: 'local-route-4',
     city_id: 'telavi',
     slug: 'route-4',
-    name_ka: 'მარრუტი 4',
+    name_ka: 'მარშრუტი 4',
     official_label: null,
     license_category: 'B',
     sort_order: 4,
@@ -126,12 +126,12 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     active: true,
     polyline: line('route-5', route5Fallback),
     pins: [
-      pin('p5-1', 'local-route-5', L.agency, 'დაწყება  სააგენტო', 1),
-      pin('p5-2', 'local-route-5', L.kurdgelauri, 'მარჯვნივ კურდელაურის ქუაზე', 2),
-      pin('p5-3', 'local-route-5', L.tbilisi_st, 'ბილისის ქუი სამხრევი', 3),
-      pin('p5-4', 'local-route-5', L.tbilisi_hwy, 'ბილისის გზატკეცილი  დასავლი', 4),
-      pin('p5-5', 'local-route-5', L.saakadze, 'სააკაის ქუი რდილოვნი', 5),
-      pin('p5-6', 'local-route-5', L.agency, 'დასრულება  სააგენტო', 6),
+      pin('p5-1', 'local-route-5', L.agency, 'დაწყება — სააგენტო', 1),
+      pin('p5-2', 'local-route-5', L.kurdgelauri, 'მარჯვნივ კურდღელაურის ქუჩაზე', 2),
+      pin('p5-3', 'local-route-5', L.tbilisi_st, 'თბილისის ქუჩით სამხრევით', 3),
+      pin('p5-4', 'local-route-5', L.tbilisi_hwy, 'თბილისის გზატკეცილი — დასავლით', 4),
+      pin('p5-5', 'local-route-5', L.saakadze, 'სააკაძის ქუჩით ჩრდილოვნით', 5),
+      pin('p5-6', 'local-route-5', L.agency, 'დასრულება — სააგენტო', 6),
     ],
   },
 ]

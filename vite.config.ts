@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+﻿import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
@@ -38,6 +38,7 @@ export default defineConfig({
       },
       workbox: {
         cleanupOutdatedCaches: true,
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MB limit for route map images
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,mp3,aac,json}'],
         runtimeCaching: [
           {
