@@ -10,14 +10,21 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type CameraMode } from '@/lib/navigation-state'
 
 // ============================================================================
-// GOOGLE MAPS-STYLE NAVIGATION SYSTEM - CAMERA FIX
+// GOOGLE MAPS-STYLE NAVIGATION SYSTEM - CAMERA FIX + COMPASS ARROW
 // ============================================================================
 //
 // ARCHITECTURE:
 // 1. NavigationStateManager - Single source of truth for GPS/route state
 // 2. CameraStateManager - Separate camera state (FOLLOW vs FREE mode)
-// 3. Fixed arrow overlay - Never moves X/Y, only rotates
+// 3. Fixed arrow overlay - Never moves X/Y, rotates with device compass
 // 4. Map camera - Moves underneath fixed arrow
+//
+// COMPASS INTEGRATION:
+// - DeviceOrientation API reads device compass heading
+// - Arrow rotates based on compass (not GPS heading)
+// - Works when stationary and moving
+// - Fallback to GPS heading if compass unavailable
+// - iOS requires permission, Android works directly
 //
 // CRITICAL FIXES:
 // - GPS timestamps prevent old callbacks from corrupting state
@@ -51,6 +58,81 @@ function lerpAngle(current: number, target: number, factor: number): number {
   if (delta < -180) delta += 360
   
   return current + delta * factor
+}
+
+/**
+ * Device Compass Hook
+ * Returns compass heading from DeviceOrientation API
+ * 0° = North, 90° = East, 180° = South, 270° = West
+ */
+function useDeviceCompass(): number | null {
+  const [compassHeading, setCompassHeading] = useState<number | null>(null)
+  const [permissionGranted, setPermissionGranted] = useState(false)
+  const lastHeadingRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+
+    const requestPermission = async () => {
+      // iOS 13+ requires permission
+      if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+        try {
+          const permission = await (DeviceOrientationEvent as any).requestPermission()
+          if (permission === 'granted' && mounted) {
+            setPermissionGranted(true)
+          }
+        } catch (err) {
+          console.warn('[COMPASS] Permission denied:', err)
+        }
+      } else {
+        // Android and older iOS - no permission needed
+        setPermissionGranted(true)
+      }
+    }
+
+    void requestPermission()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!permissionGranted) return
+
+    const handleOrientation = (event: DeviceOrientationEvent) => {
+      let heading: number | null = null
+
+      // Try webkitCompassHeading first (iOS)
+      if (typeof (event as any).webkitCompassHeading === 'number') {
+        heading = (event as any).webkitCompassHeading
+      }
+      // Try alpha with absolute reference (Android)
+      else if (event.absolute && typeof event.alpha === 'number') {
+        // alpha: 0° = North, increases clockwise
+        heading = event.alpha
+      }
+      // Fallback to alpha without absolute (less reliable)
+      else if (typeof event.alpha === 'number') {
+        heading = event.alpha
+      }
+
+      if (heading !== null && !Number.isNaN(heading)) {
+        // Normalize to 0-360
+        heading = ((heading % 360) + 360) % 360
+        lastHeadingRef.current = heading
+        setCompassHeading(heading)
+      }
+    }
+
+    window.addEventListener('deviceorientation', handleOrientation, true)
+    
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation, true)
+    }
+  }, [permissionGranted])
+
+  return compassHeading
 }
 
 /**
@@ -90,15 +172,15 @@ function NavigationCameraController({
       
       // Initialize if needed
       if (!hasInitialized.current) {
-        // Start camera at RAW GPS position (not snapped)
-        map.setView(navState.rawPosition, YANDEX_STREET_ZOOM, { animate: false })
-        currentDisplayPosition.current = navState.rawPosition
+        // Start camera at SNAPPED position (keeps vehicle on route)
+        map.setView(navState.snappedPosition, YANDEX_STREET_ZOOM, { animate: false })
+        currentDisplayPosition.current = navState.snappedPosition
         currentDisplayHeading.current = navState.heading
         hasInitialized.current = true
       }
       
       // Update camera target from navigation state
-      cameraManager.current.updateTarget(navState.rawPosition, navState.heading)
+      cameraManager.current.updateTarget(navState.snappedPosition, navState.heading)
       
       // ============================================================
       // CRITICAL: Check CURRENT camera mode via ref (not stale closure)
@@ -107,9 +189,9 @@ function NavigationCameraController({
       
       if (currentMode === 'FOLLOW') {
         // FOLLOW MODE: GPS controls camera
-        // CRITICAL: Use RAW GPS position (not snapped) for camera
-        // This matches Google Maps behavior - camera follows actual device location
-        const targetPosition = navState.rawPosition // ← RAW GPS, not snapped!
+        // CRITICAL: Use SNAPPED position for camera to keep vehicle on route
+        // This prevents visual drift when GPS is inaccurate
+        const targetPosition = navState.snappedPosition // ← Snapped to route!
         
         // Smooth position interpolation
         if (currentDisplayPosition.current) {
@@ -139,7 +221,7 @@ function NavigationCameraController({
         )
         
         // Notify parent of camera update
-        onCameraUpdate(currentDisplayPosition.current || navState.rawPosition, currentDisplayHeading.current)
+        onCameraUpdate(currentDisplayPosition.current || navState.snappedPosition, currentDisplayHeading.current)
       } else {
         // FREE MODE: User controls camera
         // GPS MUST NOT move camera
@@ -228,6 +310,24 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
   const navManagerRef = useRef<NavigationStateManager | null>(null)
   const cameraManagerRef = useRef<CameraStateManager>(new CameraStateManager())
   
+  // ============================================================================
+  // COMPASS HEADING - Device orientation for arrow rotation
+  // ============================================================================
+  const compassHeading = useDeviceCompass()
+  const [arrowRotation, setArrowRotation] = useState(heading + 180)
+  const lastArrowRotation = useRef(heading + 180)
+  
+  // Update arrow rotation with compass or fallback to GPS heading
+  useEffect(() => {
+    const targetHeading = compassHeading !== null ? compassHeading : displayHeading
+    const targetRotation = targetHeading + 180 // +180° offset: CSS arrow points DOWN
+    
+    // Smooth rotation using lerpAngle to avoid 359°→0° jumps
+    const smoothRotation = lerpAngle(lastArrowRotation.current, targetRotation, 0.15)
+    lastArrowRotation.current = smoothRotation
+    setArrowRotation(smoothRotation)
+  }, [compassHeading, displayHeading])
+  
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
   
@@ -303,7 +403,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
     // Switch to FOLLOW mode
     setCameraMode('FOLLOW')
     cameraManagerRef.current.setMode('FOLLOW')
-    cameraManagerRef.current.recenter(navState.rawPosition, navState.heading)
+    cameraManagerRef.current.recenter(navState.snappedPosition, navState.heading)
   }, [])
   
   const handleEnterFreeMode = useCallback(() => {
@@ -327,11 +427,14 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
           CRITICAL: Arrow is OUTSIDE map container
           - position: fixed (viewport-relative)
           - Never moves X/Y
-          - Only rotates based on navigation heading
-          - +180° offset: CSS arrow points DOWN, turf bearing 0° = NORTH
-          - Represents current vehicle direction */}
+          - Only rotates based on device compass heading
+          - Compass heading used when available
+          - Falls back to GPS heading when compass unavailable
+          - +180° offset: CSS arrow points DOWN, compass 0° = NORTH
+          - Smooth rotation prevents 359°→0° jumps
+          - Represents device physical orientation */}
       <div className="fixed-navigation-arrow-overlay">
-        <div className="fixed-navigation-arrow-rotator" style={{ transform: `rotate(${displayHeading + 180}deg)` }}>
+        <div className="fixed-navigation-arrow-rotator" style={{ transform: `rotate(${arrowRotation}deg)` }}>
           <div className="fixed-navigation-arrow-icon"></div>
           <div className="fixed-navigation-arrow-dot"></div>
         </div>
