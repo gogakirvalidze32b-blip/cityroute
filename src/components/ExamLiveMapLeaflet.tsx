@@ -74,11 +74,18 @@ function useDeviceCompass(): number | null {
     let mounted = true
 
     const requestPermission = async () => {
+      console.log('[COMPASS DEBUG] 🔍 Starting permission check...')
+      console.log('[COMPASS DEBUG] DeviceOrientationEvent available:', typeof DeviceOrientationEvent !== 'undefined')
+      console.log('[COMPASS DEBUG] requestPermission function exists:', typeof (DeviceOrientationEvent as any).requestPermission === 'function')
+      
       // iOS 13+ requires permission
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+        console.log('[COMPASS DEBUG] iOS detected - requesting permission...')
         try {
           const permission = await (DeviceOrientationEvent as any).requestPermission()
+          console.log('[COMPASS DEBUG] iOS permission result:', permission)
           if (permission === 'granted' && mounted) {
+            console.log('[COMPASS DEBUG] ✅ iOS permission GRANTED')
             setPermissionGranted(true)
           }
         } catch (err) {
@@ -86,6 +93,7 @@ function useDeviceCompass(): number | null {
         }
       } else {
         // Android and older iOS - no permission needed
+        console.log('[COMPASS DEBUG] ✅ Android/older iOS - no permission needed')
         setPermissionGranted(true)
       }
     }
@@ -98,23 +106,45 @@ function useDeviceCompass(): number | null {
   }, [])
 
   useEffect(() => {
-    if (!permissionGranted) return
+    if (!permissionGranted) {
+      console.log('[COMPASS DEBUG] ❌ Permission not granted yet, waiting...')
+      return
+    }
+
+    console.log('[COMPASS DEBUG] 🎯 Setting up deviceorientation listener...')
+    let eventCount = 0
 
     const handleOrientation = (event: DeviceOrientationEvent) => {
+      eventCount++
+      
+      // Log first 5 events for debugging
+      if (eventCount <= 5) {
+        console.log(`[COMPASS DEBUG] 📡 Event #${eventCount} received:`, {
+          alpha: event.alpha,
+          beta: event.beta,
+          gamma: event.gamma,
+          absolute: event.absolute,
+          webkitCompassHeading: (event as any).webkitCompassHeading,
+        })
+      }
+
       let heading: number | null = null
 
       // Try webkitCompassHeading first (iOS)
       if (typeof (event as any).webkitCompassHeading === 'number') {
         heading = (event as any).webkitCompassHeading
+        if (eventCount <= 5) console.log('[COMPASS DEBUG] 🍎 Using webkitCompassHeading (iOS):', heading)
       }
       // Try alpha with absolute reference (Android)
       else if (event.absolute && typeof event.alpha === 'number') {
         // alpha: 0° = North, increases clockwise
         heading = event.alpha
+        if (eventCount <= 5) console.log('[COMPASS DEBUG] 🤖 Using alpha with absolute=true (Android):', heading)
       }
       // Fallback to alpha without absolute (less reliable)
       else if (typeof event.alpha === 'number') {
         heading = event.alpha
+        if (eventCount <= 5) console.log('[COMPASS DEBUG] ⚠️ Using alpha WITHOUT absolute (unreliable):', heading)
       }
 
       if (heading !== null && !Number.isNaN(heading)) {
@@ -122,12 +152,22 @@ function useDeviceCompass(): number | null {
         heading = ((heading % 360) + 360) % 360
         lastHeadingRef.current = heading
         setCompassHeading(heading)
+        
+        if (eventCount <= 5) {
+          console.log('[COMPASS DEBUG] ✅ Compass heading set:', heading.toFixed(1) + '°')
+        }
+      } else {
+        if (eventCount <= 5) {
+          console.log('[COMPASS DEBUG] ❌ No valid heading found in event')
+        }
       }
     }
 
     window.addEventListener('deviceorientation', handleOrientation, true)
+    console.log('[COMPASS DEBUG] ✅ Listener added')
     
     return () => {
+      console.log('[COMPASS DEBUG] 🛑 Removing listener')
       window.removeEventListener('deviceorientation', handleOrientation, true)
     }
   }, [permissionGranted])
@@ -322,10 +362,20 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
     const targetHeading = compassHeading !== null ? compassHeading : displayHeading
     const targetRotation = targetHeading + 180 // +180° offset: CSS arrow points DOWN
     
+    console.log('[ARROW DEBUG] 🧭 Arrow rotation update:', {
+      compassHeading: compassHeading !== null ? compassHeading.toFixed(1) + '°' : 'null',
+      displayHeading: displayHeading.toFixed(1) + '°',
+      targetHeading: targetHeading.toFixed(1) + '°',
+      targetRotation: targetRotation.toFixed(1) + '°',
+      currentArrowRotation: lastArrowRotation.current.toFixed(1) + '°',
+    })
+    
     // Smooth rotation using lerpAngle to avoid 359°→0° jumps
     const smoothRotation = lerpAngle(lastArrowRotation.current, targetRotation, 0.15)
     lastArrowRotation.current = smoothRotation
     setArrowRotation(smoothRotation)
+    
+    console.log('[ARROW DEBUG] ✅ New arrow rotation:', smoothRotation.toFixed(1) + '°')
   }, [compassHeading, displayHeading])
   
   const pins = route.pins
