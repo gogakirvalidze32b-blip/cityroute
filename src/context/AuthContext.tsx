@@ -10,6 +10,8 @@ import {
 
   useMemo,
 
+  useRef,
+
   useState,
 
   type ReactNode,
@@ -260,11 +262,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
 
-  const loadProfile = useCallback(async (userId: string) => {
+  // User id whose profile is currently loaded. Lets a repeated SIGNED_IN / TOKEN_REFRESHED for the
+  // SAME user (supabase-js fires it on every tab hidden→visible) refresh silently instead of
+  // flipping the app back to "loading" and unmounting the active exam.
+  const loadedProfileUserIdRef = useRef<string | null>(null)
+
+  const loadProfile = useCallback(async (userId: string, silent = false) => {
 
     try {
 
       const p = await fetchProfile(userId)
+
+      loadedProfileUserIdRef.current = p ? userId : null
 
       setProfile(p)
 
@@ -284,9 +293,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       console.error(e)
 
-      setProfile(null)
+      // A failed BACKGROUND refresh must not wipe a good profile (that would redirect to Home).
+      if (!silent) {
 
-      setDeviceBlocked(null)
+        loadedProfileUserIdRef.current = null
+
+        setProfile(null)
+
+        setDeviceBlocked(null)
+
+      }
 
     } finally {
 
@@ -414,17 +430,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (nextSession?.user) {
 
+        const nextUserId = nextSession.user.id
+
         window.setTimeout(() => {
 
           if (!mounted) return
 
+          if (loadedProfileUserIdRef.current === nextUserId) {
+
+            // Same user, profile already loaded (token refresh / tab refocus): keep the UI mounted.
+
+            void loadProfile(nextUserId, true)
+
+            return
+
+          }
+
           setProfileReady(false)
 
-          void loadProfile(nextSession.user!.id)
+          void loadProfile(nextUserId)
 
         }, 0)
 
       } else {
+
+        loadedProfileUserIdRef.current = null
 
         setProfile(null)
 

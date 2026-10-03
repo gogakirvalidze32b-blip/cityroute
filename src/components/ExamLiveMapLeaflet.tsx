@@ -7,6 +7,7 @@ import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
+import { mapRotationCssDeg } from '@/lib/map-rotation'
 import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type CameraMode } from '@/lib/navigation-state'
 
 // ============================================================================
@@ -187,108 +188,112 @@ function NavigationCameraController({
   navManager,
   cameraManager,
   cameraModeRef,
-  onCameraUpdate,
+  courseRef,
+  worldRef,
 }: {
   navManager: React.MutableRefObject<NavigationStateManager | null>
   cameraManager: React.MutableRefObject<CameraStateManager>
   cameraModeRef: React.MutableRefObject<CameraMode>
-  onCameraUpdate: (position: LatLng, heading: number) => void
+  courseRef: React.MutableRefObject<number>
+  worldRef: React.MutableRefObject<HTMLDivElement | null>
 }) {
   const map = useMap()
   const rafRef = useRef<number | undefined>(undefined)
   const hasInitialized = useRef(false)
   const currentDisplayPosition = useRef<LatLng | null>(null)
   const currentDisplayHeading = useRef(0)
-  
-  // Animation loop for smooth camera movement
+  const wasFree = useRef(false)
+
   useEffect(() => {
+    const applyBearing = (headingDeg: number) => {
+      const el = worldRef.current
+      if (!el) return
+      // Rotate the whole Leaflet stack together — never mapPane.style.transform.
+      el.style.transform = `rotate(${mapRotationCssDeg(headingDeg)}deg)`
+    }
+
     const animate = () => {
       const navState = navManager.current?.getState()
-      
+
       if (!navState) {
         rafRef.current = requestAnimationFrame(animate)
         return
       }
-      
-      // Initialize if needed
+
+      // Camera follows the REAL GPS position (camera only; PIN detection is unchanged and
+      // uses the raw GPS in ExamDriveSession). The route-snapped position is not used here.
+      const cameraPosition = navState.rawPosition
+
       if (!hasInitialized.current) {
-        // Start camera at SNAPPED position (keeps vehicle on route)
-        map.setView(navState.snappedPosition, YANDEX_STREET_ZOOM, { animate: false })
-        currentDisplayPosition.current = navState.snappedPosition
-        currentDisplayHeading.current = navState.heading
+        map.setView(cameraPosition, YANDEX_STREET_ZOOM, { animate: false })
+        currentDisplayPosition.current = cameraPosition
+        currentDisplayHeading.current = courseRef.current
+        applyBearing(currentDisplayHeading.current)
         hasInitialized.current = true
       }
-      
-      // Update camera target from navigation state
-      cameraManager.current.updateTarget(navState.snappedPosition, navState.heading)
-      
-      // ============================================================
-      // CRITICAL: Check CURRENT camera mode via ref (not stale closure)
-      // ============================================================
+
+      cameraManager.current.updateTarget(cameraPosition, courseRef.current)
+
       const currentMode = cameraModeRef.current
-      
+
       if (currentMode === 'FOLLOW') {
-        // FOLLOW MODE: GPS controls camera
-        // CRITICAL: Use SNAPPED position for camera to keep vehicle on route
-        // This prevents visual drift when GPS is inaccurate
-        const targetPosition = navState.snappedPosition // ← Snapped to route!
-        
-        // Smooth position interpolation
+        if (wasFree.current) {
+          // Coming back from FREE (north-up): resume heading-up without sweeping from 0°.
+          wasFree.current = false
+          currentDisplayHeading.current = courseRef.current
+          applyBearing(currentDisplayHeading.current)
+        }
+        const targetPosition = cameraPosition
+
         if (currentDisplayPosition.current) {
           const [currentLat, currentLng] = currentDisplayPosition.current
           const [targetLat, targetLng] = targetPosition
-          
-          // Interpolate position (smooth factor 0.15 = ~6-7 frames to reach target)
           const smoothFactor = 0.15
-          const newLat = currentLat + (targetLat - currentLat) * smoothFactor
-          const newLng = currentLng + (targetLng - currentLng) * smoothFactor
-          
-          currentDisplayPosition.current = [newLat, newLng]
-          
-          // Move map camera to RAW position
+          currentDisplayPosition.current = [
+            currentLat + (targetLat - currentLat) * smoothFactor,
+            currentLng + (targetLng - currentLng) * smoothFactor,
+          ]
           map.panTo(currentDisplayPosition.current, {
             animate: false,
             noMoveStart: true,
             duration: 0,
           })
         }
-        
-        // Smooth heading interpolation
+
         currentDisplayHeading.current = lerpAngle(
           currentDisplayHeading.current,
-          navState.heading,
-          0.1
+          courseRef.current,
+          0.1,
         )
-        
-        // Notify parent of camera update
-        onCameraUpdate(currentDisplayPosition.current || navState.snappedPosition, currentDisplayHeading.current)
+        applyBearing(currentDisplayHeading.current)
+        cameraManager.current.updateCurrent(
+          currentDisplayPosition.current || cameraPosition,
+          currentDisplayHeading.current,
+        )
       } else {
-        // FREE MODE: User controls camera
-        // GPS MUST NOT move camera
-        // Only update heading for arrow rotation
-        currentDisplayHeading.current = lerpAngle(
-          currentDisplayHeading.current,
-          navState.heading,
-          0.1
-        )
-        
-        // Keep current display position from map center
+        // FREE: keep the container unrotated so finger-drag direction matches the screen.
+        if (!wasFree.current) {
+          wasFree.current = true
+          currentDisplayHeading.current = 0
+        }
+        applyBearing(0)
         currentDisplayPosition.current = [map.getCenter().lat, map.getCenter().lng]
-        
-        // Notify parent of heading update only
-        onCameraUpdate(currentDisplayPosition.current, currentDisplayHeading.current)
+        cameraManager.current.updateCurrent(
+          currentDisplayPosition.current,
+          currentDisplayHeading.current,
+        )
       }
-      
+
       rafRef.current = requestAnimationFrame(animate)
     }
-    
+
     rafRef.current = requestAnimationFrame(animate)
-    
+
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [map, navManager, cameraManager, cameraModeRef, onCameraUpdate])
-  
+  }, [map, navManager, cameraManager, cameraModeRef, courseRef, worldRef])
+
   return null
 }
 
@@ -342,42 +347,17 @@ type Props = {
 
 export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge, onGpsUpdate }: Props) {
   const [cameraMode, setCameraMode] = useState<CameraMode>('FOLLOW')
-  const [displayHeading, setDisplayHeading] = useState(heading)
-  
-  // CRITICAL: Use ref to avoid stale closures in callbacks
   const cameraModeRef = useRef<CameraMode>('FOLLOW')
-  
   const navManagerRef = useRef<NavigationStateManager | null>(null)
   const cameraManagerRef = useRef<CameraStateManager>(new CameraStateManager())
-  
-  // ============================================================================
-  // COMPASS HEADING - Device orientation for arrow rotation
-  // ============================================================================
-  const compassHeading = useDeviceCompass()
-  const [arrowRotation, setArrowRotation] = useState(heading + 180)
-  const lastArrowRotation = useRef(heading + 180)
-  
-  // Update arrow rotation with compass or fallback to GPS heading
+  const courseRef = useRef(heading)
+  const worldRef = useRef<HTMLDivElement | null>(null)
+
+  // GPS movement course from parent (resolveHeading) — map bearing source
   useEffect(() => {
-    const targetHeading = compassHeading !== null ? compassHeading : displayHeading
-    const targetRotation = targetHeading + 180 // +180° offset: CSS arrow points DOWN
-    
-    console.log('[ARROW DEBUG] 🧭 Arrow rotation update:', {
-      compassHeading: compassHeading !== null ? compassHeading.toFixed(1) + '°' : 'null',
-      displayHeading: displayHeading.toFixed(1) + '°',
-      targetHeading: targetHeading.toFixed(1) + '°',
-      targetRotation: targetRotation.toFixed(1) + '°',
-      currentArrowRotation: lastArrowRotation.current.toFixed(1) + '°',
-    })
-    
-    // Smooth rotation using lerpAngle to avoid 359°→0° jumps
-    const smoothRotation = lerpAngle(lastArrowRotation.current, targetRotation, 0.15)
-    lastArrowRotation.current = smoothRotation
-    setArrowRotation(smoothRotation)
-    
-    console.log('[ARROW DEBUG] ✅ New arrow rotation:', smoothRotation.toFixed(1) + '°')
-  }, [compassHeading, displayHeading])
-  
+    courseRef.current = heading
+  }, [heading])
+
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
   
@@ -453,116 +433,91 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
     // Switch to FOLLOW mode
     setCameraMode('FOLLOW')
     cameraManagerRef.current.setMode('FOLLOW')
-    cameraManagerRef.current.recenter(navState.snappedPosition, navState.heading)
+    cameraManagerRef.current.recenter(navState.snappedPosition, courseRef.current)
+    const el = worldRef.current
+    if (el) el.style.transform = `rotate(${mapRotationCssDeg(courseRef.current)}deg)`
   }, [])
   
   const handleEnterFreeMode = useCallback(() => {
     console.log('[CAMERA] User dragged → FREE mode (GPS will not control camera)')
+    // Un-rotate synchronously, before Leaflet applies the first drag offset.
+    if (worldRef.current) worldRef.current.style.transform = 'rotate(0deg)'
     setCameraMode('FREE')
     cameraManagerRef.current.setMode('FREE')
   }, [])
-  
-  const handleCameraUpdate = useCallback((position: LatLng, heading: number) => {
-    setDisplayHeading(heading)
-    cameraManagerRef.current.updateCurrent(position, heading)
-  }, [])
-  
-  // ============================================================================
-  // RENDER
-  // ============================================================================
-  
+
   return (
-    <>
-      {/* ==================== FIXED VEHICLE ARROW ====================
-          CRITICAL: Arrow is OUTSIDE map container
-          - position: fixed (viewport-relative)
-          - Never moves X/Y
-          - Only rotates based on device compass heading
-          - Compass heading used when available
-          - Falls back to GPS heading when compass unavailable
-          - +180° offset: CSS arrow points DOWN, compass 0° = NORTH
-          - Smooth rotation prevents 359°→0° jumps
-          - Represents device physical orientation */}
-      <div className="fixed-navigation-arrow-overlay">
-        <div className="fixed-navigation-arrow-rotator" style={{ transform: `rotate(${arrowRotation}deg)` }}>
-          <div className="fixed-navigation-arrow-icon"></div>
-          <div className="fixed-navigation-arrow-dot"></div>
+    <div className="exam-live-map">
+      {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
+
+      <button
+        type="button"
+        className={`map-recenter-btn exam-live-map__recenter ${cameraMode === 'FREE' ? 'map-recenter-btn--active' : ''}`}
+        onClick={handleRecenter}
+        title="ცენტრში დაბრუნება"
+      >
+        {cameraMode === 'FOLLOW' ? '🎯' : '📍'}
+      </button>
+
+      {nextPin && (
+        <div className="exam-live-map__hud">
+          <small>შემდეგი · {nextPinDist} მ</small>
+          <strong>{nextPin.instruction_ka}</strong>
         </div>
-      </div>
+      )}
 
-      {/* ==================== MAP CONTAINER ==================== */}
-      <div className="exam-live-map">
-        {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
-        
-        {/* Recenter button */}
-        <button 
-          type="button" 
-          className={`map-recenter-btn exam-live-map__recenter ${cameraMode === 'FREE' ? 'map-recenter-btn--active' : ''}`}
-          onClick={handleRecenter}
-          title="ცენტრში დაბრუნება"
-        >
-          {cameraMode === 'FOLLOW' ? '🎯' : '📍'}
-        </button>
-
-        {/* Next instruction HUD */}
-        {nextPin && (
-          <div className="exam-live-map__hud">
-            <small>შემდეგი · {nextPinDist} მ</small>
-            <strong>{nextPin.instruction_ka}</strong>
-          </div>
-        )}
-
-        {/* Leaflet Map */}
+      <div className="exam-live-map__world" ref={worldRef}>
         <MapContainer
           center={userPos}
           zoom={YANDEX_STREET_ZOOM}
           className="exam-live-map__canvas"
           zoomControl={false}
           attributionControl={false}
+          touchZoom="center"
+          scrollWheelZoom="center"
+          doubleClickZoom="center"
         >
           <MapSizeFix />
           <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
-          {/* All pins - visual markers only */}
-          {(() => {
-            console.log('[DEBUG] pins.map() executing, pins.length =', pins.length)
-            return pins.map((pin) => {
-              const isNext = nextPin?.id === pin.id
-              const isPulse = isNext && nextPinPulse
-              return (
-                <React.Fragment key={pin.id}>
-                  {/* Green pin marker - 25% larger for better mobile visibility */}
-                  <CircleMarker
-                    center={[pin.lat, pin.lng]}
-                    radius={isPulse ? 18 : 13}
-                    pathOptions={{
-                      color: isNext ? '#0f766e' : '#047857',
-                      fillColor: isNext ? '#5eead4' : '#10b981',
-                      fillOpacity: 1,
-                      weight: 3,
-                      className: isPulse ? 'exam-pin-pulse' : undefined,
-                    }}
-                  />
-                </React.Fragment>
-              )
-            })
-          })()}
+          {pins.map((pin) => {
+            const isNext = nextPin?.id === pin.id
+            const isPulse = isNext && nextPinPulse
+            return (
+              <CircleMarker
+                key={pin.id}
+                center={[pin.lat, pin.lng]}
+                radius={isPulse ? 18 : 13}
+                pathOptions={{
+                  color: isNext ? '#0f766e' : '#047857',
+                  fillColor: isNext ? '#5eead4' : '#10b981',
+                  fillOpacity: 1,
+                  weight: 3,
+                  className: isPulse ? 'exam-pin-pulse' : undefined,
+                }}
+              />
+            )
+          })}
 
-          {/* Interaction handler */}
-          <InteractionHandler 
-            cameraModeRef={cameraModeRef}
-            onEnterFreeMode={handleEnterFreeMode}
-          />
-          
-          {/* Navigation camera controller */}
+          <InteractionHandler cameraModeRef={cameraModeRef} onEnterFreeMode={handleEnterFreeMode} />
+
           <NavigationCameraController
             navManager={navManagerRef}
             cameraManager={cameraManagerRef}
             cameraModeRef={cameraModeRef}
-            onCameraUpdate={handleCameraUpdate}
+            courseRef={courseRef}
+            worldRef={worldRef}
           />
         </MapContainer>
       </div>
-    </>
+
+      {/* Fixed overlay: CSS triangle already points UP. No +180. Map rotates underneath. */}
+      <div className="fixed-navigation-arrow-overlay">
+        <div className="fixed-navigation-arrow-rotator">
+          <div className="fixed-navigation-arrow-icon"></div>
+          <div className="fixed-navigation-arrow-dot"></div>
+        </div>
+      </div>
+    </div>
   )
 }

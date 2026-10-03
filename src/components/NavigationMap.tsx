@@ -308,6 +308,9 @@ export function NavigationMap({ route, practiceMode = false, onPhaseChange }: Pr
 
   const polyline = route.polyline as LatLng[]
   const sortedPins = useMemo(
+    // CRITICAL: Pins must be sorted by sort_order to enforce STRICT SEQUENTIAL triggering
+    // This ensures PIN #1 triggers before #2, #2 before #3, etc.
+    // Order is maintained across all routes (Route 1, 2, 3, 4)
     () => [...route.pins].sort((a, b) => a.sort_order - b.sort_order),
     [route.id, route.pins],
   )
@@ -469,16 +472,67 @@ export function NavigationMap({ route, practiceMode = false, onPhaseChange }: Pr
 
         prevRawRef.current = raw
 
-        const pending = sortedPins.find((p) => !triggeredRef.current.has(p.id))
+        // ============================================================
+        // STRICT SEQUENTIAL PIN LOGIC (same as ExamDriveSession)
+        // ============================================================
+        const triggeredCount = triggeredRef.current.size
+        const totalPins = sortedPins.length
+        
+        // Find the FIRST untriggered pin in sequence
+        const nextPinIndex = sortedPins.findIndex((p) => !triggeredRef.current.has(p.id))
+        const pending = nextPinIndex >= 0 ? sortedPins[nextPinIndex] : null
+        
         setNextPin(pending ?? null)
+        
+        // Log current state
+        if (pending) {
+          console.log('[PIN SEQUENCE]',
+            route.slug.toUpperCase(),
+            '| Expected: #' + (nextPinIndex + 1),
+            '| ID:', pending.id,
+            '| Progress:', triggeredCount + '/' + totalPins
+          )
+        }
+        
+        // Check if user is near ANY other pin (for diagnostic logging only)
+        sortedPins.forEach((pin, idx) => {
+          if (idx === nextPinIndex || triggeredRef.current.has(pin.id)) return
+          
+          const distToOther = distanceToPinMeters(raw, [pin.lat, pin.lng])
+          
+          if (distToOther <= 50) {
+            console.log('[PIN SEQUENCE]',
+              route.slug.toUpperCase(),
+              '| IGNORE: PIN #' + (idx + 1),
+              '| Distance:', Math.round(distToOther) + 'm',
+              '| Reason: NOT NEXT PIN',
+              '| Expected: #' + (nextPinIndex + 1)
+            )
+          }
+        })
 
         if (practiceMode || !pending || phase !== 'active') return
 
         const dist = distanceToPinMeters(raw, [pending.lat, pending.lng])
+        
+        console.log('[PIN SEQUENCE]',
+          route.slug.toUpperCase(),
+          '| Expected: #' + (nextPinIndex + 1),
+          '| Distance:', Math.round(dist) + 'm',
+          '| Status:', dist <= pending.trigger_distance_m ? 'IN RANGE' : 'WAITING'
+        )
+        
         if (
           dist <= pending.trigger_distance_m &&
           headingMatches(raw, [pending.lat, pending.lng], pos.heading)
         ) {
+          console.log('[PIN SEQUENCE]',
+            route.slug.toUpperCase(),
+            '| 🔊 PIN #' + (nextPinIndex + 1) + ' TRIGGERED!',
+            '| Audio:', pending.instruction_ka,
+            '| Progress:', (triggeredCount + 1) + '/' + totalPins,
+            '| Next expected: #' + (nextPinIndex + 2)
+          )
           triggeredRef.current.add(pending.id)
           setTriggered(new Set(triggeredRef.current))
           void audioEngine.play(pending.audio_url, pending.id, pending.instruction_ka)
@@ -494,6 +548,7 @@ export function NavigationMap({ route, practiceMode = false, onPhaseChange }: Pr
     phase,
     routeFinish,
     finishSession,
+    route.slug,
   ])
 
   async function enableGps(): Promise<boolean> {

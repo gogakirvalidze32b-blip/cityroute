@@ -1,5 +1,5 @@
 import { useExamLayoutMode } from '@/hooks/useExamLayoutMode'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ExamErrorGrid } from '@/components/ExamErrorGrid'
 import { ExamLiveMap } from '@/components/ExamLiveMap'
 import { ExamScoreboard } from '@/components/ExamScoreboard'
@@ -23,7 +23,9 @@ import {
   loadActiveExam,
   saveActiveExam,
   clearActiveExam,
-  hasSavedExam,
+  examSessionOriginMs,
+  examElapsedMsNow,
+  hasSavedExamForSlug,
 } from '@/lib/exam-persistence'
 import {
   distanceToPinMeters,
@@ -52,8 +54,14 @@ import {
 import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } from '@/lib/route-nav'
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
 import type { PinRow, RouteWithPins } from '@/types/database'
+import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
 type Phase = 'preview' | 'active' | 'summary'
+
+// Per-GPS-fix diagnostics are development-only (production keeps console quiet).
+const devLog: typeof console.log = (...args) => {
+  if (import.meta.env.DEV) console.log(...args)
+}
 
 type Props = {
   route: RouteWithPins
@@ -63,9 +71,19 @@ type Props = {
 export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const features = usePlanFeatures()
   
-  // Try to restore saved exam state
-  const savedState = useMemo(() => loadActiveExam(route.id), [route.id])
+  // Try to restore saved exam state (slug survives local-route-* → Supabase UUID)
+  // savedEpoch is bumped by Finish/restart so a stale memo can never resurrect a finished exam.
+  const [savedEpoch, setSavedEpoch] = useState(0)
+  const savedState = useMemo(
+    () => loadActiveExam(route.id, route.slug, route.name_ka),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [route.id, route.slug, route.name_ka, savedEpoch],
+  )
   const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
+  // Same-render sync: slug match after local→UUID must not paint preview+saved (empty map).
+  if (savedState && phase === 'preview') {
+    setPhase('active')
+  }
   const [driveView, setDriveView] = useState<ExamDriveView>('map')
   const [exam, setExam] = useState(() => savedState?.exam || createExamSession(route.id, route.name_ka))
   const [examSummary, setExamSummary] = useState<ExamSessionSummary | null>(null)
@@ -78,19 +96,41 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [userPos, setUserPos] = useState<LatLng | null>(savedState?.userPos || null)
   const [heading, setHeading] = useState(savedState?.heading || 0)
   const [speedKmh, setSpeedKmh] = useState(savedState?.speedKmh || 0)
-  const [elapsedMs, setElapsedMs] = useState(savedState?.elapsedMs || 0)
+  const [elapsedMs, setElapsedMs] = useState(() => (savedState ? examElapsedMsNow(savedState) : 0))
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
+  
+  // DEBUG: Session diagnostic panel state
+  // Production: panel and its 500 ms re-render timer are off. Development: unchanged.
+  const [debugSessionVisible, setDebugSessionVisible] = useState(import.meta.env.DEV)
+  const [, forceDebugUpdate] = useState(0)
+  useEffect(() => {
+    if (!import.meta.env.DEV || !debugSessionVisible) return
+    const interval = setInterval(() => {
+      forceDebugUpdate(v => v + 1)
+    }, 500)
+    return () => clearInterval(interval)
+  }, [debugSessionVisible])
+
+  const phaseRef = useRef<Phase>(phase)
+  useEffect(() => {
+    phaseRef.current = phase
+  }, [phase])
 
   const triggeredRef = useRef<Set<string>>(savedState ? new Set(savedState.triggeredPins) : new Set())
   const releaseWake = useRef<(() => void) | null>(null)
-  const sessionStartRef = useRef(savedState ? Date.now() - savedState.elapsedMs : 0)
+  const sessionStartRef = useRef(savedState ? examSessionOriginMs(savedState) : 0)
+  const resumedSlugRef = useRef<string | null>(savedState ? route.slug : null)
+  const finishInProgressRef = useRef(false)
   const prevGpsRef = useRef<GpsPosition | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
   const gpsFilterRef = useRef(createGpsFilter())
 
   const polyline = route.polyline as LatLng[]
   const sortedPins = useMemo(
+    // CRITICAL: Pins must be sorted by sort_order to enforce STRICT SEQUENTIAL triggering
+    // This ensures PIN #1 triggers before #2, #2 before #3, etc.
+    // Order is maintained across all routes (Route 1, 2, 3, 4)
     () => [...route.pins].sort((a, b) => a.sort_order - b.sort_order),
     [route.id, route.pins],
   )
@@ -104,7 +144,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   const mapOnly = features.mapNav && !features.errorPanel
   const panelOnly = features.errorPanel && !features.mapNav
-  const showMapView = active && features.mapNav && (mapOnly || (features.canSwitchViews && driveView === 'map'))
+  const showMapView = active && features.mapNav && driveView === 'map'
   const showPanelView = active && features.errorPanel && (panelOnly || (features.canSwitchViews && driveView === 'panel'))
   const showToolbar = active && (features.canSwitchViews || (panelOnly && showPanelView))
   const showVoiceInToolbar = showPanelView && !mapOnly
@@ -114,11 +154,49 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     else if (panelOnly) setDriveView('panel')
   }, [mapOnly, panelOnly, route.id])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onPhaseChange?.(phase)
   }, [phase, onPhaseChange])
 
   useEffect(() => {
+    // ============================================================
+    // Resume by slug so local-route-* → Supabase UUID does not drop the session.
+    // Hydrate once per slug. Do not reset to preview. Do not call startSession().
+    // ============================================================
+    // After Finish the summary must stay. The flag stays up until restartPreview()/startSession()
+    // (it is not consumed here), so a later re-run of this effect cannot overwrite the summary.
+    if (finishInProgressRef.current || phaseRef.current === 'summary') return
+
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+
+    if (saved) {
+      if (resumedSlugRef.current !== route.slug) {
+        resumedSlugRef.current = route.slug
+        triggeredRef.current = new Set(saved.triggeredPins)
+        sessionStartRef.current = examSessionOriginMs(saved)
+        setExam(saved.exam)
+        setExamSummary(null)
+        setUserPos(saved.userPos)
+        setHeading(saved.heading)
+        setSpeedKmh(saved.speedKmh)
+        setElapsedMs(examElapsedMsNow(saved))
+        setGpsStarted(true)
+        setDriveView(features.mapNav ? 'map' : 'panel')
+        console.log('🔄 Resuming saved exam session', route.slug)
+      }
+      setPhase('active')
+      return
+    }
+
+    // Slug says a session exists; local id may not have matched yet. Do not reset to preview.
+    if (hasSavedExamForSlug(route.slug, route.name_ka)) {
+      setPhase('active')
+      setDriveView(features.mapNav ? 'map' : 'panel')
+      return
+    }
+
+    resumedSlugRef.current = null
+    sessionStartRef.current = 0
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
     setPhase('preview')
@@ -132,7 +210,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
     setHeading(0)
-  }, [route.id, route.name_ka, sortedPins, features.mapNav])
+  }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav])
 
   const enableGps = useCallback(async (silent = false) => {
     if (!silent) setGpsStarting(true)
@@ -187,39 +265,48 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   useEffect(() => {
     if (phase !== 'active') return
-    sessionStartRef.current = Date.now()
-    const tick = () => setElapsedMs(Date.now() - sessionStartRef.current)
+    // New session only: origin unset. Resume already has wall-clock origin.
+    if (!sessionStartRef.current) {
+      sessionStartRef.current = Date.now()
+    }
+    const tick = () => setElapsedMs(Math.max(0, Date.now() - sessionStartRef.current))
     tick()
     const id = window.setInterval(tick, 1000)
     return () => window.clearInterval(id)
   }, [phase])
 
-  // Auto-save exam state every 5 seconds when active
+  // Auto-save exam state every 5 seconds when active; also persist on unmount (Home/leave).
   useEffect(() => {
     if (phase !== 'active') return
-    
+    if (finishInProgressRef.current) return // Skip saving if finish is in progress
+
     const saveState = () => {
+      if (finishInProgressRef.current) return // Guard against saving during finish
+      const liveElapsed = sessionStartRef.current
+        ? Math.max(0, Date.now() - sessionStartRef.current)
+        : elapsedMs
       saveActiveExam({
         routeId: route.id,
+        routeSlug: route.slug,
         routeName: route.name_ka,
         phase: 'active',
         exam,
         userPos,
         heading,
         speedKmh,
-        elapsedMs,
+        elapsedMs: liveElapsed,
         triggeredPins: Array.from(triggeredRef.current),
         savedAt: Date.now(),
       })
     }
 
-    // Save immediately
     saveState()
-
-    // Then save every 5 seconds
     const id = window.setInterval(saveState, 5000)
-    return () => window.clearInterval(id)
-  }, [phase, route.id, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs])
+    return () => {
+      window.clearInterval(id)
+      if (!finishInProgressRef.current) saveState() // Only save on cleanup if not finishing
+    }
+  }, [phase, route.id, route.slug, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs])
 
   useEffect(() => {
     if (!gpsStarted) return
@@ -253,27 +340,54 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         }
         prevGpsRef.current = pos
 
-        // Sequence-based pin activation logic for Route 1
-        // Finish pins (last 3: indices 31, 32, 33) must not activate until route progress reaches them
+        // ============================================================
+        // STRICT SEQUENTIAL PIN LOGIC
+        // ============================================================
+        // Only ONE pin can be "next" at any time.
+        // All other pins are IGNORED regardless of proximity.
+        // 
+        // Rule: PIN N can only trigger after PIN N-1 has triggered.
+        // No skipping. No going backwards. No proximity-based activation.
+        // ============================================================
+        
         const triggeredCount = triggeredRef.current.size
         const totalPins = voicePins.length
-        const finishSectionStart = Math.max(0, totalPins - 3) // Last 3 pins are Finish section
         
-        // Find next untriggered pin that is eligible based on route progress
-        const pending = voicePins.find((p, idx) => {
-          if (triggeredRef.current.has(p.id)) return false
-          
-          // Finish pins (last 3) only become eligible after reaching finish section
-          // This prevents them from triggering at the start due to geographic proximity
-          if (idx >= finishSectionStart && triggeredCount < finishSectionStart) {
-            console.log(`🚫 Finish pin blocked: "${p.instruction_ka}" (index ${idx}) - Progress: ${triggeredCount}/${finishSectionStart}`)
-            return false
-          }
-          
-          return true
-        })
+        // Find the FIRST untriggered pin in sequence
+        // This is THE ONLY pin that can trigger right now
+        const nextPinIndex = voicePins.findIndex((p) => !triggeredRef.current.has(p.id))
+        const pending = nextPinIndex >= 0 ? voicePins[nextPinIndex] : null
         
         setNextPin(pending ?? null)
+        
+        // Log current state
+        if (pending) {
+          devLog('[PIN SEQUENCE]',
+            route.slug.toUpperCase(),
+            '| Expected: #' + (nextPinIndex + 1),
+            '| ID:', pending.id,
+            '| Progress:', triggeredCount + '/' + totalPins
+          )
+        }
+        
+        // Check if user is near ANY other pin (for diagnostic logging only)
+        voicePins.forEach((pin, idx) => {
+          // Skip if this is the expected pin or already triggered
+          if (idx === nextPinIndex || triggeredRef.current.has(pin.id)) return
+          
+          const distToOther = distanceToPinMeters(raw, [pin.lat, pin.lng])
+          
+          // If user is close to a non-expected pin, log it as IGNORED
+          if (distToOther <= 50) {
+            devLog('[PIN SEQUENCE]',
+              route.slug.toUpperCase(),
+              '| IGNORE: PIN #' + (idx + 1),
+              '| Distance:', Math.round(distToOther) + 'm',
+              '| Reason: NOT NEXT PIN',
+              '| Expected: #' + (nextPinIndex + 1)
+            )
+          }
+        })
 
         // აუდიო ყოველთვის ითამაშოს თუ routeAudio feature enabled-ია, view-ის მიუხედავად
         if (!pending || phase !== 'active' || !features.routeAudio) return
@@ -286,15 +400,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         // Audio trigger distance: 5m (audio plays when very close)
         const AUDIO_TRIGGER_DISTANCE_M = 5
         
-        console.log('📍 Pin check:', 
-          'ID:', pending.id,
-          '| Sort order:', pending.sort_order,
-          '| Instruction:', pending.instruction_ka,
+        devLog('[PIN SEQUENCE]',
+          route.slug.toUpperCase(),
+          '| Expected: #' + (nextPinIndex + 1),
           '| Distance:', Math.round(dist) + 'm',
-          '| Audio trigger:', AUDIO_TRIGGER_DISTANCE_M + 'm',
-          '| Heading OK:', headingOk,
-          '| Already spoken:', alreadySpoken,
-          '| Route progress:', triggeredCount + '/' + totalPins
+          '| Status:', dist <= AUDIO_TRIGGER_DISTANCE_M ? 'IN RANGE' : 'WAITING',
+          '| Heading OK:', headingOk
         )
 
         if (
@@ -302,7 +413,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           headingOk &&
           !alreadySpoken
         ) {
-          console.log('🔊 Audio trigger!', pending.instruction_ka, '| Progress:', (triggeredCount + 1) + '/' + totalPins, '| Distance:', Math.round(dist) + 'm')
+          devLog('[PIN SEQUENCE]',
+            route.slug.toUpperCase(),
+            '| 🔊 PIN #' + (nextPinIndex + 1) + ' TRIGGERED!',
+            '| Audio:', pending.instruction_ka,
+            '| Progress:', (triggeredCount + 1) + '/' + totalPins,
+            '| Next expected: #' + (nextPinIndex + 2)
+          )
           triggeredRef.current.add(pending.id)
           setLastSpoken(pending.instruction_ka)
           void audioEngine.play(pending.audio_url, pending.id, pending.instruction_ka)
@@ -321,6 +438,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [])
 
   function startSession(position: LatLng | null = userPos) {
+    finishInProgressRef.current = false
     triggeredRef.current = new Set()
     const firstPin = voicePins[0]
     if (firstPin && isStartPinAlreadyAnnounced(route.slug, firstPin.id)) {
@@ -328,6 +446,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
+    sessionStartRef.current = Date.now()
     setElapsedMs(0)
     setLastSpoken(EXAM_START_TEXT)
     
@@ -348,11 +467,27 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setSpeedKmh(0)
     setDriveView(features.mapNav ? 'map' : 'panel')
     setPhase('active')
+    resumedSlugRef.current = route.slug
     void audioEngine.play(EXAM_START_AUDIO, 'session-start', EXAM_START_TEXT)
   }
 
   async function handleStartSession() {
     if (gpsStarting) return
+    
+    // ============================================================
+    // If savedState exists, we're RESUMING - don't reset session!
+    // Just ensure GPS is ready and stay in active phase
+    // ============================================================
+    if (savedState) {
+      console.log('🔄 Resuming active session - not calling startSession()')
+      if (phase !== 'active') setPhase('active')
+      if (!gpsStarted) {
+        await enableGps(true)
+      }
+      return
+    }
+    
+    // No saved state - this is a NEW session
     const gpsResult = userPos ? { position: userPos, denied: false } : await enableGps(false)
     if (gpsResult.denied) return
     const position = gpsResult.position
@@ -360,13 +495,16 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function finishSession() {
+    finishInProgressRef.current = true
+    clearActiveExam() // Clear saved state IMMEDIATELY before any state updates
+    setSavedEpoch((v) => v + 1) // drop the stale savedState memo in the same batch as phase='summary'
     const summary = finishExamSession(exam)
     saveExamSummary(summary)
     setExamSummary(summary)
     setPhase('summary')
     releaseWake.current?.()
     audioEngine.stopAll()
-    clearActiveExam() // Clear saved state when finishing
+    resumedSlugRef.current = null
     // Play success audio only if passed (not failed)
     const passed = !summary.failedMinor && summary.severeTotal === 0
     if (passed) {
@@ -375,14 +513,18 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function restartPreview() {
+    finishInProgressRef.current = false
     setPhase('preview')
     setExamSummary(null)
     setExam(createExamSession(route.id, route.name_ka))
     triggeredRef.current = new Set()
+    resumedSlugRef.current = null
     setNextPin(sortedPins[0] ?? null)
     setLastSpoken(null)
     setElapsedMs(0)
+    sessionStartRef.current = 0
     clearActiveExam() // Clear saved state when restarting
+    setSavedEpoch((v) => v + 1)
   }
 
   const nextPinDistanceLabel =
@@ -394,8 +536,18 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       : null
 
   const sessionLayout = mapOnly ? 'nav-only' : features.canSwitchViews ? 'switchable' : 'panel-only'
+  const mapCenter: LatLng | null =
+    userPos ?? polyline[0] ?? ([TELAVI_CENTER.lat, TELAVI_CENTER.lng] as LatLng)
+  const shouldRenderMap = Boolean(active && showMapView && mapCenter)
+  const mapConditions = {
+    showMapView,
+    hasUserPos: !!userPos,
+    hasPolyline: !!polyline[0],
+    shouldRenderMap,
+  }
 
   return (
+    <>
     <div
       className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}`}
     >
@@ -435,8 +587,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           )}
 
           <div className="exam-drive-main">
-            {showMapView && (userPos || polyline[0]) && (
-              <ExamLiveMap route={route} userPos={userPos ?? polyline[0]} heading={heading} nextPin={nextPin} />
+            {shouldRenderMap && mapCenter && (
+              <ExamLiveMap route={route} userPos={mapCenter} heading={heading} nextPin={nextPin} />
             )}
             {showPanelView && <ExamErrorGrid counts={exam.counts} onError={handleError} />}
           </div>
@@ -447,7 +599,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         </>
       )}
 
-      {phase === 'preview' && (
+      {phase === 'preview' && !savedState && (
         <div className="exam-preview">
           <RoutePreviewMap route={route} />
           <div className="exam-preview__panel">
@@ -495,6 +647,97 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       {phase === 'summary' && examSummary && (
         <ExamSummary summary={examSummary} onRestart={restartPreview} />
       )}
+      
+      {/* DEBUG PANEL - Session diagnostic */}
+      {debugSessionVisible && (
+        <div style={{
+          position: 'fixed',
+          top: '10px',
+          right: '10px',
+          background: 'rgba(0, 0, 0, 0.95)',
+          color: '#0ff',
+          padding: '12px',
+          borderRadius: '8px',
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          zIndex: 99999,
+          maxWidth: '300px',
+          border: '2px solid #0ff',
+          boxShadow: '0 0 20px rgba(0,255,255,0.5)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <strong style={{ color: '#ff0' }}>🔍 SESSION DIAGNOSTIC</strong>
+            <button 
+              onClick={() => setDebugSessionVisible(false)}
+              style={{
+                background: '#f00',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '2px 8px',
+                cursor: 'pointer',
+                fontSize: '10px'
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ lineHeight: '1.7' }}>
+            <div style={{ 
+              background: phase === 'active' ? '#0a0' : phase === 'preview' ? '#fa0' : '#666',
+              padding: '4px 8px',
+              marginBottom: '8px',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              color: '#000'
+            }}>
+              PHASE: {phase.toUpperCase()}
+            </div>
+            
+            <div><strong>route.id:</strong> {route.id}</div>
+            <div><strong>savedState:</strong> {savedState ? '✅' : '❌'}</div>
+            <div><strong>exam exists:</strong> {exam ? '✅' : '❌'}</div>
+            <div><strong>gpsStarted:</strong> {gpsStarted ? '✅' : '❌'}</div>
+            <div><strong>userPos:</strong> {userPos ? `✅ [${userPos[0].toFixed(4)}, ${userPos[1].toFixed(4)}]` : '❌'}</div>
+            
+            <hr style={{ margin: '8px 0', borderColor: '#0ff' }} />
+            
+            <div><strong>active:</strong> {active ? '✅' : '❌'}</div>
+            <div><strong>showMapView:</strong> {mapConditions.showMapView ? '✅' : '❌'}</div>
+            <div><strong>hasUserPos:</strong> {mapConditions.hasUserPos ? '✅' : '❌'}</div>
+            <div><strong>hasPolyline[0]:</strong> {mapConditions.hasPolyline ? '✅' : '❌'}</div>
+            
+            <hr style={{ margin: '8px 0', borderColor: '#0ff' }} />
+            
+            <div style={{
+              background: mapConditions.shouldRenderMap ? '#0a0' : '#f00',
+              padding: '6px 8px',
+              marginTop: '6px',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              color: '#fff',
+              borderRadius: '4px'
+            }}>
+              {mapConditions.shouldRenderMap ? '✅ MAP SHOULD RENDER' : '❌ MAP BLOCKED'}
+            </div>
+            
+            {!mapConditions.shouldRenderMap && (
+              <div style={{ marginTop: '6px', fontSize: '10px', color: '#f00', fontWeight: 'bold' }}>
+                REASON:
+                {!active && <div>• phase ≠ active</div>}
+                {!mapConditions.showMapView && <div>• showMapView = false</div>}
+                {!mapConditions.hasUserPos && !mapConditions.hasPolyline && <div>• no userPos & no polyline</div>}
+              </div>
+            )}
+            
+            <hr style={{ margin: '8px 0', borderColor: '#0ff' }} />
+            <div style={{ fontSize: '9px', color: '#888' }}>
+              Updated: {new Date().toLocaleTimeString()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+    </>
   )
 }

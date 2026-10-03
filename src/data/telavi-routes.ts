@@ -23,6 +23,9 @@ function pin(
     trigger_distance_m: triggerM,
     instruction_ka: instruction,
     audio_url: null,
+    // CRITICAL: sort_order determines STRICT SEQUENTIAL trigger order
+    // PIN with sort_order=1 must trigger before sort_order=2, etc.
+    // Navigation logic enforces this sequence across all routes
     sort_order: order,
     active: true,
   }
