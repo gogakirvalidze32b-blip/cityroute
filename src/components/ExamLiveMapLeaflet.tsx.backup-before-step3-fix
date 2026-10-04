@@ -1,0 +1,716 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
+import { point } from '@turf/helpers'
+import turfBearing from '@turf/bearing'
+import 'leaflet/dist/leaflet.css'
+import { MapBasemapLayers } from '@/components/MapBasemapLayers'
+import { distanceToPinMeters, type LatLng } from '@/lib/gps'
+import { MAP_TILES } from '@/lib/map-tiles'
+import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
+import type { PinRow, RouteWithPins } from '@/types/database'
+import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type CameraMode } from '@/lib/navigation-state'
+
+// ============================================================================
+// HEADING-UP NAVIGATION (Leaflet)
+// ============================================================================
+// Map world rotates under a FIXED screen arrow (always ↑).
+// Bearing comes from GPS course (parent heading). Arrow is NOT a Leaflet marker.
+// Rotation is applied to the MapContainer wrapper — never mapPane.style.transform.
+// ============================================================================
+
+// Global diagnostic state for UI panel
+let globalDiagnostic = {
+  mounted: false,
+  lastEvent: 'INIT',
+  mapExists: false,
+  containerExists: false,
+  isConnected: false,
+  containerWidth: 0,
+  containerHeight: 0,
+  mapSizeX: 0,
+  mapSizeY: 0,
+  gpsHeading: 0,
+  targetBearing: 0,
+  appliedBearing: 0,
+  timestamp: Date.now()
+}
+
+function MapSizeFix() {
+  const map = useMap()
+  const [, forceUpdate] = useState(0)
+  
+  // Initial mount: invalidate size + DIAGNOSTIC
+  useEffect(() => {
+    const container = map.getContainer()
+    const rect = container?.getBoundingClientRect()
+    const mapSize = map.getSize()
+    
+    globalDiagnostic = {
+      mounted: true,
+      lastEvent: 'MOUNT',
+      mapExists: !!map,
+      containerExists: !!container,
+      isConnected: container?.isConnected || false,
+      containerWidth: rect?.width || 0,
+      containerHeight: rect?.height || 0,
+      mapSizeX: mapSize.x,
+      mapSizeY: mapSize.y,
+      timestamp: Date.now()
+    }
+    forceUpdate(v => v + 1)
+    
+    map.invalidateSize()
+    const id = window.setTimeout(() => map.invalidateSize(), 80)
+    
+    return () => {
+      globalDiagnostic = {
+        ...globalDiagnostic,
+        mounted: false,
+        lastEvent: 'UNMOUNT',
+        timestamp: Date.now()
+      }
+      window.clearTimeout(id)
+    }
+  }, [map])
+  
+  // Visibility change: DIAGNOSTIC + invalidate size when page becomes visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const container = map.getContainer()
+        const rect = container?.getBoundingClientRect()
+        const mapSize = map.getSize()
+        
+        globalDiagnostic = {
+          mounted: true,
+          lastEvent: 'RETURN',
+          mapExists: !!map,
+          containerExists: !!container,
+          isConnected: container?.isConnected || false,
+          containerWidth: rect?.width || 0,
+          containerHeight: rect?.height || 0,
+          mapSizeX: mapSize.x,
+          mapSizeY: mapSize.y,
+          timestamp: Date.now()
+        }
+        forceUpdate(v => v + 1)
+        
+        // Immediate invalidate
+        map.invalidateSize()
+        
+        // After short delay (DOM reflow)
+        window.setTimeout(() => {
+          map.invalidateSize()
+          const newSize = map.getSize()
+          globalDiagnostic = {
+            ...globalDiagnostic,
+            mapSizeX: newSize.x,
+            mapSizeY: newSize.y,
+            timestamp: Date.now()
+          }
+          forceUpdate(v => v + 1)
+        }, 100)
+        
+        // After requestAnimationFrame (ensure paint cycle complete)
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            map.invalidateSize()
+          })
+        })
+      }
+    }
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [map])
+  
+  return null
+}
+
+/**
+ * Smooth angle interpolation - shortest path around circle
+ */
+function lerpAngle(current: number, target: number, factor: number): number {
+  current = ((current % 360) + 360) % 360
+  target = ((target % 360) + 360) % 360
+
+  let delta = target - current
+  if (delta > 180) delta -= 360
+  if (delta < -180) delta += 360
+
+  return current + delta * factor
+}
+
+/**
+ * Rotate the wrapper around ALL Leaflet panes together.
+ * Never mapPane.style.transform (that desyncs panes → black triangles).
+ */
+function applyHeadingUpRotation(el: HTMLElement | null, headingDeg: number) {
+  if (!el) return
+  const deg = ((headingDeg % 360) + 360) % 360
+  // Entire map world (all panes) — not mapPane alone.
+  el.style.transform = `translate(-50%, -50%) rotate(${-deg}deg)`
+  el.style.transformOrigin = '50% 50%'
+  globalDiagnostic = { ...globalDiagnostic, appliedBearing: deg, timestamp: Date.now() }
+}
+
+function headingFromMovement(from: LatLng, to: LatLng): number {
+  return turfBearing(point([from[1], from[0]]), point([to[1], to[0]]))
+}
+
+/**
+ * Device Compass Hook
+ * Returns compass heading from DeviceOrientation API
+ * 0° = North, 90° = East, 180° = South, 270° = West
+ */
+function useDeviceCompass(): number | null {
+  const [compassHeading, setCompassHeading] = useState<number | null>(null)
+  const [permissionGranted, setPermissionGranted] = useState(false)
+  const lastHeadingRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+
+    const requestPermission = async () => {
+      console.log('[COMPASS DEBUG] 🔍 Starting permission check...')
+      console.log('[COMPASS DEBUG] DeviceOrientationEvent available:', typeof DeviceOrientationEvent !== 'undefined')
+      console.log('[COMPASS DEBUG] requestPermission function exists:', typeof (DeviceOrientationEvent as any).requestPermission === 'function')
+      
+      // iOS 13+ requires permission
+      if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+        console.log('[COMPASS DEBUG] iOS detected - requesting permission...')
+        try {
+          const permission = await (DeviceOrientationEvent as any).requestPermission()
+          console.log('[COMPASS DEBUG] iOS permission result:', permission)
+          if (permission === 'granted' && mounted) {
+            console.log('[COMPASS DEBUG] ✅ iOS permission GRANTED')
+            setPermissionGranted(true)
+          }
+        } catch (err) {
+          console.warn('[COMPASS] Permission denied:', err)
+        }
+      } else {
+        // Android and older iOS - no permission needed
+        console.log('[COMPASS DEBUG] ✅ Android/older iOS - no permission needed')
+        setPermissionGranted(true)
+      }
+    }
+
+    void requestPermission()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!permissionGranted) {
+      console.log('[COMPASS DEBUG] ❌ Permission not granted yet, waiting...')
+      return
+    }
+
+    console.log('[COMPASS DEBUG] 🎯 Setting up deviceorientation listener...')
+    let eventCount = 0
+
+    const handleOrientation = (event: DeviceOrientationEvent) => {
+      eventCount++
+      
+      // Log first 5 events for debugging
+      if (eventCount <= 5) {
+        console.log(`[COMPASS DEBUG] 📡 Event #${eventCount} received:`, {
+          alpha: event.alpha,
+          beta: event.beta,
+          gamma: event.gamma,
+          absolute: event.absolute,
+          webkitCompassHeading: (event as any).webkitCompassHeading,
+        })
+      }
+
+      let heading: number | null = null
+
+      // Try webkitCompassHeading first (iOS)
+      if (typeof (event as any).webkitCompassHeading === 'number') {
+        heading = (event as any).webkitCompassHeading
+        if (eventCount <= 5) console.log('[COMPASS DEBUG] 🍎 Using webkitCompassHeading (iOS):', heading)
+      }
+      // Try alpha with absolute reference (Android)
+      else if (event.absolute && typeof event.alpha === 'number') {
+        // alpha: 0° = North, increases clockwise
+        heading = event.alpha
+        if (eventCount <= 5) console.log('[COMPASS DEBUG] 🤖 Using alpha with absolute=true (Android):', heading)
+      }
+      // Fallback to alpha without absolute (less reliable)
+      else if (typeof event.alpha === 'number') {
+        heading = event.alpha
+        if (eventCount <= 5) console.log('[COMPASS DEBUG] ⚠️ Using alpha WITHOUT absolute (unreliable):', heading)
+      }
+
+      if (heading !== null && !Number.isNaN(heading)) {
+        // Normalize to 0-360
+        heading = ((heading % 360) + 360) % 360
+        lastHeadingRef.current = heading
+        setCompassHeading(heading)
+        
+        if (eventCount <= 5) {
+          console.log('[COMPASS DEBUG] ✅ Compass heading set:', heading.toFixed(1) + '°')
+        }
+      } else {
+        if (eventCount <= 5) {
+          console.log('[COMPASS DEBUG] ❌ No valid heading found in event')
+        }
+      }
+    }
+
+    window.addEventListener('deviceorientation', handleOrientation, true)
+    console.log('[COMPASS DEBUG] ✅ Listener added')
+    
+    return () => {
+      console.log('[COMPASS DEBUG] 🛑 Removing listener')
+      window.removeEventListener('deviceorientation', handleOrientation, true)
+    }
+  }, [permissionGranted])
+
+  return compassHeading
+}
+
+/**
+ * Navigation Camera Controller
+ * 
+ * FOLLOW MODE: Camera follows GPS navigation state
+ * FREE MODE: Camera controlled by user - GPS MUST NOT INTERFERE
+ * 
+ * CRITICAL: Uses refs to avoid stale closures
+ */
+function NavigationCameraController({
+  navManager,
+  cameraManager,
+  cameraModeRef,
+  courseHeadingRef,
+  rotatorRef,
+  onCameraUpdate,
+}: {
+  navManager: React.MutableRefObject<NavigationStateManager | null>
+  cameraManager: React.MutableRefObject<CameraStateManager>
+  cameraModeRef: React.MutableRefObject<CameraMode>
+  courseHeadingRef: React.MutableRefObject<number>
+  rotatorRef: React.MutableRefObject<HTMLDivElement | null>
+  onCameraUpdate: (position: LatLng, heading: number) => void
+}) {
+  const map = useMap()
+  const rafRef = useRef<number | undefined>(undefined)
+  const hasInitialized = useRef(false)
+  const currentDisplayPosition = useRef<LatLng | null>(null)
+  const currentDisplayHeading = useRef(0)
+
+  useEffect(() => {
+    const animate = () => {
+      const navState = navManager.current?.getState()
+      const gpsCourse = courseHeadingRef.current
+      const targetHeading = Number.isFinite(gpsCourse) ? gpsCourse : (navState?.heading ?? currentDisplayHeading.current)
+      const rotatorEl = rotatorRef.current
+
+      globalDiagnostic = { ...globalDiagnostic, gpsHeading: gpsCourse, targetBearing: targetHeading }
+
+      if (!hasInitialized.current) {
+        const start = navState?.snappedPosition ?? ([map.getCenter().lat, map.getCenter().lng] as LatLng)
+        map.setView(start, YANDEX_STREET_ZOOM, { animate: false })
+        currentDisplayPosition.current = start
+        currentDisplayHeading.current = targetHeading
+        applyHeadingUpRotation(rotatorEl, currentDisplayHeading.current)
+        hasInitialized.current = true
+      }
+
+      if (navState) {
+        cameraManager.current.updateTarget(navState.snappedPosition, targetHeading)
+      }
+
+      const currentMode = cameraModeRef.current
+
+      if (currentMode === 'FOLLOW') {
+        if (navState && currentDisplayPosition.current) {
+          const [currentLat, currentLng] = currentDisplayPosition.current
+          const [targetLat, targetLng] = navState.snappedPosition
+          const smoothFactor = 0.15
+          currentDisplayPosition.current = [
+            currentLat + (targetLat - currentLat) * smoothFactor,
+            currentLng + (targetLng - currentLng) * smoothFactor,
+          ]
+          map.panTo(currentDisplayPosition.current, {
+            animate: false,
+            noMoveStart: true,
+            duration: 0,
+          })
+        }
+
+        currentDisplayHeading.current = lerpAngle(currentDisplayHeading.current, targetHeading, 0.2)
+        applyHeadingUpRotation(rotatorEl, currentDisplayHeading.current)
+        onCameraUpdate(
+          currentDisplayPosition.current ?? [map.getCenter().lat, map.getCenter().lng],
+          currentDisplayHeading.current,
+        )
+      } else {
+        currentDisplayPosition.current = [map.getCenter().lat, map.getCenter().lng]
+        onCameraUpdate(currentDisplayPosition.current, currentDisplayHeading.current)
+      }
+
+      rafRef.current = requestAnimationFrame(animate)
+    }
+
+    rafRef.current = requestAnimationFrame(animate)
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [map, navManager, cameraManager, cameraModeRef, courseHeadingRef, rotatorRef, onCameraUpdate])
+
+  return null
+}
+
+/**
+ * Interaction Handler
+ * CRITICAL FIX: Dragging must ALWAYS be enabled
+ * Drag immediately triggers FREE camera mode
+ * Zoom does NOT trigger mode change
+ */
+function InteractionHandler({
+  cameraModeRef,
+  onEnterFreeMode,
+}: {
+  cameraModeRef: React.MutableRefObject<CameraMode>
+  onEnterFreeMode: () => void
+}) {
+  const map = useMap()
+  
+  // ALWAYS enable all interactions
+  useEffect(() => {
+    map.dragging.enable() // ← CRITICAL: Must ALWAYS be enabled
+    map.touchZoom.enable()
+    map.scrollWheelZoom.enable()
+    map.doubleClickZoom.enable()
+    map.boxZoom.enable()
+    map.keyboard.enable()
+  }, [map])
+  
+  // Drag triggers FREE mode immediately
+  useMapEvents({
+    dragstart: () => {
+      if (cameraModeRef.current === 'FOLLOW') {
+        console.log('[CAMERA] User dragged map → FREE mode')
+        onEnterFreeMode()
+      }
+    },
+    zoomstart: () => {
+      if (cameraModeRef.current === 'FOLLOW') {
+        console.log('[CAMERA] User zoomed map → FREE mode')
+        onEnterFreeMode()
+      }
+    },
+  })
+  
+  return null
+}
+
+type Props = {
+  route: RouteWithPins
+  userPos: LatLng
+  heading: number
+  nextPin: PinRow | null
+  mapBadge?: string
+  onGpsUpdate?: (update: RawGpsUpdate) => void // For parent to send GPS updates
+}
+
+export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge, onGpsUpdate }: Props) {
+  console.log('[MAP LIFECYCLE] ======================================')
+  console.log('[MAP LIFECYCLE] ExamLiveMapLeaflet RENDER')
+  console.log('[MAP LIFECYCLE] route.id:', route.id)
+  console.log('[MAP LIFECYCLE] userPos:', userPos)
+  console.log('[MAP LIFECYCLE] ======================================')
+  
+  const [cameraMode, setCameraMode] = useState<CameraMode>('FOLLOW')
+  const [debugVisible, setDebugVisible] = useState(true)
+  const [, forceDebugUpdate] = useState(0)
+  
+  // Update debug panel every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      forceDebugUpdate(v => v + 1)
+    }, 500)
+    return () => clearInterval(interval)
+  }, [])
+
+  const cameraModeRef = useRef<CameraMode>('FOLLOW')
+  const navManagerRef = useRef<NavigationStateManager | null>(null)
+  const cameraManagerRef = useRef<CameraStateManager>(new CameraStateManager())
+  const gpsCourseRef = useRef(heading)
+  const rotatorRef = useRef<HTMLDivElement | null>(null)
+  const mapShellRef = useRef<HTMLDivElement | null>(null)
+  const lastFixRef = useRef<LatLng | null>(null)
+
+  // Course for map bearing: movement first, then parent GPS/route heading.
+  // Do NOT assign heading on every render — parent heading is often 0 and would cancel rotation.
+  useEffect(() => {
+    const prev = lastFixRef.current
+    if (prev) {
+      const movedM = distanceToPinMeters(prev, userPos)
+      if (movedM >= 3) {
+        gpsCourseRef.current = headingFromMovement(prev, userPos)
+        lastFixRef.current = userPos
+        return
+      }
+    }
+    if (Number.isFinite(heading) && heading !== 0) {
+      gpsCourseRef.current = heading
+    } else if (!prev && Number.isFinite(heading)) {
+      gpsCourseRef.current = heading
+    }
+    lastFixRef.current = userPos
+  }, [userPos, heading])
+  
+  const pins = route.pins
+  const polyline = route.polyline as LatLng[]
+  
+  // ============================================================================
+  // DEBUG: Runtime pin verification + MOUNT/UNMOUNT tracking
+  // ============================================================================
+  useEffect(() => {
+    console.log('[MAP LIFECYCLE] ►►► ExamLiveMapLeaflet MOUNTED ◄◄◄')
+    console.log('═══════════════════════════════════════════════════')
+    console.log('[DEBUG] ExamLiveMapLeaflet - Route Data:')
+    console.log('  Route ID:', route.id)
+    console.log('  Route Name:', route.name_ka)
+    console.log('  Route Slug:', route.slug)
+    console.log('  Pins Length:', pins.length)
+    console.log('  Polyline Length:', polyline.length)
+    
+    if (pins.length > 0) {
+      console.log('  First Pin:', {
+        id: pins[0].id,
+        lat: pins[0].lat,
+        lng: pins[0].lng,
+        instruction: pins[0].instruction_ka
+      })
+      console.log('  Last Pin:', {
+        id: pins[pins.length - 1].id,
+        lat: pins[pins.length - 1].lat,
+        lng: pins[pins.length - 1].lng,
+        instruction: pins[pins.length - 1].instruction_ka
+      })
+    } else {
+      console.log('  ⚠️ NO PINS FOUND!')
+    }
+    console.log('═══════════════════════════════════════════════════')
+    
+    return () => {
+      console.log('[MAP LIFECYCLE] ►►► ExamLiveMapLeaflet UNMOUNTED ◄◄◄')
+    }
+  }, [route.id, route.name_ka, route.slug, pins.length, pins, polyline.length])
+  
+  // Sync ref with state
+  useEffect(() => {
+    cameraModeRef.current = cameraMode
+  }, [cameraMode])
+  
+  // Initialize navigation manager
+  useEffect(() => {
+    navManagerRef.current = new NavigationStateManager(polyline)
+  }, [polyline])
+  
+  // Process GPS updates from parent
+  useEffect(() => {
+    if (!navManagerRef.current) return
+    
+    const gpsUpdate: RawGpsUpdate = {
+      position: userPos,
+      accuracy: 20, // TODO: Get real accuracy from parent
+      speed: null,
+      heading: heading,
+      timestamp: Date.now(),
+    }
+    
+    navManagerRef.current.processGpsUpdate(gpsUpdate)
+  }, [userPos, heading])
+  
+  const nextPinDist =
+    nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
+  
+  // Visual pulse starts at 30m, audio triggers at 5m (in ExamDriveSession)
+  const VISUAL_WARNING_DISTANCE_M = 30
+  const nextPinPulse = nextPin != null && nextPinDist != null && nextPinDist <= VISUAL_WARNING_DISTANCE_M
+  
+  const handleRecenter = useCallback(() => {
+    const navState = navManagerRef.current?.getState()
+    if (!navState) return
+    
+    console.log('[CAMERA] Red button pressed → FOLLOW mode, recentering to current vehicle')
+    
+    // Switch to FOLLOW mode
+    setCameraMode('FOLLOW')
+    cameraManagerRef.current.setMode('FOLLOW')
+    cameraManagerRef.current.recenter(navState.snappedPosition, navState.heading)
+  }, [])
+  
+  const handleEnterFreeMode = useCallback(() => {
+    console.log('[CAMERA] User dragged → FREE mode (GPS will not control camera)')
+    setCameraMode('FREE')
+    cameraManagerRef.current.setMode('FREE')
+  }, [])
+  
+  const handleCameraUpdate = useCallback((position: LatLng, headingDeg: number) => {
+    cameraManagerRef.current.updateCurrent(position, headingDeg)
+  }, [])
+  
+  // ============================================================================
+  // RENDER
+  // ============================================================================
+  
+  return (
+    <>
+      <div ref={mapShellRef} className="exam-live-map">
+        {mapBadge && <span className="exam-live-map__badge">{mapBadge}</span>}
+
+        <button
+          type="button"
+          className={`map-recenter-btn exam-live-map__recenter ${cameraMode === 'FREE' ? 'map-recenter-btn--active' : ''}`}
+          onClick={handleRecenter}
+          title="ცენტრში დაბრუნება"
+        >
+          {cameraMode === 'FOLLOW' ? '🎯' : '📍'}
+        </button>
+
+        {nextPin && (
+          <div className="exam-live-map__hud">
+            <small>შემდეგი · {nextPinDist} მ</small>
+            <strong>{nextPin.instruction_ka}</strong>
+          </div>
+        )}
+
+        {console.log('[MAP LIFECYCLE] Rendering <MapContainer> with center:', userPos, 'zoom:', YANDEX_STREET_ZOOM)}
+        <div ref={rotatorRef} className="exam-live-map__world">
+          <MapContainer
+            center={userPos}
+            zoom={YANDEX_STREET_ZOOM}
+            className="exam-live-map__canvas"
+            zoomControl={false}
+            attributionControl={false}
+          >
+            {console.log('[MAP LIFECYCLE] Inside <MapContainer> - children rendering')}
+            <MapSizeFix />
+            <MapBasemapLayers tiles={MAP_TILES} detectRetina />
+
+            {(() => {
+              console.log('[DEBUG] pins.map() executing, pins.length =', pins.length)
+              return pins.map((pin) => {
+                const isNext = nextPin?.id === pin.id
+                const isPulse = isNext && nextPinPulse
+                return (
+                  <React.Fragment key={pin.id}>
+                    <CircleMarker
+                      center={[pin.lat, pin.lng]}
+                      radius={isPulse ? 18 : 13}
+                      pathOptions={{
+                        color: isNext ? '#0f766e' : '#047857',
+                        fillColor: isNext ? '#5eead4' : '#10b981',
+                        fillOpacity: 1,
+                        weight: 3,
+                        className: isPulse ? 'exam-pin-pulse' : undefined,
+                      }}
+                    />
+                  </React.Fragment>
+                )
+              })
+            })()}
+
+            <InteractionHandler
+              cameraModeRef={cameraModeRef}
+              onEnterFreeMode={handleEnterFreeMode}
+            />
+
+            <NavigationCameraController
+              navManager={navManagerRef}
+              cameraManager={cameraManagerRef}
+              cameraModeRef={cameraModeRef}
+              courseHeadingRef={gpsCourseRef}
+              rotatorRef={rotatorRef}
+              onCameraUpdate={handleCameraUpdate}
+            />
+          </MapContainer>
+        </div>
+
+        {/* Camera-target overlay: sibling of rotated world, not a Leaflet marker. */}
+        <div className="fixed-navigation-arrow-overlay" aria-hidden>
+          <div className="fixed-navigation-arrow-rotator">
+            <div className="fixed-navigation-arrow-icon"></div>
+            <div className="fixed-navigation-arrow-dot"></div>
+          </div>
+        </div>
+      </div>
+      
+      {/* DEBUG PANEL - Temporary diagnostic */}
+      {debugVisible && (
+        <div style={{
+          position: 'fixed',
+          bottom: '10px',
+          left: '10px',
+          background: 'rgba(0, 0, 0, 0.9)',
+          color: '#0f0',
+          padding: '10px',
+          borderRadius: '8px',
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          zIndex: 10000,
+          maxWidth: '280px',
+          border: '2px solid #0f0'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <strong style={{ color: '#ff0' }}>🔍 MAP DIAGNOSTIC</strong>
+            <button 
+              onClick={() => setDebugVisible(false)}
+              style={{
+                background: '#f00',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '2px 8px',
+                cursor: 'pointer',
+                fontSize: '10px'
+              }}
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ lineHeight: '1.6' }}>
+            <div style={{ 
+              background: globalDiagnostic.lastEvent === 'MOUNT' ? '#0a0' : 
+                         globalDiagnostic.lastEvent === 'UNMOUNT' ? '#f00' : 
+                         globalDiagnostic.lastEvent === 'RETURN' ? '#fa0' : '#666',
+              padding: '4px 8px',
+              marginBottom: '6px',
+              fontWeight: 'bold',
+              textAlign: 'center'
+            }}>
+              {globalDiagnostic.lastEvent}
+            </div>
+            <div><strong>Mounted:</strong> {globalDiagnostic.mounted ? '✅' : '❌'}</div>
+            <div><strong>Map exists:</strong> {globalDiagnostic.mapExists ? '✅' : '❌'}</div>
+            <div><strong>Container exists:</strong> {globalDiagnostic.containerExists ? '✅' : '❌'}</div>
+            <div><strong>isConnected:</strong> {globalDiagnostic.isConnected ? '✅' : '❌'}</div>
+            <hr style={{ margin: '6px 0', borderColor: '#0f0' }} />
+            <div><strong>Container W:</strong> {globalDiagnostic.containerWidth.toFixed(0)}px</div>
+            <div><strong>Container H:</strong> {globalDiagnostic.containerHeight.toFixed(0)}px</div>
+            <div><strong>Map size:</strong> {globalDiagnostic.mapSizeX} × {globalDiagnostic.mapSizeY}</div>
+            <div><strong>GPS hdg:</strong> {globalDiagnostic.gpsHeading.toFixed(1)}°</div>
+            <div><strong>Target brg:</strong> {globalDiagnostic.targetBearing.toFixed(1)}°</div>
+            <div><strong>Applied brg:</strong> {globalDiagnostic.appliedBearing.toFixed(1)}°</div>
+            <hr style={{ margin: '6px 0', borderColor: '#0f0' }} />
+            <div style={{ fontSize: '9px', color: '#888' }}>
+              Last: {new Date(globalDiagnostic.timestamp).toLocaleTimeString()}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}

@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Route 1 PIN Diagnostic Viewer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    #header {
+      background: #1a1a1a;
+      color: white;
+      padding: 15px 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      z-index: 1000;
+    }
+    
+    #header h1 {
+      font-size: 20px;
+      margin-bottom: 5px;
+    }
+    
+    #header p {
+      font-size: 14px;
+      color: #aaa;
+    }
+    
+    #controls {
+      background: #2a2a2a;
+      color: white;
+      padding: 10px 20px;
+      display: flex;
+      gap: 15px;
+      align-items: center;
+      flex-wrap: wrap;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    #controls label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    
+    #controls input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+    
+    #controls button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+    
+    #controls button:hover {
+      background: #45a049;
+    }
+    
+    #map {
+      flex: 1;
+      width: 100%;
+    }
+    
+    .pin-marker {
+      background: #FF4444;
+      color: white;
+      border: 3px solid white;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    
+    .pin-marker:hover {
+      transform: scale(1.2);
+      z-index: 1000;
+    }
+    
+    .pin-marker.selected {
+      background: #00FF00;
+      border-color: #FFD700;
+      transform: scale(1.3);
+      z-index: 1001;
+    }
+    
+    .leaflet-popup-content-wrapper {
+      background: #1a1a1a;
+      color: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    
+    .leaflet-popup-content {
+      margin: 15px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    
+    .leaflet-popup-tip {
+      background: #1a1a1a;
+    }
+    
+    .popup-content h3 {
+      color: #FFD700;
+      margin-bottom: 10px;
+      font-size: 16px;
+    }
+    
+    .popup-content .coord {
+      font-family: 'Courier New', monospace;
+      background: #2a2a2a;
+      padding: 8px;
+      border-radius: 4px;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+    
+    .popup-content .instruction {
+      color: #4CAF50;
+      margin-top: 8px;
+      font-style: italic;
+    }
+    
+    .popup-content .links {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
+    
+    .popup-content .links a {
+      color: #4CAF50;
+      text-decoration: none;
+      padding: 4px 8px;
+      background: #2a2a2a;
+      border-radius: 4px;
+      font-size: 12px;
+      transition: background 0.2s;
+    }
+    
+    .popup-content .links a:hover {
+      background: #3a3a3a;
+    }
+    
+    #pin-list {
+      position: absolute;
+      top: 120px;
+      right: 10px;
+      background: rgba(26, 26, 26, 0.95);
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      max-height: calc(100vh - 140px);
+      overflow-y: auto;
+      width: 200px;
+      z-index: 1000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      font-size: 12px;
+    }
+    
+    #pin-list h3 {
+      margin-bottom: 10px;
+      color: #FFD700;
+      font-size: 14px;
+    }
+    
+    #pin-list .pin-item {
+      padding: 6px 8px;
+      margin: 4px 0;
+      background: #2a2a2a;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    #pin-list .pin-item:hover {
+      background: #3a3a3a;
+    }
+    
+    #pin-list .pin-item.selected {
+      background: #4CAF50;
+      font-weight: bold;
+    }
+    
+    .hide {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <h1>🗺️ Route 1 PIN Diagnostic Viewer</h1>
+    <p>Visual verification tool for all 34 pins - Click any pin to inspect</p>
+  </div>
+  
+  <div id="controls">
+    <label>
+      <input type="checkbox" id="satelliteToggle">
+      Satellite View
+    </label>
+    
+    <label>
+      <input type="checkbox" id="showRoute" checked>
+      Show Route Line
+    </label>
+    
+    <button onclick="fitAllPins()">Fit All Pins</button>
+    
+    <label>
+      <input type="checkbox" id="showPinList" checked>
+      Show PIN List
+    </label>
+  </div>
+  
+  <div id="map"></div>
+  
+  <div id="pin-list">
+    <h3>All 34 Pins</h3>
+    <div id="pin-list-items"></div>
+  </div>
+  
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Route 1 official data
+    const route1Data = {
+      "route_name": "თელავი, საგამოცდო მარშრუტი №1",
+      "manoeuvres": [
+        { "index": 0, "lat": 41.931434, "lng": 45.475383, "type": "turn", "instruction": "გთხოვთ, მოუხვიოთ მარჯვნივ" },
+        { "index": 1, "lat": 41.931052, "lng": 45.476154, "type": "turn", "instruction": "გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ" },
+        { "index": 2, "lat": 41.929826, "lng": 45.475295, "type": "turn", "instruction": "500 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 3, "lat": 41.927844, "lng": 45.473973, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 4, "lat": 41.925864, "lng": 45.472659, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 5, "lat": 41.924926, "lng": 45.471593, "type": "turn", "instruction": "გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ" },
+        { "index": 6, "lat": 41.92584, "lng": 45.46588, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 7, "lat": 41.926396, "lng": 45.463676, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 8, "lat": 41.926909, "lng": 45.461327, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 9, "lat": 41.926626, "lng": 45.461236, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 10, "lat": 41.926429, "lng": 45.461338, "type": "turn", "instruction": "გთხოვთ, შემდეგ მინიშნებამდე, იმოძრაოთ პირდაპირ" },
+        { "index": 11, "lat": 41.923441, "lng": 45.46588, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 12, "lat": 41.922551, "lng": 45.469266, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 13, "lat": 41.922093, "lng": 45.469893, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 14, "lat": 41.920202, "lng": 45.469913, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 15, "lat": 41.919549, "lng": 45.470136, "type": "turn", "instruction": "გთხოვთ, შემდეგ მინიშნებამდე, იმოძრაოთ პირდაპირ" },
+        { "index": 16, "lat": 41.918715, "lng": 45.472371, "type": "turn", "instruction": "300 მეტრში, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 17, "lat": 41.918205, "lng": 45.473217, "type": "turn", "instruction": "გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ" },
+        { "index": 18, "lat": 41.917228, "lng": 45.475799, "type": "turn", "instruction": "გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ" },
+        { "index": 19, "lat": 41.918001, "lng": 45.481066, "type": "turn", "instruction": "300 მეტრში, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 20, "lat": 41.918616, "lng": 45.484112, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ" },
+        { "index": 21, "lat": 41.918919, "lng": 45.48532, "type": "turn", "instruction": "გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ" },
+        { "index": 22, "lat": 41.91842, "lng": 45.483328, "type": "turn", "instruction": "მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ" },
+        { "index": 23, "lat": 41.917267, "lng": 45.475761, "type": "turn", "instruction": "მალე, წრიული მოძრაობისას გთხოვთ იმოძრაოთ პირდაპირ" },
+        { "index": 24, "lat": 41.918717, "lng": 45.472368, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 25, "lat": 41.919465, "lng": 45.47131, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 26, "lat": 41.920189, "lng": 45.470198, "type": "turn", "instruction": "გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ" },
+        { "index": 27, "lat": 41.929098, "lng": 45.475144, "type": "turn", "instruction": "500 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 28, "lat": 41.930561, "lng": 45.47608, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 29, "lat": 41.933312, "lng": 45.477867, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ" },
+        { "index": 30, "lat": 41.933977, "lng": 45.478151, "type": "turn", "instruction": "300 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 31, "lat": 41.932369, "lng": 45.477051, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარჯვნივ" },
+        { "index": 32, "lat": 41.931327, "lng": 45.475788, "type": "turn", "instruction": "მალე, გთხოვთ მოუხვიოთ მარცხნივ" },
+        { "index": 33, "lat": 41.931488, "lng": 45.475166, "type": "finish", "instruction": "ფინიში" }
+      ],
+      "full_path": [
+        { "lat": 41.931548, "lng": 45.474995 },
+        { "lat": 41.931157, "lng": 45.47625 },
+        { "lat": 41.92921, "lng": 45.474855 },
+        { "lat": 41.930008, "lng": 45.470896 },
+        { "lat": 41.925133, "lng": 45.470148 },
+        { "lat": 41.927815, "lng": 45.458604 },
+        { "lat": 41.926251, "lng": 45.454184 },
+        { "lat": 41.926123, "lng": 45.453411 },
+        { "lat": 41.9259, "lng": 45.45384 },
+        { "lat": 41.925963, "lng": 45.454613 },
+        { "lat": 41.927528, "lng": 45.458647 },
+        { "lat": 41.924814, "lng": 45.470062 },
+        { "lat": 41.924591, "lng": 45.472852 },
+        { "lat": 41.924303, "lng": 45.475127 },
+        { "lat": 41.922419, "lng": 45.48092 },
+        { "lat": 41.921493, "lng": 45.483023 },
+        { "lat": 41.92012, "lng": 45.484482 },
+        { "lat": 41.919098, "lng": 45.485598 },
+        { "lat": 41.918287, "lng": 45.482541 },
+        { "lat": 41.918272, "lng": 45.482026 },
+        { "lat": 41.917824, "lng": 45.479601 },
+        { "lat": 41.91709, "lng": 45.476608 },
+        { "lat": 41.918232, "lng": 45.473293 },
+        { "lat": 41.917832, "lng": 45.473539 },
+        { "lat": 41.917186, "lng": 45.474494 },
+        { "lat": 41.917385, "lng": 45.474784 },
+        { "lat": 41.917425, "lng": 45.47517 },
+        { "lat": 41.916938, "lng": 45.476565 },
+        { "lat": 41.918104, "lng": 45.481994 },
+        { "lat": 41.918208, "lng": 45.48283 },
+        { "lat": 41.918894, "lng": 45.485481 },
+        { "lat": 41.918894, "lng": 45.486017 },
+        { "lat": 41.918583, "lng": 45.487465 },
+        { "lat": 41.918591, "lng": 45.491038 },
+        { "lat": 41.918751, "lng": 45.493474 },
+        { "lat": 41.918838, "lng": 45.495094 },
+        { "lat": 41.919078, "lng": 45.498259 },
+        { "lat": 41.919581, "lng": 45.500951 },
+        { "lat": 41.920155, "lng": 45.500962 },
+        { "lat": 41.920124, "lng": 45.500265 },
+        { "lat": 41.919573, "lng": 45.499825 },
+        { "lat": 41.918966, "lng": 45.494085 },
+        { "lat": 41.918727, "lng": 45.492047 },
+        { "lat": 41.918695, "lng": 45.487551 },
+        { "lat": 41.919046, "lng": 45.485845 },
+        { "lat": 41.920187, "lng": 45.484633 },
+        { "lat": 41.921616, "lng": 45.483227 },
+        { "lat": 41.923133, "lng": 45.47943 },
+        { "lat": 41.924354, "lng": 45.47531 },
+        { "lat": 41.924578, "lng": 45.474494 },
+        { "lat": 41.925121, "lng": 45.470246 },
+        { "lat": 41.929942, "lng": 45.470986 },
+        { "lat": 41.929128, "lng": 45.474795 },
+        { "lat": 41.929024, "lng": 45.475256 },
+        { "lat": 41.931211, "lng": 45.476522 },
+        { "lat": 41.93157, "lng": 45.474923 }
+      ]
+    };
+    
+    // Initialize map
+    const map = L.map('map').setView([41.925, 45.472], 13);
+    
+    // Base layers
+    const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors',
+      maxZoom: 19
+    }).addTo(map);
+    
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles © Esri',
+      maxZoom: 19
+    });
+    
+    // Route polyline
+    const routeCoords = route1Data.full_path.map(p => [p.lat, p.lng]);
+    const routeLine = L.polyline(routeCoords, {
+      color: '#4CAF50',
+      weight: 4,
+      opacity: 0.7
+    }).addTo(map);
+    
+    // Store markers
+    const markers = [];
+    let selectedMarker = null;
+    
+    // Add pin markers
+    route1Data.manoeuvres.forEach(pin => {
+      const markerDiv = L.divIcon({
+        html: `<div class="pin-marker" data-pin="${pin.index}">${pin.index}</div>`,
+        className: '',
+        iconSize: [36, 36],
+        iconAnchor: [18, 18]
+      });
+      
+      const marker = L.marker([pin.lat, pin.lng], { icon: markerDiv }).addTo(map);
+      
+      const popupContent = `
+        <div class="popup-content">
+          <h3>📍 PIN #${pin.index}</h3>
+          <div class="coord">
+            LAT: ${pin.lat.toFixed(6)}<br>
+            LNG: ${pin.lng.toFixed(6)}
+          </div>
+          <div class="instruction">"${pin.instruction}"</div>
+          <div class="links">
+            <a href="https://www.google.com/maps/@${pin.lat},${pin.lng},100m/data=!3m1!1e3" target="_blank">Google Maps</a>
+            <a href="https://www.openstreetmap.org/?mlat=${pin.lat}&mlon=${pin.lng}&zoom=19&layers=S" target="_blank">OSM</a>
+          </div>
+        </div>
+      `;
+      
+      marker.bindPopup(popupContent);
+      
+      marker.on('click', () => {
+        selectPin(pin.index);
+        map.setView([pin.lat, pin.lng], 18);
+      });
+      
+      markers.push({ pin: pin.index, marker, element: null });
+    });
+    
+    // Build pin list
+    const pinListContainer = document.getElementById('pin-list-items');
+    route1Data.manoeuvres.forEach(pin => {
+      const item = document.createElement('div');
+      item.className = 'pin-item';
+      item.textContent = `PIN #${pin.index}`;
+      item.onclick = () => {
+        selectPin(pin.index);
+        map.setView([pin.lat, pin.lng], 18);
+        markers[pin.index].marker.openPopup();
+      };
+      pinListContainer.appendChild(item);
+      markers[pin.index].listElement = item;
+    });
+    
+    // Select pin
+    function selectPin(pinIndex) {
+      // Deselect previous
+      if (selectedMarker !== null) {
+        const prevElement = document.querySelector(`.pin-marker[data-pin="${selectedMarker}"]`);
+        if (prevElement) prevElement.classList.remove('selected');
+        if (markers[selectedMarker].listElement) {
+          markers[selectedMarker].listElement.classList.remove('selected');
+        }
+      }
+      
+      // Select new
+      selectedMarker = pinIndex;
+      const element = document.querySelector(`.pin-marker[data-pin="${pinIndex}"]`);
+      if (element) element.classList.add('selected');
+      if (markers[pinIndex].listElement) {
+        markers[pinIndex].listElement.classList.add('selected');
+      }
+    }
+    
+    // Fit all pins
+    function fitAllPins() {
+      map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+    }
+    
+    // Toggle satellite
+    document.getElementById('satelliteToggle').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        map.removeLayer(streetLayer);
+        satelliteLayer.addTo(map);
+      } else {
+        map.removeLayer(satelliteLayer);
+        streetLayer.addTo(map);
+      }
+    });
+    
+    // Toggle route line
+    document.getElementById('showRoute').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        routeLine.addTo(map);
+      } else {
+        map.removeLayer(routeLine);
+      }
+    });
+    
+    // Toggle pin list
+    document.getElementById('showPinList').addEventListener('change', (e) => {
+      const pinList = document.getElementById('pin-list');
+      if (e.target.checked) {
+        pinList.classList.remove('hide');
+      } else {
+        pinList.classList.add('hide');
+      }
+    });
+    
+    // Fit all pins on load
+    fitAllPins();
+  </script>
+</body>
+</html>

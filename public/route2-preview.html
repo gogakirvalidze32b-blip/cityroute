@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8" />
+  <title>Route 2 preview</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { margin: 0; height: 100%; }
+    .legend { position: absolute; top: 10px; right: 10px; z-index: 1000; background: #fff; padding: 8px 12px; border-radius: 8px; font: 13px sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="legend">№2¹ — official (31 pts) · pins გამორთული</div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    function drawRoute(map, line) {
+      const round = { lineJoin: 'round', lineCap: 'round' }
+      L.polyline(line, { color: 'rgba(15,23,42,0.22)', weight: 13, opacity: 1, ...round }).addTo(map)
+      L.polyline(line, { color: '#fff', weight: 9, opacity: 0.98, ...round }).addTo(map)
+      L.polyline(line, { color: '#459cff', weight: 6, opacity: 0.98, ...round }).addTo(map)
+    }
+
+    fetch('/src/data/route-2-official.json')
+      .then((r) => r.json())
+      .then((data) => {
+        const line = data.full_path.map((p) => [p.lat, p.lng])
+        const map = L.map('map').setView([41.926, 45.478], 14)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map)
+        drawRoute(map, line)
+        const s = data.full_path[0]
+        const e = data.full_path[data.full_path.length - 1]
+        L.circleMarker([s.lat, s.lng], { radius: 8, color: '#16a34a', fillColor: '#22c55e', fillOpacity: 1 })
+          .bindTooltip('დაწყება').addTo(map)
+        L.circleMarker([e.lat, e.lng], { radius: 8, color: '#dc2626', fillColor: '#ef4444', fillOpacity: 1 })
+          .bindTooltip('დასრულება').addTo(map)
+        map.fitBounds(L.latLngBounds(line), { padding: [40, 40] })
+      })
+  </script>
+</body>
+</html>

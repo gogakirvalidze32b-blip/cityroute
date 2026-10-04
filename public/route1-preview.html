@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8" />
+  <title>Route 1 preview</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { margin: 0; height: 100%; }
+    .legend { position: absolute; top: 10px; right: 10px; z-index: 1000; background: #fff; padding: 8px 12px; border-radius: 8px; font: 13px sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.15); max-width: 280px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="legend">№1 — official (56 pts) · pins გამორთული</div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    function drawRoute(map, line) {
+      const round = { lineJoin: 'round', lineCap: 'round' }
+      L.polyline(line, { color: 'rgba(15,23,42,0.22)', weight: 13, opacity: 1, ...round }).addTo(map)
+      L.polyline(line, { color: '#fff', weight: 9, opacity: 0.98, ...round }).addTo(map)
+      L.polyline(line, { color: '#459cff', weight: 6, opacity: 0.98, ...round }).addTo(map)
+    }
+
+    fetch('/src/data/route-1-official.json')
+      .then((r) => r.json())
+      .then((data) => {
+        const line = data.full_path.map((p) => [p.lat, p.lng])
+        const map = L.map('map').setView([41.926, 45.478], 14)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' }).addTo(map)
+        drawRoute(map, line)
+        L.circleMarker([41.931548, 45.474995], {
+          radius: 10,
+          color: '#16a34a',
+          fillColor: '#22c55e',
+          fillOpacity: 1,
+          weight: 2,
+        })
+          .bindTooltip('სააგენტო — start/end', { permanent: true, direction: 'top' })
+          .addTo(map)
+        map.fitBounds(L.latLngBounds(line), { padding: [40, 40] })
+      })
+  </script>
+</body>
+</html>

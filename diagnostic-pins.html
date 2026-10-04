@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Route 1 PIN Diagnostic</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    #map { height: 100vh; width: 100%; }
+    .info { 
+      position: absolute; 
+      top: 10px; 
+      left: 10px; 
+      background: white; 
+      padding: 15px; 
+      border-radius: 8px; 
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      z-index: 1000;
+    }
+    .info h3 { margin: 0 0 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="info">
+    <h3>🗺️ Route 1 - 34 PIN Diagnostic</h3>
+    <label><input type="checkbox" id="sat"> Satellite</label>
+  </div>
+  <div id="map"></div>
+  
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const pins = [
+      [41.931434, 45.475383, 0], [41.931052, 45.476154, 1], [41.929826, 45.475295, 2],
+      [41.927844, 45.473973, 3], [41.925864, 45.472659, 4], [41.924926, 45.471593, 5],
+      [41.92584, 45.46588, 6], [41.926396, 45.463676, 7], [41.926909, 45.461327, 8],
+      [41.926626, 45.461236, 9], [41.926429, 45.461338, 10], [41.923441, 45.46588, 11],
+      [41.922551, 45.469266, 12], [41.922093, 45.469893, 13], [41.920202, 45.469913, 14],
+      [41.919549, 45.470136, 15], [41.918715, 45.472371, 16], [41.918205, 45.473217, 17],
+      [41.917228, 45.475799, 18], [41.918001, 45.481066, 19], [41.918616, 45.484112, 20],
+      [41.918919, 45.48532, 21], [41.91842, 45.483328, 22], [41.917267, 45.475761, 23],
+      [41.918717, 45.472368, 24], [41.919465, 45.47131, 25], [41.920189, 45.470198, 26],
+      [41.929098, 45.475144, 27], [41.930561, 45.47608, 28], [41.933312, 45.477867, 29],
+      [41.933977, 45.478151, 30], [41.932369, 45.477051, 31], [41.931327, 45.475788, 32],
+      [41.931488, 45.475166, 33]
+    ];
+    
+    const map = L.map('map').setView([41.925, 45.472], 14);
+    
+    const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    const satellite = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}');
+    
+    document.getElementById('sat').onchange = (e) => {
+      if (e.target.checked) { map.removeLayer(street); map.addLayer(satellite); }
+      else { map.removeLayer(satellite); map.addLayer(street); }
+    };
+    
+    // დავხაზოთ ხაზი PIN-ების თანმიმდევრობით 0→1→2→...→34
+    const pinSequenceLine = L.polyline(
+      pins.map(([lat, lng]) => [lat, lng]),
+      { 
+        color: '#FF00FF',  // ალუბალი ფერი
+        weight: 3, 
+        opacity: 0.8,
+        dashArray: '10, 5'  // შტრიხული ხაზი
+      }
+    ).addTo(map);
+    
+    pins.forEach(([lat, lng, n]) => {
+      const icon = L.divIcon({
+        html: `<div style="background:#f44;color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3)">${n}</div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16]
+      });
+      L.marker([lat, lng], { icon }).addTo(map)
+        .bindPopup(`<b>PIN #${n}</b><br>${lat}, ${lng}<br><a href="https://www.google.com/maps/@${lat},${lng},19z/data=!3m1!1e3" target="_blank">Google Maps</a>`);
+    });
+  </script>
+</body>
+</html>

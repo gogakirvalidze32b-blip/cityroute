@@ -1,0 +1,12 @@
+__________________________________
+premium-ის ჩართვა მეილით
+
+UPDATE profiles
+SET
+  subscription_plan='premium',
+  subscription_status='active',
+  subscription_expires_at='2099-12-31'
+WHERE id=(
+  SELECT id FROM auth.users WHERE email='gogakirvalidze@gmail.com'
+);
+_____________________________________
