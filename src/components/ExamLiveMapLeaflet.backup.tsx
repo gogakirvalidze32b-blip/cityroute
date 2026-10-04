@@ -50,7 +50,7 @@ function DrivingCamera({
   const headingRef = useRef(heading)
   const hasInitialized = useRef(false)
   const forceCenterRef = useRef(false)
-  const rafRef = useRef<number>()
+  const rafRef = useRef<number | undefined>(undefined)
   const currentPositionRef = useRef<LatLng>(position)
 
   // Initialize interpolator
@@ -130,7 +130,7 @@ function DrivingCamera({
       map.setView(position, zoom, { animate: false })
       
       // Increase padding to prevent black corners during rotation
-      map.options.padding = [200, 200]
+      ;(map.options as unknown as { padding: [number, number] }).padding = [200, 200]
       
       hasInitialized.current = true
     }

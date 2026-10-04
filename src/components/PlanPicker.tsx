@@ -1,5 +1,4 @@
 import {
-  bundleSavings,
   PLAN_AUDIO_NOTE,
   SELECTABLE_PLANS,
   type PlanDefinition,
@@ -13,7 +12,7 @@ type Props = {
 }
 
 export function PlanPicker({ selected, onSelect, compact = false }: Props) {
-  const savings = bundleSavings()
+  const savings = 0
 
   return (
     <div className={`plan-picker${compact ? ' plan-picker--compact' : ''}`}>
@@ -51,7 +50,7 @@ function PlanCard({
   return (
     <button
       type="button"
-      className={`plan-card${selected ? ' plan-card--selected' : ''}${plan.id === 'full' ? ' plan-card--featured' : ''}`}
+      className={`plan-card${selected ? ' plan-card--selected' : ''}${''}`}
       onClick={onSelect}
       aria-pressed={selected}
     >
@@ -63,18 +62,13 @@ function PlanCard({
       </div>
 
       <div className="plan-card__price">
-        <strong>{plan.price}</strong>
+        <strong>{plan.pricePerDevice}</strong>
         <span>₾ / თვე</span>
       </div>
 
       <ul className="plan-card__list">
         {plan.highlights.map((item) => (
           <li key={item}>{item}</li>
-        ))}
-        {plan.missing?.map((item) => (
-          <li key={item} className="plan-card__missing">
-            {item}
-          </li>
         ))}
       </ul>
 

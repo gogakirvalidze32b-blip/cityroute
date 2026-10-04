@@ -130,7 +130,7 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
       console.error('❌ MapLibre Error (FULL):', e)
       console.error('  Error type:', e.error?.constructor?.name)
       console.error('  Error message:', e.error?.message)
-      console.error('  Error stack:', e.error?.stack)
+      console.error('  Error stack:', (e.error as Error | undefined)?.stack)
     })
     
     // Drag detection → FREE mode
