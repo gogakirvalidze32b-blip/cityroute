@@ -18,10 +18,15 @@ export const EXAM_START_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.start)
 export const EXAM_FINISH_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.finish)
 export const EXAM_SUCCESS_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.success)
 
+/**
+ * Explicit audio_url wins; otherwise the instruction text is mapped EXACTLY to a local WAV
+ * (see route-1-voice.ts). Returns null when there is no exact file, so TTS reads the text.
+ */
 export function resolvePinAudioUrl(routeSlug: string, pin: PinRow): string | null {
-  if (routeSlug !== 'route-1') return pin.audio_url
   if (pin.audio_url) return pin.audio_url
-  return matchRoute1InstructionAudio(pin.instruction_ka)
+  if (!pin.instruction_ka) return null
+  // Exact instruction -> WAV mapping; null (TTS reads the text) when there is no exact file.
+  return matchRoute1InstructionAudio(pin.instruction_ka, routeSlug)
 }
 
 export function enrichPinsWithLocalAudio(routeSlug: string, pins: PinRow[]): PinRow[] {

@@ -3,128 +3,104 @@ function audioPublicUrl(relativePath: string): string {
 }
 
 export const ROUTE_1_SESSION_AUDIO = {
-  start: 'დაწყება.mp3',
-  finish: 'ფინიში.mp3',
-  success: 'გილოცავთ.mp3',
+  start: 'დაწყება.wav',
+  finish: 'ფინიში.wav',
+  success: 'გილოცავთ.wav',
 } as const
 
-const POINTS = {
-  // Soon (მალე)
-  soonLeft: 'points/მალე, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
-  soonRight: 'points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.mp3',
-  soonLeftRound: 'points/მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
-  soonRightRound: 'points/მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.mp3',
-  soonStraightRound: 'points/მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.mp3',
-  soonLeftTwice: 'points/მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ.mp3',
-  
-  // 300 meters
-  m300Left: 'points/300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
-  m300Right: 'points/300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ.mp3',
-  m300LeftRound: 'points/300 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ.mp3',
-  m300RightRound: 'points/300 მეტრში წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.mp3',
-  
-  // 500 meters
-  m500Right: 'points/500 მეტრში მარჯვნივ.mp3',
-  m500LeftRound: 'points/500 მეტრში წრიული მოძრაობისას მარცხნივ.mp3',
-  m500RightRound: 'points/500 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.mp3',
-  m500LeftLong: 'points/ხუთას მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.mp3',
-  
-  // Turn now (გთხოვთ)
-  turnLeft: 'points/გთხოვთ, მოუხვიოთ მარცხნივ.mp3',
-  turnRight: 'points/გთხოვთ, იმოძრაოთ მარჯვნივ.mp3', // Using available file
-  moveRight: 'points/გთხოვთ, იმოძრაოთ მარჯვნივ.mp3',
-  straight: 'points/გთხოვთ, იმოძრაოთ პირდაპირ.mp3',
-  straightNext: 'points/გთხოვთ, შემდეგ მინიშნებამდე იმოძრავეთ პირდაპირ.mp3',
-  
-  // Complex turns
-  rightThenLeft: 'points/გთხოვთ, მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ.mp3',
-  
-  // Hint
-  hint: 'points/მინიშნება.mp3',
-} as const
-
-function parseDistanceM(instruction: string): number | null {
-  const match = instruction.match(/(\d+)\s*მ/)
-  return match ? Number(match[1]) : null
+/**
+ * Instruction text -> real WAV file (public/audio/points).
+ * Keys are normalized (see normalizeInstruction): commas removed, whitespace collapsed.
+ * Source of truth: the final PIN audio audit (126/126 PINs mapped). Do not add fuzzy matching:
+ * a wrong maneuver/order must never fall back to a "similar" file.
+ */
+const INSTRUCTION_TO_FILE: Record<string, string> = {
+  // Turn now
+  'გთხოვთ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ.wav',
+  'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav', // user-directed
+  'გთხოვთ შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ': 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
+  // Two maneuvers
+  'გთხოვთ მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ.wav',
+  'გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ.wav',
+  'გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ.wav',
+  'მალე გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ': 'მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ.wav',
+  // Soon
+  'მალე გთხოვთ მოუხვიოთ მარცხნივ': 'მალე, გთხოვთ მოუხვიოთ მარცხნივ.wav',
+  'მალე გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  'მალე წრიული მოძრაობისას გთხოვთ იმოძრაოთ პირდაპირ': 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav',
+  'მალე წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ': 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav',
+  'მალე წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  // Roundabout, no "soon" word (user-directed: same maneuver, extra word accepted)
+  'წრიული მოძრაობისას გთხოვთ იმოძრაოთ პირდაპირ': 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav',
+  'წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ': 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav',
+  'წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  // 50 m: no 50 m audio exists, user-directed -> "soon" right
+  '50 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  // 300 m
+  '300 მეტრში გთხოვთ მოუხვიოთ მარცხნივ': '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.wav',
+  '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ': '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  '300 მეტრში წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ': '300 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ.wav',
+  '300 მეტრში წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': '300 მეტრში წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  // 500 m
+  '500 მეტრში გთხოვთ მოუხვიოთ მარცხნივ': '500 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ.wav',
+  '500 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ': '500 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  '500 მეტრში წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ': '500 მეტრში, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav',
+  '500 მეტრში წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': '500 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav',
 }
 
-/** Match official manoeuvre text → new AI voice file in public/audio. */
-export function matchRoute1InstructionAudio(instruction: string): string {
-  // Finish
-  if (/ფინიში/i.test(instruction)) {
-    return audioPublicUrl(ROUTE_1_SESSION_AUDIO.finish)
-  }
+/**
+ * Known typos in the stored instruction text ("გთხვოვთ"). Instruction text itself is NOT changed
+ * anywhere; the typo is only tolerated at lookup time (repeated instruction = repeated audio).
+ */
+const TYPO_FIXES: ReadonlyArray<[RegExp, string]> = [[/გთხვოვთ/g, 'გთხოვთ']]
 
-  // Start
-  if (/დაწყება/i.test(instruction)) {
-    return audioPublicUrl(ROUTE_1_SESSION_AUDIO.start)
-  }
+/**
+ * Per-route override for the one instruction whose final audit mapping differs between routes:
+ * Route 4 PIN #20 uses the no-comma roundabout file.
+ */
+const ROUTE_OVERRIDES: Record<string, Record<string, string>> = {
+  'route-4': {
+    'წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  },
+}
 
-  // Exact matches first (for complex instructions)
-  const normalized = instruction.trim()
-  
-  // "შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ"
-  if (/შემდეგ მინიშნებამდე.*პირდაპირ/i.test(normalized)) {
-    return audioPublicUrl(POINTS.straightNext)
-  }
+const FINISH_KEY = 'ფინიში'
 
-  // "მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ"
-  if (/მალე.*მარცხნივ.*შემდეგ.*მარცხნივ/i.test(normalized)) {
-    return audioPublicUrl(POINTS.soonLeftTwice)
-  }
+export function normalizeInstruction(instruction: string): string {
+  let s = instruction
+  for (const [re, to] of TYPO_FIXES) s = s.replace(re, to)
+  return s.replace(/[,،.]/g, ' ').replace(/\s+/g, ' ').trim()
+}
 
-  // "მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ" (not available, use hint)
-  if (/მარცხნივ.*შემდეგ.*მარჯვნივ/i.test(normalized)) {
-    return audioPublicUrl(POINTS.hint) // No exact audio file available
+/** Every distinct WAV referenced by the mapping table (used for preload and audits). */
+export function route1VoiceFiles(): string[] {
+  const files = new Set<string>([
+    ...Object.values(ROUTE_1_SESSION_AUDIO),
+    ...Object.values(INSTRUCTION_TO_FILE).map((f) => `points/${f}`),
+  ])
+  for (const route of Object.values(ROUTE_OVERRIDES)) {
+    for (const f of Object.values(route)) files.add(`points/${f}`)
   }
+  return [...files]
+}
 
-  // "მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ"
-  if (/მარჯვნივ.*შემდეგ.*მარცხნივ/i.test(normalized)) {
-    return audioPublicUrl(POINTS.rightThenLeft)
-  }
+/**
+ * Exact instruction text -> WAV URL. Returns null when no exact mapping exists
+ * (caller falls back to TTS; no fuzzy/"similar" file is ever used).
+ */
+export function matchInstructionAudio(instruction: string, routeSlug?: string): string | null {
+  const key = normalizeInstruction(instruction)
+  if (key === FINISH_KEY) return audioPublicUrl(ROUTE_1_SESSION_AUDIO.finish)
+  const override = routeSlug ? ROUTE_OVERRIDES[routeSlug]?.[key] : undefined
+  const file = override ?? INSTRUCTION_TO_FILE[key]
+  return file ? audioPublicUrl(`points/${file}`) : null
+}
 
-  const left = /მარცხნივ/.test(normalized)
-  const right = /მარჯვნივ/.test(normalized)
-  const straight = /პირდაპირ/.test(normalized)
-  const roundabout = /წრიული/.test(normalized)
-  
-  // Distance-based instructions
-  if (/500 მეტრში/.test(normalized)) {
-    if (roundabout && right) return audioPublicUrl(POINTS.m500RightRound)
-    if (roundabout && left) return audioPublicUrl(POINTS.m500LeftRound)
-    if (right) return audioPublicUrl(POINTS.m500Right)
-    if (left) return audioPublicUrl(POINTS.m500LeftLong)
-  }
-
-  if (/300 მეტრში/.test(normalized)) {
-    if (roundabout && left) return audioPublicUrl(POINTS.m300LeftRound)
-    if (roundabout && right) return audioPublicUrl(POINTS.m300RightRound)
-    if (left) return audioPublicUrl(POINTS.m300Left)
-    if (right) return audioPublicUrl(POINTS.m300Right)
-  }
-
-  if (/მალე/.test(normalized)) {
-    if (roundabout && straight) return audioPublicUrl(POINTS.soonStraightRound)
-    if (roundabout && left) return audioPublicUrl(POINTS.soonLeftRound)
-    if (roundabout && right) return audioPublicUrl(POINTS.soonRightRound)
-    if (left) return audioPublicUrl(POINTS.soonLeft)
-    if (right) return audioPublicUrl(POINTS.soonRight)
-  }
-
-  // Turn now (no distance)
-  if (/გთხოვთ/.test(normalized)) {
-    if (straight) return audioPublicUrl(POINTS.straight)
-    if (left) return audioPublicUrl(POINTS.turnLeft)
-    if (right) return audioPublicUrl(POINTS.turnRight)
-  }
-
-  // Default
-  return audioPublicUrl(POINTS.hint)
+/** Backwards-compatible name used by route-audio.ts. */
+export function matchRoute1InstructionAudio(instruction: string, routeSlug?: string): string | null {
+  return matchInstructionAudio(instruction, routeSlug)
 }
 
 export function route1VoicePreloadPaths(): string[] {
-  return [
-    ...Object.values(ROUTE_1_SESSION_AUDIO),
-    ...Object.values(POINTS),
-  ].map((path) => audioPublicUrl(path))
+  return route1VoiceFiles().map((path) => audioPublicUrl(path))
 }

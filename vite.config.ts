@@ -1,4 +1,4 @@
-﻿import { defineConfig } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
@@ -39,7 +39,7 @@ export default defineConfig({
       workbox: {
         cleanupOutdatedCaches: true,
         // Exclude route preview photos from precache (loaded on-demand from network)
-        globPatterns: ['**/*.{js,css,html,ico,svg,woff2,mp3,aac,json}'],
+        globPatterns: ['**/*.{js,css,html,ico,svg,woff2,mp3,wav,aac,json}'],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/routes.*/i,
