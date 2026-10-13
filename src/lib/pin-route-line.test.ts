@@ -21,6 +21,42 @@ function fixturePins(route: number) {
     .map((pin) => ({ lat: pin.lat, lng: pin.lng, sort_order: pin.pin }))
 }
 
+function visitPinsInOrder(
+  pins: { lat: number; lng: number }[],
+  line: [number, number][],
+  maxM = 40,
+) {
+  let next = 0
+  for (let i = 0; i < line.length - 1 && next < pins.length; i++) {
+    const d = maxPinOffsetFromLineM([[pins[next].lat, pins[next].lng]], [line[i], line[i + 1]])
+    if (d <= maxM) {
+      next += 1
+      i -= 1
+    }
+  }
+  return next === pins.length
+}
+
+function chordM(a: [number, number], b: [number, number]) {
+  const lat = (a[0] * Math.PI) / 180
+  return Math.hypot((b[1] - a[1]) * Math.cos(lat) * 111_320, (b[0] - a[0]) * 110_540)
+}
+
+/** True if the line leaves `near` and returns within 12 m after travelling 80–700 m. */
+function shortOutAndBackNear(line: [number, number][], near: [number, number], radiusM: number) {
+  for (let i = 0; i < line.length; i++) {
+    if (chordM(line[i], near) > radiusM) continue
+    let travel = 0
+    for (let j = i + 1; j < line.length && j < i + 80; j++) {
+      travel += chordM(line[j - 1], line[j])
+      if (travel < 80) continue
+      if (travel > 700) break
+      if (chordM(line[i], line[j]) <= 12) return true
+    }
+  }
+  return false
+}
+
 describe('pin route line', () => {
   it.each([
     [1, 34],
@@ -113,6 +149,33 @@ describe('pin route line', () => {
     const lines = [1, 2, 3, 4].map((route) => examRouteLine(`route-${route}`, fixturePins(route)))
     const signatures = lines.map((line) => `${line.length}:${line[10]?.join(',')}`)
     expect(new Set(signatures).size).toBe(4)
+  })
+
+  it('visits route 2 pins in sort_order along the street, without skipping ahead', () => {
+    const pins = fixturePins(2)
+    const line = examRouteLine('route-2', pins)
+    expect(visitPinsInOrder(pins, line)).toBe(true)
+    expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
+  })
+
+  it('does not add an extra out-and-back at route 4’s eastern junction', () => {
+    const pins = fixturePins(4)
+    const line = examRouteLine('route-4', pins)
+    const straight = pinRouteLine(pins)
+
+    expect(line.length).toBeGreaterThan(straight.length)
+    expect(maxPinOffsetFromLineM(straight, line)).toBeLessThanOrEqual(40)
+    expect(shortOutAndBackNear(line, [41.919749, 45.501045], 80)).toBe(false)
+  })
+
+  it('leaves route 1 and route 3 street traces unchanged', () => {
+    const route1 = examRouteLine('route-1', fixturePins(1))
+    const route3 = examRouteLine('route-3', fixturePins(3))
+    expect(route1).toHaveLength(344)
+    expect(route1[0]).toEqual([41.931477, 45.475406])
+    expect(route1[route1.length - 1]).toEqual([41.93154, 45.475194])
+    expect(route3).toHaveLength(356)
+    expect(route3.find((point) => point[1] < 45.456)).toBeTruthy()
   })
 
   it('moves only the route 1, 3 and 4 pin that used the old coordinate', () => {
