@@ -174,14 +174,18 @@ describe('pin route line', () => {
     const pins = fixturePins(4)
     const line = examRouteLine('route-4', pins)
     const straight = pinRouteLine(pins)
-    const overshoot = line.filter(
-      ([lat, lng]) => lat >= 41.9195 && lat <= 41.9203 && lng >= 45.50145,
+    const eastBlock = line.filter(
+      ([lat, lng]) => lat >= 41.91965 && lat <= 41.9202 && lng >= 45.50112,
+    )
+    const crossesSh70 = line.some(
+      ([lat, lng]) => lat >= 41.91965 && lat <= 41.91985 && lng >= 45.5009 && lng <= 45.5011,
     )
 
     expect(line.length).toBeGreaterThan(straight.length)
     expect(maxPinOffsetFromLineM(straight, line)).toBeLessThanOrEqual(40)
     expect(shortOutAndBackNear(line, [41.919749, 45.501045], 80)).toBe(false)
-    expect(overshoot).toEqual([])
+    expect(eastBlock).toEqual([])
+    expect(crossesSh70).toBe(true)
   })
 
   it('leaves the route 3 street trace unchanged', () => {
