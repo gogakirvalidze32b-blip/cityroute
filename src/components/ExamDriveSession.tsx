@@ -239,6 +239,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     () => enrichPinsWithLocalAudio(route.slug, sortedPins),
     [route.slug, sortedPins],
   )
+  const savedComplete = useMemo(() => {
+    if (!savedState || voicePins.length === 0) return false
+    const resolution = resolveExamResume(savedState, voicePins, route.slug)
+    return resolution.status === 'resume' && resolution.handledOrders !== null && resolution.nextSortOrder === null
+  }, [savedState, voicePins, route.slug])
   const pinsRef = useRef(voicePins)
   const slugRef = useRef(route.slug)
   pinsRef.current = voicePins
@@ -1121,7 +1126,17 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         <div className="exam-preview">
           <RoutePreviewMap route={route} />
           <div className="exam-preview__panel">
-            {savedState && (
+            {savedState && savedComplete && (
+              <div className="exam-start-pin exam-start-pin--inline" role="status" data-testid="route-complete">
+                <p className="exam-start-pin__text">მარშრუტი დასრულებულია — ყველა PIN გავლილია.</p>
+                <div className="exam-start-pin__choices">
+                  <button type="button" className="exam-start-pin__choice" onClick={restartPreview}>
+                    თავიდან დაწყება
+                  </button>
+                </div>
+              </div>
+            )}
+            {savedState && !savedComplete && (
               <div style={{ 
                 background: '#fef3c7', 
                 padding: '0.75rem', 

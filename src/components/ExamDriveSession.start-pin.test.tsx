@@ -527,3 +527,51 @@ describe('starting pin of a new exam', () => {
     expect(nextOrder()).toBe(start.sort_order + 1)
   })
 })
+
+describe('every route: strict order from the first pin to the last', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    play.mockReset()
+    play.mockImplementation(() => Promise.resolve(true))
+    gps.onFix = null
+    gps.once = null
+  })
+
+  afterEach(() => {
+    cleanup()
+    localStorage.clear()
+  })
+
+  it.each(routes.map((route) => [route.slug, route] as const))(
+    '%s: each pin hands over to the next at once, passed pins never return, the last pin completes the route',
+    async (_slug, route) => {
+      const pins = sorted(route)
+      gps.once = fix(pins[0].lat, pins[0].lng)
+      render(<ExamDriveSession route={route} />)
+      await settle()
+      await pressStart()
+      expect(nextOrder()).toBe(pins[0].sort_order)
+
+      for (const [index, pin] of pins.entries()) {
+        await driveToPin(route, pin.sort_order)
+        expect(pinPlays().map(([, id]) => id)).toEqual(pins.slice(0, index + 1).map((p) => p.id))
+        const next = pins[index + 1]
+        const shown = screen.getByTestId('next-pin')
+        expect(shown.getAttribute('data-order')).toBe(next ? String(next.sort_order) : '')
+        expect(shown.textContent).toBe(next ? next.instruction_ka : '')
+      }
+      expect(screen.getByTestId('route-complete')).toBeTruthy()
+
+      play.mockClear()
+      for (const pin of [pins[0], pins[Math.floor(pins.length / 2)], pins[pins.length - 1], pins[0]]) {
+        await driveToPin(route, pin.sort_order)
+      }
+      expect(play).not.toHaveBeenCalled()
+      expect(screen.getByTestId('route-complete')).toBeTruthy()
+      expect(screen.getByTestId('next-pin').getAttribute('data-order')).toBe('')
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual(
+        pins.map((pin) => pin.sort_order),
+      )
+    },
+  )
+})

@@ -2004,6 +2004,13 @@ button:disabled {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
 
+.exam-start-pin--inline {
+  position: static;
+  transform: none;
+  width: auto;
+  margin-bottom: 0.5rem;
+}
+
 .exam-start-pin__text {
   margin: 0;
   font-size: 0.9rem;

@@ -494,8 +494,8 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
                 center={[pin.lat, pin.lng]}
                 radius={isPulse ? 18 : 13}
                 pathOptions={{
-                  color: isNext ? '#0f766e' : '#047857',
-                  fillColor: isNext ? '#5eead4' : '#10b981',
+                  color: isNext ? '#1d4ed8' : '#047857',
+                  fillColor: isNext ? '#3b82f6' : '#10b981',
                   fillOpacity: 1,
                   weight: 3,
                   className: isPulse ? 'exam-pin-pulse' : undefined,

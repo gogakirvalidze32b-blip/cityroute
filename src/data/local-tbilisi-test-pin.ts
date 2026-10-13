@@ -9,7 +9,9 @@ const ROUTE_ID = 'local-test-tbilisi'
 const TEST_PINS: readonly { lat: number; lng: number; instruction: string }[] = [
   { lat: 41.6789378, lng: 44.9788424, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
   { lat: 41.6792766, lng: 44.9781393, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
-  { lat: 41.6798062, lng: 44.9783244, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+  { lat: 41.6798062, lng: 44.9783244, instruction: 'გთხოვთ, 300 მეტრში მოუხვიოთ მარჯვნივ' },
+  { lat: 41.6811228, lng: 44.979409, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
+  { lat: 41.6811569, lng: 44.9808128, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
 ]
 
 const pins: PinRow[] = TEST_PINS.map((pin, index) => ({
