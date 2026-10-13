@@ -1,8 +1,9 @@
 import type { PinRow, RouteWithPins } from '@/types/database'
+import tbilisiTestRoad from '@/data/test-route-tbilisi-road.json'
 
 /**
  * Standalone GPS test city, local only. Not an exam-agency route and not stored in Supabase:
- * no agency start/finish point, no road trace, no Telavi data.
+ * no agency start/finish point, no Telavi data. The road trace follows OSM streets between the pins.
  */
 const ROUTE_ID = 'local-test-tbilisi'
 
@@ -36,7 +37,7 @@ export const LOCAL_TBILISI_TEST_ROUTE: RouteWithPins = {
   license_category: 'B',
   sort_order: 99,
   active: true,
-  polyline: TEST_PINS.map((pin) => [pin.lat, pin.lng]),
+  polyline: tbilisiTestRoad as [number, number][],
   pins,
 }
 

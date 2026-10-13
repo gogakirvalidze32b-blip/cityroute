@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import audioPins from '@/data/audio-audit-pins.fixture.json'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { applyRelocatedPin } from '@/hooks/useRoutes'
+import { LOCAL_TBILISI_TEST_ROUTE } from '@/data/local-tbilisi-test-pin'
 import { examRouteLine, maxPinOffsetFromLineM, pinRouteLine } from '@/lib/pin-route-line'
 import type { PinRow } from '@/types/database'
 
@@ -150,5 +151,21 @@ describe('pin route line', () => {
       pin.sort_order === 10 ? { ...pin, lat: pin.lat + 0.02 } : pin,
     )
     expect(examRouteLine('route-1', pins)).toEqual(pinRouteLine(pins))
+  })
+
+  it('draws the Tbilisi test route along the streets, not pin-to-pin chords', () => {
+    const pins = LOCAL_TBILISI_TEST_ROUTE.pins
+    const line = examRouteLine('test-route-tbilisi', pins)
+    const straight = pinRouteLine(pins)
+    const ordered = [...pins].sort((a, b) => a.sort_order - b.sort_order)
+
+    expect(straight).toHaveLength(5)
+    expect(line.length).toBeGreaterThan(straight.length)
+    expect(maxPinOffsetFromLineM(straight, line)).toBeLessThanOrEqual(40)
+    expect(line[0][0]).toBeCloseTo(ordered[0].lat, 3)
+    expect(line[0][1]).toBeCloseTo(ordered[0].lng, 3)
+    expect(line[line.length - 1][0]).toBeCloseTo(ordered[4].lat, 3)
+    expect(line[line.length - 1][1]).toBeCloseTo(ordered[4].lng, 3)
+    expect(line).not.toEqual(straight)
   })
 })

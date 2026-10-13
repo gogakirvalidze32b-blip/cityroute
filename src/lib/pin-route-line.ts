@@ -3,6 +3,7 @@ import route1Road from '@/data/route-1-road.json'
 import route2Road from '@/data/route-2-road.json'
 import route3Road from '@/data/route-3-road.json'
 import route4Road from '@/data/route-4-road.json'
+import tbilisiTestRoad from '@/data/test-route-tbilisi-road.json'
 
 export type PinRoutePoint = {
   lat: number
@@ -33,6 +34,7 @@ const ROAD_BY_SLUG: Record<string, LatLng[]> = {
   'route-2': route2Road as LatLng[],
   'route-3': route3Road as LatLng[],
   'route-4': route4Road as LatLng[],
+  'test-route-tbilisi': tbilisiTestRoad as LatLng[],
 }
 
 /** A loaded pin must sit on this road. Otherwise the straight pin line is used. */

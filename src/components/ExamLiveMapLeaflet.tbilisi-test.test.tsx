@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { ExamLiveMapLeaflet } from './ExamLiveMapLeaflet'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { applyLocalTbilisiTestPin } from '@/data/local-tbilisi-test-pin'
+import { examRouteLine, maxPinOffsetFromLineM, pinRouteLine } from '@/lib/pin-route-line'
 import { applyAuditedPinInstructions, applyRelocatedPin } from '@/hooks/useRoutes'
 
 vi.mock('react-leaflet', () => {
@@ -48,7 +49,11 @@ describe('Tbilisi test route on the live exam map', () => {
 
     const markers = screen.getAllByTestId('pin-marker').map((m) => [Number(m.dataset.lat), Number(m.dataset.lng)])
     expect(markers).toEqual(EXPECTED)
-    expect(JSON.parse(screen.getByTestId('pin-line').dataset.points!)).toEqual(EXPECTED)
+    const line = JSON.parse(screen.getByTestId('pin-line').dataset.points!) as [number, number][]
+    const straight = pinRouteLine(route.pins)
+    expect(line.length).toBeGreaterThan(straight.length)
+    expect(line).toEqual(examRouteLine('test-route-tbilisi', route.pins))
+    expect(maxPinOffsetFromLineM(EXPECTED, line)).toBeLessThanOrEqual(40)
   })
 
   it('only the next pin is blue and the HUD shows that pin’s instruction; with no next pin nothing is blue', () => {
