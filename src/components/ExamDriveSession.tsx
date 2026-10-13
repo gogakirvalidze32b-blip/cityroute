@@ -37,6 +37,7 @@ import {
   markGpsConsentGranted,
   clearGpsConsent,
   requestGpsOnce,
+  GPS_HARD_TIMEOUT_MS,
   requestWakeLock,
   shouldAutoStartGps,
   watchGps,
@@ -118,6 +119,8 @@ const START_FIX_MAX_AGE_MS = 15_000
 /** How long a new exam waits for an accurate fix before starting at PIN 1. */
 const START_GPS_WAIT_MS = 10_000
 const START_NOTICE_MS = 12_000
+/** If getCurrentPosition never settles, do not leave the start button disabled. */
+const GPS_START_WATCHDOG_MS = 25_000
 
 const START_NO_GPS_MESSAGE = 'ზუსტი GPS მდებარეობა ვერ დადგინდა — გამოცდა იწყება PIN 1-დან'
 
@@ -472,6 +475,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       cancelled = true
     }
   }, [route.id, gpsStarted, gpsStarting, enableGps])
+
+  useEffect(() => {
+    if (!gpsStarting) return
+    const id = window.setTimeout(() => setGpsStarting(false), GPS_START_WATCHDOG_MS)
+    return () => window.clearTimeout(id)
+  }, [gpsStarting])
 
   useEffect(() => {
     const preload = () => audioEngine.preloadAll(collectPreloadAudioUrls(route.slug, sortedPins))
@@ -895,10 +904,16 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       return
     }
 
-    // No saved exam for this route. Another route's save is not used.
-    const gpsResult = userPos ? { position: userPos, denied: false } : await enableGps(false)
-    if (gpsResult.denied) return
+    // Do not block the exam on a hanging getCurrentPosition (desktop / permission prompt).
+    // Start-pin already waits briefly, then PIN 1.
     startSession()
+    if (!userPos) {
+      void enableGps(true).then((result) => {
+        if (result.denied) return
+        const fix = lastFixRef.current
+        if (fix && startSelectionRef.current) resolveStart(fix.pos, fix.position, false)
+      })
+    }
   }
 
   function finishSession() {
