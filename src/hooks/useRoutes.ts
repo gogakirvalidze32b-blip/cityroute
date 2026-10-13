@@ -1,7 +1,55 @@
 ﻿import { useEffect, useState } from 'react'
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+import { applyLocalTbilisiTestPin } from '@/data/local-tbilisi-test-pin'
 import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
+import auditedPins from '@/data/audio-audit-pins.fixture.json'
+
+const AUDITED_INSTRUCTION = new Map<string, string>(
+  (auditedPins as Array<{ route: number; pin: number; instruction: string }>).map((pin) => [
+    `${pin.route}:${pin.pin}`,
+    pin.instruction,
+  ]),
+)
+
+const OLD_PIN_LAT = 41.931052
+const OLD_PIN_LNG = 45.476154
+const NEW_PIN_LAT = 41.930785
+const NEW_PIN_LNG = 45.475972
+const RELOCATED_PIN_ROUTES = new Set(['route-1', 'route-3', 'route-4'])
+
+/** Routes 1, 3 and 4 use the slightly higher point. Other pins and route 2 stay. */
+export function applyRelocatedPin<T extends { slug: string; pins: PinRow[] }>(routes: T[]): T[] {
+  return routes.map((route) => {
+    if (!RELOCATED_PIN_ROUTES.has(route.slug)) return route
+    return {
+      ...route,
+      pins: route.pins.map((pin) => {
+        if (Math.abs(pin.lat - OLD_PIN_LAT) > 1e-7 || Math.abs(pin.lng - OLD_PIN_LNG) > 1e-7) return pin
+        return { ...pin, lat: NEW_PIN_LAT, lng: NEW_PIN_LNG }
+      }),
+    }
+  })
+}
+
+/**
+ * The exam speaks the audited phrase for each route PIN.
+ * Only instruction text changes. Coordinates, order, and trigger distance stay as stored.
+ */
+export function applyAuditedPinInstructions<T extends { slug: string; pins: PinRow[] }>(routes: T[]): T[] {
+  return routes.map((route) => {
+    const routeNumber = /^route-(\d+)$/.exec(route.slug)?.[1]
+    if (!routeNumber) return route
+    return {
+      ...route,
+      pins: route.pins.map((pin) => {
+        const instruction = AUDITED_INSTRUCTION.get(`${routeNumber}:${pin.sort_order}`)
+        if (!instruction || instruction === pin.instruction_ka) return pin
+        return { ...pin, instruction_ka: instruction }
+      }),
+    }
+  })
+}
 
 /**
  * Merge Supabase metadata (id, pins) but NEVER remote polyline coordinates.
@@ -39,7 +87,9 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
 }
 
 export function useRoutes() {
-  const [routes, setRoutes] = useState<RouteWithPins[]>(TELAVI_ROUTES_FALLBACK)
+  const [routes, setRoutes] = useState<RouteWithPins[]>(() =>
+    applyRelocatedPin(applyAuditedPinInstructions(applyLocalTbilisiTestPin(TELAVI_ROUTES_FALLBACK))),
+  )
   const [source, setSource] = useState<'local' | 'merged'>('local')
 
   useEffect(() => {
@@ -82,7 +132,7 @@ export function useRoutes() {
         })
         
         if (!cancelled) {
-          setRoutes(merged)
+          setRoutes(applyRelocatedPin(applyAuditedPinInstructions(applyLocalTbilisiTestPin(merged))))
           setSource(routeRows?.length ? 'merged' : 'local')
         }
       } catch (e) {

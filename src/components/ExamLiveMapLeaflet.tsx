@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
+import { RoutePolyline } from '@/components/RoutePolyline'
+import { examRouteLine } from '@/lib/pin-route-line'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
@@ -360,6 +362,7 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
 
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
+  const pinLine = useMemo(() => examRouteLine(route.slug, pins), [route.slug, pins])
   
   // ============================================================================
   // DEBUG: Runtime pin verification
@@ -480,6 +483,8 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
           <MapSizeFix />
           <MapBasemapLayers tiles={MAP_TILES} detectRetina />
 
+          <RoutePolyline positions={pinLine} variant="pins" />
+
           {pins.map((pin) => {
             const isNext = nextPin?.id === pin.id
             const isPulse = isNext && nextPinPulse
@@ -511,10 +516,19 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
         </MapContainer>
       </div>
 
-      {/* Fixed overlay: CSS triangle already points UP. No +180. Map rotates underneath. */}
+      {/* Fixed overlay: chevron points UP. Map rotates underneath. Anchor stays at the map centre. */}
       <div className="fixed-navigation-arrow-overlay">
         <div className="fixed-navigation-arrow-rotator">
-          <div className="fixed-navigation-arrow-icon"></div>
+          <svg className="fixed-navigation-arrow-icon" viewBox="0 0 64 72" aria-hidden="true">
+            <path
+              d="M32 3.5 L58 64.5 C42.5 50.5 21.5 50.5 6 64.5 Z"
+              fill="#1a73e8"
+              stroke="#ffffff"
+              strokeWidth="4.5"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          </svg>
           <div className="fixed-navigation-arrow-dot"></div>
         </div>
       </div>

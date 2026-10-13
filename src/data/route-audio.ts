@@ -1,6 +1,7 @@
 import type { PinRow } from '@/types/database'
 import {
   matchRoute1InstructionAudio,
+  normalizeInstruction,
   ROUTE_1_SESSION_AUDIO,
   route1VoicePreloadPaths,
 } from '@/data/route-1-voice'
@@ -18,15 +19,23 @@ export const EXAM_START_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.start)
 export const EXAM_FINISH_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.finish)
 export const EXAM_SUCCESS_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.success)
 
+function storedUrlMatchesInstruction(url: string, instruction: string): boolean {
+  const file = decodeURIComponent(url.split('?')[0].split('/').pop() ?? '').replace(/\.(wav|mp3)$/i, '')
+  return file.length > 0 && normalizeInstruction(file) === normalizeInstruction(instruction)
+}
+
 /**
- * Explicit audio_url wins; otherwise the instruction text is mapped EXACTLY to a local WAV
- * (see route-1-voice.ts). Returns null when there is no exact file, so TTS reads the text.
+ * The pin's own instruction selects the WAV. A stored audio_url is kept only when its
+ * filename is that same instruction. Another pin's file is never used as a substitute.
  */
 export function resolvePinAudioUrl(routeSlug: string, pin: PinRow): string | null {
-  if (pin.audio_url) return pin.audio_url
-  if (!pin.instruction_ka) return null
-  // Exact instruction -> WAV mapping; null (TTS reads the text) when there is no exact file.
-  return matchRoute1InstructionAudio(pin.instruction_ka, routeSlug)
+  if (pin.instruction_ka) {
+    const matched = matchRoute1InstructionAudio(pin.instruction_ka, routeSlug)
+    if (matched) return matched
+    if (pin.audio_url && storedUrlMatchesInstruction(pin.audio_url, pin.instruction_ka)) return pin.audio_url
+    return null
+  }
+  return pin.audio_url || null
 }
 
 export function enrichPinsWithLocalAudio(routeSlug: string, pins: PinRow[]): PinRow[] {
@@ -47,7 +56,7 @@ export function collectPreloadAudioUrls(routeSlug: string, pins: PinRow[]): stri
   return [...urls]
 }
 
-/** First start pin — audio already plays on ▶ გამოცდის დაწყება. */
-export function isStartPinAlreadyAnnounced(routeSlug: string, pinId: string): boolean {
-  return routeSlug === 'route-1' && pinId === 'p1-1'
+/** The start chime is separate. Pin 1 still speaks its own instruction when the car reaches it. */
+export function isStartPinAlreadyAnnounced(_routeSlug: string, _pinId: string): boolean {
+  return false
 }

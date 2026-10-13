@@ -180,12 +180,17 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
     expect(storedData).not.toBeNull()
     console.log('✅ Initial session saved to localStorage')
 
-    // RENDER: Component should detect saved session and resume to 'active' phase
+    // RENDER: Saved exam waits on the start button, then resumes.
     const { rerender } = render(<ExamDriveSession route={mockRoute} />)
 
     // Wait for component to stabilize
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
+    })
+
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /გაგრძელება|გამოცდის დაწყება/ }))
     })
 
     // Verify we're in active phase (finish button should be visible)
@@ -194,7 +199,6 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
     console.log('✅ Finish button found - component in active phase')
 
     // ACT: Click the finish button
-    const user = userEvent.setup()
     await act(async () => {
       await user.click(finishButton)
     })
@@ -263,16 +267,20 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       savedAt: Date.now(),
     })
 
-    // RENDER: Start in active phase
-    const { unmount, rerender } = render(<ExamDriveSession route={mockRoute} />)
+    // RENDER: Start stays on the preview until the start button resumes it.
+    const { unmount } = render(<ExamDriveSession route={mockRoute} />)
 
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
     })
 
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /გაგრძელება|გამოცდის დაწყება/ }))
+    })
+
     // Find and click finish button
     const finishButton = screen.getByText('დასრულება')
-    const user = userEvent.setup()
     await act(async () => {
       await user.click(finishButton)
     })
@@ -342,9 +350,13 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
     })
 
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /გაგრძელება|გამოცდის დაწყება/ }))
+    })
+
     // Click finish
     const finishButton = screen.getByText('დასრულება')
-    const user = userEvent.setup()
     await act(async () => {
       await user.click(finishButton)
     })

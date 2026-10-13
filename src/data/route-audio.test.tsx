@@ -6,10 +6,20 @@ const pin = (instruction_ka: string, audio_url: string | null = null): PinRow =>
   ({ id: 'x', route_id: 'r', lat: 0, lng: 0, radius_m: 25, trigger_distance_m: 50, instruction_ka, audio_url, sort_order: 1, active: true }) as PinRow
 
 describe('resolvePinAudioUrl (MP3 path for every route)', () => {
-  it('an explicit audio_url always wins on every route', () => {
+  it('an exact local WAV wins over a stored audio_url on every route', () => {
     for (const slug of ['route-1', 'route-2', 'route-3', 'route-4']) {
-      expect(resolvePinAudioUrl(slug, pin('მალე, გთხოვთ მოუხვიოთ მარცხნივ', '/custom.wav'))).toBe('/custom.wav')
+      const url = resolvePinAudioUrl(slug, pin('მალე, გთხოვთ მოუხვიოთ მარცხნივ', '/other-pin.wav'))
+      expect(decodeURI(url!)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარცხნივ.wav')
     }
+  })
+
+  it('does not borrow a მალე file when the pin text does not say მალე', () => {
+    const instruction = 'გთხოვთ, მოუხვიოთ მარჯვნივ'
+    expect(resolvePinAudioUrl('route-2', pin(instruction))).toBeNull()
+    expect(resolvePinAudioUrl('route-2', pin(instruction, '/custom.wav'))).toBeNull()
+    expect(resolvePinAudioUrl('route-2', pin(instruction, encodeURI('/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav')))).toBe(
+      encodeURI('/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav'),
+    )
   })
 
   it('route 1 resolves exact WAVs; unknown text gets no file (TTS reads it)', () => {

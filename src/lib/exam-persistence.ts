@@ -17,31 +17,81 @@ export type SavedExamState = {
   speedKmh: number
   elapsedMs: number
   triggeredPins: string[]
+  /** Last pin already passed, in sort_order. Restored with the session; not chosen from GPS. */
+  lastPassedPinId?: string | null
+  /** Next pin to approach, in sort_order. */
+  nextPinId?: string | null
+  /** Handled pins by sort_order. Survives local `p1-*` ids versus Supabase UUIDs. */
+  triggeredSortOrders?: number[]
+  lastPassedSortOrder?: number | null
+  nextSortOrder?: number | null
+  /** New exam saved before its starting pin was chosen (nothing handled yet). */
+  startPending?: boolean
   savedAt: number
 }
 
 const STORAGE_KEY = 'cityroute-active-exam'
 const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 საათი
 
-function readSavedExam(): SavedExamState | null {
+export type StoredExam =
+  | { status: 'empty' }
+  | { status: 'corrupt' }
+  | { status: 'expired' }
+  | { status: 'ok'; state: SavedExamState }
+
+function isSavedExamState(value: unknown): value is SavedExamState {
+  if (!value || typeof value !== 'object') return false
+  const state = value as Partial<SavedExamState>
+  return typeof state.routeId === 'string' && Array.isArray(state.triggeredPins)
+}
+
+/** Empty, expired, and unreadable storage stay distinct. A bad save is not "no exam". */
+export function readStoredExam(): StoredExam {
+  let raw: string | null
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return null
-
-    const state = JSON.parse(raw) as SavedExamState
-
-    const age = Date.now() - state.savedAt
-    if (age > MAX_AGE_MS) {
-      console.log('🗑️ Saved exam expired (24h+), clearing')
-      clearActiveExam()
-      return null
-    }
-
-    return state
+    raw = localStorage.getItem(STORAGE_KEY)
   } catch (err) {
     console.error('Failed to load exam state:', err)
-    return null
+    return { status: 'corrupt' }
   }
+  if (!raw) return { status: 'empty' }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    console.error('Failed to load exam state:', err)
+    return { status: 'corrupt' }
+  }
+  if (!isSavedExamState(parsed)) return { status: 'corrupt' }
+
+  const age = Date.now() - parsed.savedAt
+  if (!Number.isFinite(parsed.savedAt) || age > MAX_AGE_MS) {
+    console.log('🗑️ Saved exam expired (24h+), clearing')
+    clearActiveExam()
+    return { status: 'expired' }
+  }
+  return { status: 'ok', state: parsed }
+}
+
+function readSavedExam(): SavedExamState | null {
+  const stored = readStoredExam()
+  return stored.status === 'ok' ? stored.state : null
+}
+
+export type DescribedExam =
+  | { kind: 'none' }
+  | { kind: 'other-route' }
+  | { kind: 'corrupt' }
+  | { kind: 'ok'; state: SavedExamState }
+
+/** What this route should do with the single saved exam slot. */
+export function describeSavedExam(routeId: string, routeSlug?: string, routeName?: string): DescribedExam {
+  const stored = readStoredExam()
+  if (stored.status === 'corrupt') return { kind: 'corrupt' }
+  if (stored.status !== 'ok') return { kind: 'none' }
+  if (!matchesRoute(stored.state, routeId, routeSlug, routeName)) return { kind: 'other-route' }
+  return { kind: 'ok', state: stored.state }
 }
 
 function matchesRoute(

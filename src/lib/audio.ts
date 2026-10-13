@@ -2,7 +2,7 @@
  * ხმის სიჩქარე — შეცვალე ეს რიცხვი.
  * 1 = ნორმალური · 0.9 = ოდნავ ნელი · 0.8 = უფრო ნელი · 0.75 = ნელი · 0.7 = ძალიან ნელი · 1.1 = ჩქარი · 1.2 = უფრო ჩქარი
  */
-export const VOICE_PLAYBACK_RATE = 0.90
+export const VOICE_PLAYBACK_RATE = 1.0
 
 /**
  * ტემბრი:
@@ -26,22 +26,38 @@ type WarmChain = {
   resume: () => Promise<void>
 }
 
+type QueueJob = {
+  url: string | null
+  pinId: string
+  fallbackText: string
+  resolve: (started: boolean) => void
+}
+
 export class AudioEngine {
   private cache = new Map<string, HTMLAudioElement>()
-  private speaking = new Set<string>()
   private playbackRate = VOICE_PLAYBACK_RATE
   private pitch: VoicePitch = VOICE_PITCH
   private volume = VOICE_VOLUME
   private warmChains = new WeakMap<HTMLAudioElement, WarmChain>()
+  private sharedCtx: AudioContext | null = null
+  private warmFailed = false
+  private player: HTMLAudioElement | null = null
+  private queue: QueueJob[] = []
+  private draining = false
+  private generation = 0
+  private currentPinId: string | null = null
+  private stopWaiters = new Set<() => void>()
+  private speechDone: Promise<void> | null = null
+  private finishSpeech: (() => void) | null = null
 
   setPlaybackRate(rate: number) {
     this.playbackRate = rate
-    this.cache.forEach((a) => this.applyRate(a))
+    this.applyToLive()
   }
 
   setPitch(pitch: VoicePitch) {
     this.pitch = pitch
-    this.cache.forEach((a) => this.applyRate(a))
+    this.applyToLive()
   }
 
   /** @deprecated გამოიყენე setPitch('low' | 'normal') */
@@ -51,7 +67,12 @@ export class AudioEngine {
 
   setVolume(volume: number) {
     this.volume = volume
-    this.cache.forEach((a) => this.applyRate(a))
+    this.applyToLive()
+  }
+
+  private applyToLive() {
+    this.cache.forEach((audio) => this.applyRate(audio))
+    if (this.player) this.applyRate(this.player)
   }
 
   private applyRate(audio: HTMLAudioElement) {
@@ -74,9 +95,9 @@ export class AudioEngine {
     audio.webkitPreservesPitch = audio.preservesPitch
   }
 
-  /** mid — თბილი, ღრმა, გლუვი ტემბრი (pitch-ის დაწევის გარეშე). */
+  /** mid — თბილი, ღრმა, გლუვი ტემბრი (pitch-ის დაწევის გარეშე). ერთი საერთო AudioContext. */
   private ensureWarmChain(audio: HTMLAudioElement): WarmChain | null {
-    if (this.pitch !== 'mid') return null
+    if (this.pitch !== 'mid' || this.warmFailed) return null
 
     const existing = this.warmChains.get(audio)
     if (existing) return existing
@@ -87,13 +108,15 @@ export class AudioEngine {
       return wired
     }
 
-    const ctx = new AudioContext()
+    const ctx = this.ensureContext()
+    if (!ctx) return null
 
     let source: MediaElementAudioSourceNode
     try {
       source = ctx.createMediaElementSource(audio)
-    } catch {
-      ctx.close()
+    } catch (err) {
+      console.error('[audio] warm chain failed', err)
+      this.warmFailed = true
       return null
     }
 
@@ -147,6 +170,34 @@ export class AudioEngine {
     return chain
   }
 
+  private ensureContext(): AudioContext | null {
+    if (this.sharedCtx && this.sharedCtx.state !== 'closed') return this.sharedCtx
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctx) return null
+    try {
+      this.sharedCtx = new Ctx()
+      return this.sharedCtx
+    } catch (err) {
+      console.error('[audio] AudioContext failed', err)
+      this.warmFailed = true
+      this.sharedCtx = null
+      return null
+    }
+  }
+
+  private async resumeSharedContext(): Promise<void> {
+    const ctx = this.pitch === 'mid' && !this.warmFailed ? this.ensureContext() : null
+    if (!ctx || ctx.state !== 'suspended') return
+    try {
+      await Promise.race([
+        ctx.resume(),
+        new Promise((resolve) => window.setTimeout(resolve, 300)),
+      ])
+    } catch (err) {
+      console.error('[audio] AudioContext.resume failed', err)
+    }
+  }
+
   preload(url: string) {
     if (!url || this.cache.has(url)) return
     const audio = new Audio(url)
@@ -161,59 +212,223 @@ export class AudioEngine {
   }
 
   speakText(text: string, pinId: string): boolean {
-    if (this.speaking.has(pinId)) return false
-    if (!text || !('speechSynthesis' in window)) return false
-    const utter = new SpeechSynthesisUtterance(text)
-    utter.lang = 'ka-GE'
-    utter.rate = 0.95
-    utter.pitch = 1
-    const voice = pickGeorgianVoice()
-    if (voice) utter.voice = voice
-    this.speaking.add(pinId)
-    utter.onend = () => this.speaking.delete(pinId)
-    utter.onerror = () => this.speaking.delete(pinId)
-    window.speechSynthesis.speak(utter)
-    return true
+    return this.startSpeech(text, pinId)
   }
 
-  async play(url: string | null | undefined, pinId: string, fallbackText: string): Promise<boolean> {
-    if (this.speaking.has(pinId)) return false
-
-    if (url) {
-      let audio = this.cache.get(url)
-      if (!audio) {
-        audio = new Audio(url)
-        this.cache.set(url, audio)
-      }
-      try {
-        audio.currentTime = 0
-        this.applyRate(audio)
-        const warm = this.ensureWarmChain(audio)
-        if (warm) await warm.resume()
-
-        this.speaking.add(pinId)
-        audio.onended = () => this.speaking.delete(pinId)
-        audio.onerror = () => {
-          this.speaking.delete(pinId)
-          this.speakText(fallbackText, pinId)
+  private startSpeech(text: string, pinId: string): boolean {
+    if (!text || typeof window.speechSynthesis?.speak !== 'function') return false
+    try {
+      const utter = new SpeechSynthesisUtterance(text)
+      utter.lang = 'ka-GE'
+      utter.rate = 0.95
+      utter.pitch = 1
+      const voice = pickGeorgianVoice()
+      if (voice) utter.voice = voice
+      this.speechDone = new Promise((resolve) => {
+        this.finishSpeech = resolve
+        utter.onend = () => resolve()
+        utter.onerror = (event) => {
+          console.error('[audio] speech error', pinId, event)
+          resolve()
         }
-        await audio.play()
-        return true
-      } catch {
-        this.speaking.delete(pinId)
-      }
+      })
+      window.speechSynthesis.speak(utter)
+      return true
+    } catch (err) {
+      console.error('[audio] speech failed', pinId, err)
+      this.speechDone = null
+      this.finishSpeech = null
+      return false
     }
+  }
 
-    return this.speakText(fallbackText, pinId)
+  /**
+   * Queue a clip. Resolves true once playback has started (not when it ends).
+   * The next clip waits until this one finishes. The same pinId is not queued twice.
+   */
+  play(url: string | null | undefined, pinId: string, fallbackText: string): Promise<boolean> {
+    if (this.currentPinId === pinId || this.queue.some((job) => job.pinId === pinId)) {
+      return Promise.resolve(false)
+    }
+    return new Promise((resolve) => {
+      this.queue.push({ url: url || null, pinId, fallbackText, resolve })
+      void this.drain()
+    })
   }
 
   stopAll() {
-    this.speaking.clear()
-    this.cache.forEach((a) => {
-      a.pause()
-      a.currentTime = 0
+    this.generation += 1
+    this.currentPinId = null
+    const dropped = this.queue.splice(0)
+    for (const job of dropped) job.resolve(false)
+    this.player?.pause()
+    if (this.player && this.player.readyState >= 1) {
+      try {
+        this.player.currentTime = 0
+      } catch (err) {
+        console.warn('[audio] stop seek failed', err)
+      }
+    }
+    this.cache.forEach((audio) => {
+      audio.pause()
     })
+    for (const wake of this.stopWaiters) wake()
+    this.stopWaiters.clear()
+    this.finishSpeech?.()
+    this.finishSpeech = null
+    this.speechDone = null
     window.speechSynthesis?.cancel()
+  }
+
+  private async drain() {
+    if (this.draining) return
+    this.draining = true
+    const token = this.generation
+    try {
+      while (this.queue.length > 0 && this.generation === token) {
+        const job = this.queue.shift()
+        if (!job) break
+        this.currentPinId = job.pinId
+        this.speechDone = null
+        const started = await this.startJob(job, token)
+        job.resolve(started)
+        if (started && this.generation === token) {
+          const speech = this.speechDone
+          if (speech) await this.withCap(speech, 15000)
+          else await this.waitForCurrentEnd(token)
+        }
+        if (this.currentPinId === job.pinId) this.currentPinId = null
+      }
+    } finally {
+      this.draining = false
+      this.currentPinId = null
+      if (this.queue.length > 0) void this.drain()
+    }
+  }
+
+  private async startJob(job: QueueJob, token: number): Promise<boolean> {
+    if (job.url) {
+      try {
+        await this.startClip(job.url, token)
+        if (token !== this.generation) return false
+        return true
+      } catch (err) {
+        if (token !== this.generation) return false
+        console.error('[audio] playback failed', { pinId: job.pinId, url: job.url, err })
+        this.player?.pause()
+      }
+    } else if (!job.fallbackText) {
+      console.error('[audio] nothing to play', job.pinId)
+      return false
+    }
+
+    if (token !== this.generation) return false
+    const spoke = this.startSpeech(job.fallbackText, job.pinId)
+    if (!spoke) console.error('[audio] fallback speech unavailable', job.pinId, job.fallbackText)
+    return spoke
+  }
+
+  private ensurePlayer(): HTMLAudioElement {
+    if (!this.player) {
+      this.player = new Audio()
+      this.player.preload = 'auto'
+      this.applyRate(this.player)
+    }
+    return this.player
+  }
+
+  private sameSource(audio: HTMLAudioElement, url: string): boolean {
+    if (audio.src === url) return true
+    try {
+      return audio.src === new URL(url, window.location.href).href
+    } catch {
+      return false
+    }
+  }
+
+  private async startClip(url: string, token: number): Promise<void> {
+    const audio = this.ensurePlayer()
+    if (!this.sameSource(audio, url)) {
+      audio.src = url
+      audio.load()
+    }
+    if (audio.readyState < 1) await this.waitForMetadata(audio, token)
+    if (token !== this.generation) throw new Error('audio stopped')
+    if (audio.readyState >= 1) {
+      try {
+        audio.currentTime = 0
+      } catch (err) {
+        console.warn('[audio] seek failed', url, err)
+      }
+    }
+    this.applyRate(audio)
+    this.ensureWarmChain(audio)
+    await this.resumeSharedContext()
+    if (token !== this.generation) throw new Error('audio stopped')
+    await audio.play()
+  }
+
+  private waitForMetadata(audio: HTMLAudioElement, token: number): Promise<void> {
+    if (audio.readyState >= 1) return Promise.resolve()
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        cleanup()
+        reject(new Error('audio load timeout'))
+      }, 8000)
+      const ok = () => {
+        cleanup()
+        resolve()
+      }
+      const bad = () => {
+        cleanup()
+        reject(new Error('audio load error'))
+      }
+      const stop = () => {
+        cleanup()
+        reject(new Error('audio stopped'))
+      }
+      const cleanup = () => {
+        window.clearTimeout(timer)
+        audio.removeEventListener('loadedmetadata', ok)
+        audio.removeEventListener('error', bad)
+        this.stopWaiters.delete(stop)
+      }
+      this.stopWaiters.add(stop)
+      audio.addEventListener('loadedmetadata', ok)
+      audio.addEventListener('error', bad)
+      if (token !== this.generation) stop()
+    })
+  }
+
+  private withCap(pending: Promise<void>, ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(resolve, ms)
+      void pending.finally(() => {
+        window.clearTimeout(timer)
+        resolve()
+      })
+    })
+  }
+
+  private waitForCurrentEnd(token: number): Promise<void> {
+    const audio = this.player
+    if (!audio || token !== this.generation) return Promise.resolve()
+    if (audio.ended) return Promise.resolve()
+    return new Promise((resolve) => {
+      let timer = 0
+      const finish = () => {
+        window.clearTimeout(timer)
+        audio.removeEventListener('ended', finish)
+        audio.removeEventListener('error', finish)
+        this.stopWaiters.delete(finish)
+        resolve()
+      }
+      timer = window.setTimeout(finish, 15000)
+      this.stopWaiters.add(finish)
+      audio.addEventListener('ended', finish)
+      audio.addEventListener('error', finish)
+      if (token !== this.generation || audio.ended) finish()
+    })
   }
 }
 

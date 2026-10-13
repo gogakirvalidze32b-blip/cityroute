@@ -5,6 +5,8 @@ import { formatExamDuration } from '@/lib/exam-session'
 type Props = {
   elapsedMs: number
   speedKmh: number
+  /** current posted limit; undefined = no sign, null = limit unknown (NEEDS_VERIFICATION) */
+  speedLimitKmh?: number | null
   minorTotal: number
   severeTotal: number
   onRecordSevere: () => void
@@ -34,6 +36,7 @@ function hudTimeParts(ms: number) {
 export function ExamScoreboard({
   elapsedMs,
   speedKmh,
+  speedLimitKmh,
   minorTotal,
   severeTotal,
   onRecordSevere,
@@ -42,9 +45,10 @@ export function ExamScoreboard({
 }: Props) {
   const failed = isExamFailed({ minorTotal, severeTotal })
   const time = hudTimeParts(elapsedMs)
+  const showLimit = speedLimitKmh !== undefined
 
   return (
-    <header className={`exam-hud${compact ? ' exam-hud--compact' : ''}`}>
+    <header className={`exam-hud${compact ? ' exam-hud--compact' : ''}${showLimit ? ' exam-hud--with-limit' : ''}`}>
       <div className="exam-hud__zone exam-hud__time" aria-label={`დრო ${formatExamDuration(elapsedMs)}`}>
         <div className="exam-hud__time-inner">
           <span className="exam-hud__time-head">{time.head}</span>
@@ -58,6 +62,15 @@ export function ExamScoreboard({
           <strong>{Math.round(speedKmh)}</strong>
           <span>კმ/სთ</span>
         </div>
+        {showLimit && (
+          <div
+            className={`exam-hud__limit${speedLimitKmh == null ? ' exam-hud__limit--unknown' : ''}`}
+            role="img"
+            aria-label={speedLimitKmh == null ? 'სიჩქარის ლიმიტი უცნობია' : `სიჩქარის ლიმიტი ${speedLimitKmh}`}
+          >
+            {speedLimitKmh == null ? '–' : speedLimitKmh}
+          </div>
+        )}
       </div>
 
       {showErrors && (
