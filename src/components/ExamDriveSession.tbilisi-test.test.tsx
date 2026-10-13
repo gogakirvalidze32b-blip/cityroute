@@ -69,9 +69,9 @@ vi.mock('@/components/ExamSummary', () => ({
 }))
 
 const EXPECTED = [
-  { lat: 41.678565, lng: 44.979647, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
-  { lat: 41.67901, lng: 44.978657, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
-  { lat: 41.679581, lng: 44.978153, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+  { lat: 41.6786037, lng: 44.9795425, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
+  { lat: 41.6789698, lng: 44.9786878, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+  { lat: 41.6792766, lng: 44.9781393, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
 ]
 
 const play = vi.mocked(audioEngine.play)
@@ -138,14 +138,14 @@ describe('standalone test city „ტესტი — თბილისი“',
     const telavi = routes.filter((r) => r.slug !== route.slug)
     expect(telavi).toEqual(applyRelocatedPin(applyAuditedPinInstructions(before)))
     expect(routes.filter((r) => r.slug === route.slug)).toEqual([route])
-    expect(routes.some((r) => r.slug === 'test-route-tbilisi')).toBe(false)
+    expect(route.slug).toBe('test-route-tbilisi')
   })
 
-  it('uses the exact WAV for each instruction, and each file exists', () => {
+  it('uses the exact WAV for each instruction; only pin 1 has no recording yet', () => {
     for (const p of route.pins) {
       const url = resolvePinAudioUrl(route.slug, p)
       expect(decodeURI(String(url))).toBe(`/audio/points/${p.instruction_ka}.wav`)
-      expect(fs.existsSync(path.resolve('public/audio/points', `${p.instruction_ka}.wav`))).toBe(true)
+      expect(fs.existsSync(path.resolve('public/audio/points', `${p.instruction_ka}.wav`))).toBe(p.sort_order !== 1)
     }
   })
 

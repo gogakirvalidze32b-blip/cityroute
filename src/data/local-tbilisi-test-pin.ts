@@ -7,9 +7,9 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 const ROUTE_ID = 'local-test-tbilisi'
 
 const TEST_PINS: readonly { lat: number; lng: number; instruction: string }[] = [
-  { lat: 41.678565, lng: 44.979647, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
-  { lat: 41.67901, lng: 44.978657, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
-  { lat: 41.679581, lng: 44.978153, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+  { lat: 41.6786037, lng: 44.9795425, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
+  { lat: 41.6789698, lng: 44.9786878, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+  { lat: 41.6792766, lng: 44.9781393, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
 ]
 
 const pins: PinRow[] = TEST_PINS.map((pin, index) => ({
@@ -28,7 +28,7 @@ const pins: PinRow[] = TEST_PINS.map((pin, index) => ({
 export const LOCAL_TBILISI_TEST_ROUTE: RouteWithPins = {
   id: ROUTE_ID,
   city_id: 'test-tbilisi',
-  slug: 'test-tbilisi',
+  slug: 'test-route-tbilisi',
   name_ka: 'ტესტი — თბილისი',
   official_label: null,
   license_category: 'B',
@@ -38,11 +38,9 @@ export const LOCAL_TBILISI_TEST_ROUTE: RouteWithPins = {
   pins,
 }
 
-const LEGACY_TEST_SLUG = 'test-route-tbilisi'
-
 export function applyLocalTbilisiTestPin(routes: RouteWithPins[]): RouteWithPins[] {
   return [
-    ...routes.filter((route) => route.slug !== LOCAL_TBILISI_TEST_ROUTE.slug && route.slug !== LEGACY_TEST_SLUG),
+    ...routes.filter((route) => route.slug !== LOCAL_TBILISI_TEST_ROUTE.slug),
     LOCAL_TBILISI_TEST_ROUTE,
   ]
 }
