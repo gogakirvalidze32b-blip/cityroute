@@ -7,7 +7,7 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 const ROUTE_ID = 'local-test-tbilisi'
 
 const TEST_PINS: readonly { lat: number; lng: number; instruction: string }[] = [
-  { lat: 41.6786037, lng: 44.9795425, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
+  { lat: 41.6789378, lng: 44.9788424, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
   { lat: 41.6792766, lng: 44.9781393, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
   { lat: 41.6798062, lng: 44.9783244, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
 ]
