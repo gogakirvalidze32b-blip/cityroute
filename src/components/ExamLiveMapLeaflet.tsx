@@ -1,9 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { CircleMarker, MapContainer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
+import { RoutePolyline } from '@/components/RoutePolyline'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
+import { examRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
@@ -360,6 +362,10 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
 
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
+  const pinLine = useMemo(
+    () => (EXAM_STREET_LINE_SLUGS.has(route.slug) ? examRouteLine(route.slug, pins) : []),
+    [route.slug, pins],
+  )
   
   // ============================================================================
   // DEBUG: Runtime pin verification
@@ -479,6 +485,8 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge,
         >
           <MapSizeFix />
           <MapBasemapLayers tiles={MAP_TILES} detectRetina />
+
+          {pinLine.length >= 2 && <RoutePolyline positions={pinLine} variant="pins" />}
 
           {pins.map((pin) => {
             const isNext = nextPin?.id === pin.id

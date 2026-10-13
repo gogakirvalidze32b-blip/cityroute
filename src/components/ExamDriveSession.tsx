@@ -60,10 +60,14 @@ import {
   audioHeadingOk,
   decidePinAudio,
 } from '@/lib/pin-audio'
+import { nextSortOrder, ordersForIds, pinIdsForOrders, resolveExamResume } from '@/lib/route-resume'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
 type Phase = 'preview' | 'active' | 'summary'
+
+/** Street line + sort_order resume for on-site GPS checks. Routes 1 and 4 stay on production behaviour. */
+const FIELD_TEST_SLUGS = new Set(['route-2', 'route-3'])
 
 // Per-GPS-fix diagnostics are development-only (production keeps console quiet).
 const devLog: typeof console.log = (...args) => {
@@ -106,6 +110,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [elapsedMs, setElapsedMs] = useState(() => (savedState ? examElapsedMsNow(savedState) : 0))
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
+  const [routeComplete, setRouteComplete] = useState(false)
+  const resumePendingRef = useRef(false)
   
   // DEBUG: Session diagnostic panel state
   // Production: panel and its 500 ms re-render timer are off. Development: unchanged.
@@ -192,6 +198,21 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setElapsedMs(examElapsedMsNow(saved))
         setGpsStarted(true)
         setDriveView(features.mapNav ? 'map' : 'panel')
+        if (FIELD_TEST_SLUGS.has(route.slug)) {
+          const resolution = resolveExamResume(saved, sortedPins, route.slug)
+          if (resolution.status === 'resume') {
+            resumePendingRef.current = resolution.handledOrders === null
+            if (resolution.handledOrders) {
+              triggeredRef.current = pinIdsForOrders(sortedPins, new Set(resolution.handledOrders))
+              setNextPin(sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
+              setRouteComplete(
+                sortedPins.length > 0 && resolution.nextSortOrder === null,
+              )
+            }
+          } else if (resolution.status === 'pending') {
+            resumePendingRef.current = true
+          }
+        }
         console.log('🔄 Resuming saved exam session', route.slug)
       }
       setPhase('active')
@@ -214,6 +235,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setGpsError(getGpsEnvironmentIssue())
     setLastSpoken(null)
     triggeredRef.current = new Set()
+    resumePendingRef.current = false
+    setRouteComplete(false)
     setNextPin(sortedPins[0] ?? null)
     prevGpsRef.current = null
     speedTrackerRef.current = createSpeedTracker()
@@ -221,6 +244,20 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setSpeedKmh(0)
     setHeading(0)
   }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav])
+
+  // Local p2-/p3- ids and Supabase UUIDs share sort_order. Progress is kept by sort_order.
+  useEffect(() => {
+    if (!FIELD_TEST_SLUGS.has(route.slug) || sortedPins.length === 0) return
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    if (!saved) return
+    const resolution = resolveExamResume(saved, sortedPins, route.slug)
+    if (resolution.status !== 'resume' || !resolution.handledOrders) return
+    triggeredRef.current = pinIdsForOrders(sortedPins, new Set(resolution.handledOrders))
+    resumePendingRef.current = false
+    if (phaseRef.current !== 'active') return
+    setNextPin(sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
+    setRouteComplete(resolution.nextSortOrder === null)
+  }, [sortedPins, route.id, route.slug, route.name_ka])
 
   const enableGps = useCallback(async (silent = false) => {
     if (!silent) setGpsStarting(true)
@@ -310,6 +347,19 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       const liveElapsed = sessionStartRef.current
         ? Math.max(0, Date.now() - sessionStartRef.current)
         : elapsedMs
+      const fieldTest =
+        FIELD_TEST_SLUGS.has(route.slug) && sortedPins.length > 0
+          ? (() => {
+              const derived = ordersForIds(triggeredRef.current, sortedPins, route.slug)
+              if (derived.unknown.length > 0) return {}
+              const progress = nextSortOrder(sortedPins, derived.orders)
+              return {
+                triggeredSortOrders: [...derived.orders].sort((a, b) => a - b),
+                lastPassedSortOrder: progress.lastPassedSortOrder,
+                nextSortOrder: progress.nextSortOrder,
+              }
+            })()
+          : {}
       saveActiveExam({
         routeId: route.id,
         routeSlug: route.slug,
@@ -321,17 +371,26 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         speedKmh,
         elapsedMs: liveElapsed,
         triggeredPins: Array.from(triggeredRef.current),
+        ...fieldTest,
         savedAt: Date.now(),
       })
     }
 
     saveState()
     const id = window.setInterval(saveState, 5000)
+    const persistOnLeave = () => saveState()
+    const persistIfHidden = () => {
+      if (document.visibilityState === 'hidden') saveState()
+    }
+    window.addEventListener('pagehide', persistOnLeave)
+    document.addEventListener('visibilitychange', persistIfHidden)
     return () => {
       window.clearInterval(id)
+      window.removeEventListener('pagehide', persistOnLeave)
+      document.removeEventListener('visibilitychange', persistIfHidden)
       if (!finishInProgressRef.current) saveState() // Only save on cleanup if not finishing
     }
-  }, [phase, route.id, route.slug, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs])
+  }, [phase, route.id, route.slug, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs, sortedPins])
 
   useEffect(() => {
     if (!gpsStarted) return
@@ -377,6 +436,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         
         const triggeredCount = triggeredRef.current.size
         const totalPins = voicePins.length
+        const fieldTest = FIELD_TEST_SLUGS.has(route.slug)
+        if (fieldTest && resumePendingRef.current && totalPins === 0) return
         
         // Find the FIRST untriggered pin in sequence
         // This is THE ONLY pin that can trigger right now
@@ -384,6 +445,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         const pending = nextPinIndex >= 0 ? voicePins[nextPinIndex] : null
         
         setNextPin(pending ?? null)
+        if (fieldTest && totalPins > 0 && !pending) setRouteComplete(true)
         
         // Log current state
         if (pending) {
@@ -460,6 +522,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         )
         // Mark first (GPS fires every second) so the same PIN can never be spoken twice.
         triggeredRef.current.add(target.id)
+        if (fieldTest && !voicePins.some((pin) => !triggeredRef.current.has(pin.id))) {
+          setRouteComplete(true)
+        }
         setLastSpoken(target.instruction_ka)
         void audioEngine.playDetailed(target.audio_url, target.id, target.instruction_ka).then((status) => {
           if (status !== 'failed' || phaseRef.current !== 'active') return
@@ -494,6 +559,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
+    setRouteComplete(false)
+    resumePendingRef.current = false
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
     setLastSpoken(EXAM_START_TEXT)
@@ -530,6 +597,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     // ============================================================
     if (savedState) {
       console.log('🔄 Resuming active session - not calling startSession()')
+      if (FIELD_TEST_SLUGS.has(route.slug)) {
+        const resolution = resolveExamResume(savedState, voicePins, route.slug)
+        if (resolution.status === 'resume' && resolution.handledOrders) {
+          triggeredRef.current = pinIdsForOrders(voicePins, new Set(resolution.handledOrders))
+          setNextPin(voicePins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
+          setRouteComplete(voicePins.length > 0 && resolution.nextSortOrder === null)
+          resumePendingRef.current = false
+        }
+      }
       if (phase !== 'active') setPhase('active')
       if (!gpsStarted) {
         await enableGps(true)
@@ -546,6 +622,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   function finishSession() {
     finishInProgressRef.current = true
+    setRouteComplete(false)
     clearActiveExam() // Clear saved state IMMEDIATELY before any state updates
     setSavedEpoch((v) => v + 1) // drop the stale savedState memo in the same batch as phase='summary'
     const summary = finishExamSession(exam)
@@ -571,6 +648,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     pinApproachRef.current = new Map()
     audioAttemptsRef.current = new Map()
     resumedSlugRef.current = null
+    resumePendingRef.current = false
+    setRouteComplete(false)
     setNextPin(sortedPins[0] ?? null)
     setLastSpoken(null)
     setElapsedMs(0)
@@ -635,6 +714,34 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
                   {!pinsActive && <p className="exam-voice-muted">ამ მარშრუტზე GPS წერტილები არ არის</p>}
                 </div>
               )}
+            </div>
+          )}
+
+          {routeComplete && FIELD_TEST_SLUGS.has(route.slug) && (
+            <div
+              role="status"
+              data-testid="route-complete"
+              style={{
+                position: 'relative',
+                zIndex: 20,
+                margin: '0.5rem',
+                padding: '0.75rem',
+                borderRadius: '8px',
+                background: '#ecfdf5',
+                border: '2px solid #10b981',
+              }}
+            >
+              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#065f46' }}>
+                მარშრუტი დასრულებულია — ყველა PIN გავლილია.
+              </p>
+              <button
+                type="button"
+                className="nav-start-btn"
+                style={{ marginTop: '0.5rem' }}
+                onClick={restartPreview}
+              >
+                თავიდან დაწყება
+              </button>
             </div>
           )}
 

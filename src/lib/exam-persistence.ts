@@ -17,6 +17,10 @@ export type SavedExamState = {
   speedKmh: number
   elapsedMs: number
   triggeredPins: string[]
+  /** Handled pins by sort_order. Survives local `p2-*` ids versus Supabase UUIDs. */
+  triggeredSortOrders?: number[]
+  lastPassedSortOrder?: number | null
+  nextSortOrder?: number | null
   savedAt: number
 }
 
