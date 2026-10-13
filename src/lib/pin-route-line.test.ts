@@ -3,7 +3,7 @@ import audioPins from '@/data/audio-audit-pins.fixture.json'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { applyRelocatedPin } from '@/hooks/useRoutes'
 import { LOCAL_TBILISI_TEST_ROUTE } from '@/data/local-tbilisi-test-pin'
-import { examRouteLine, maxPinOffsetFromLineM, pinRouteLine } from '@/lib/pin-route-line'
+import { examRoadTrace, examRouteLine, maxPinOffsetFromLineM, pinRouteLine } from '@/lib/pin-route-line'
 import type { PinRow } from '@/types/database'
 
 type FixturePin = {
@@ -94,10 +94,23 @@ describe('pin route line', () => {
   })
 
   it('does not draw a line from another route when local pins are empty', () => {
-    for (const slug of ['route-2', 'route-3', 'route-4']) {
-      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)
-      expect(pinRouteLine(route!.pins)).toEqual([])
-      expect(examRouteLine(slug, route!.pins)).toEqual([])
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-4')
+    expect(pinRouteLine(route!.pins)).toEqual([])
+    expect(examRouteLine('route-4', route!.pins)).toEqual([])
+  })
+
+  it('route 2 and 3 local pins follow their own street traces, in pin order', () => {
+    for (const [slug, count] of [
+      ['route-2', 29],
+      ['route-3', 31],
+    ] as const) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const orders = [...route.pins].sort((a, b) => a.sort_order - b.sort_order).map((pin) => pin.sort_order)
+      const line = examRouteLine(slug, route.pins)
+      expect(route.pins).toHaveLength(count)
+      expect(orders).toEqual(Array.from({ length: count }, (_, index) => index + 1))
+      expect(line).toEqual(examRoadTrace(slug, route.pins))
+      expect(line.length).toBeGreaterThan(pinRouteLine(route.pins).length)
     }
   })
 

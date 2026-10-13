@@ -2,6 +2,7 @@
 import { ROUTE_POLYLINES } from './route-polylines'
 import route1Official from './route-1-official.json'
 import route2Official from './route-2-official.json'
+import auditedPins from './audio-audit-pins.fixture.json'
 import { L, TELAVI_CENTER } from './telavi-landmarks'
 
 export { TELAVI_CENTER }
@@ -33,6 +34,25 @@ function pin(
 
 function route1Pins(routeId: string) {
   return pinsFromOfficial(routeId, route1Official, 'p1')
+}
+
+type AuditPin = { route: number; pin: number; lat: number; lng: number; instruction: string }
+
+/** Same coordinates, order, and texts as the live exam. Remote Supabase pins still replace these when loaded. */
+function pinsFromAudit(routeNumber: number, routeId: string, idPrefix: string) {
+  const rows = (auditedPins as AuditPin[])
+    .filter((item) => item.route === routeNumber)
+    .sort((a, b) => a.pin - b.pin)
+  return rows.map((item, index) =>
+    pin(
+      `${idPrefix}-${item.pin}`,
+      routeId,
+      [item.lat, item.lng],
+      item.instruction,
+      item.pin,
+      index === 0 || index === rows.length - 1 ? 40 : 50,
+    ),
+  )
 }
 
 function pinsFromOfficial(
@@ -92,7 +112,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 2,
     active: true,
     polyline: line('route-2', route2Fallback),
-    pins: [], // Pins will be loaded from Supabase (29 pins)
+    pins: pinsFromAudit(2, 'local-route-2', 'p2'),
   },
   {
     id: 'local-route-3',
@@ -104,7 +124,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 3,
     active: true,
     polyline: line('route-3', route3Fallback),
-    pins: [], // Pins will be loaded from Supabase (31 pins)
+    pins: pinsFromAudit(3, 'local-route-3', 'p3'),
   },
   {
     id: 'local-route-4',
