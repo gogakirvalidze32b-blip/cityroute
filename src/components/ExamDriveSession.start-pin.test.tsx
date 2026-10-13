@@ -10,7 +10,7 @@ import { createExamSession } from '@/lib/exam-session'
 import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
 import { examRoadTrace } from '@/lib/pin-route-line'
 import { chooseStartPin } from '@/lib/start-pin'
-import { distanceToPinMeters, type GpsPosition } from '@/lib/gps'
+import { distanceToPinMeters, requestGpsOnce, type GpsPosition } from '@/lib/gps'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 vi.mock('@/context/AuthContext', () => ({
@@ -208,6 +208,16 @@ describe('starting pin of a new exam', () => {
     cleanup()
     vi.useRealTimers()
     localStorage.clear()
+  })
+
+  it('starts the exam even if the first GPS fix never arrives', async () => {
+    vi.mocked(requestGpsOnce).mockImplementationOnce(() => new Promise(() => {}))
+    render(<ExamDriveSession route={route1} />)
+    await settle()
+    await pressStart()
+    expect(play).toHaveBeenCalledWith(EXAM_START_AUDIO, 'session-start', expect.any(String))
+    expect(screen.queryByRole('button', { name: /გამოცდის დაწყება/ })).toBeNull()
+    expect(screen.getByTestId('start-pin-selection')).toBeTruthy()
   })
 
   it.each(routes.map((route) => [route.slug, route] as const))(
