@@ -166,11 +166,23 @@ describe('pin route line', () => {
     const inPark = line.filter(
       ([lat, lng]) => lat >= 41.928 && lat <= 41.92915 && lng >= 45.4757,
     )
+    const bathDip = line.filter(
+      ([lat, lng]) => lat >= 41.928 && lat <= 41.9287 && lng >= 45.4754,
+    )
+    const innerWest = line.filter(
+      ([lat, lng]) => lat >= 41.9248 && lat <= 41.9263 && lng >= 45.4622 && lng <= 45.463,
+    )
     const erekleNorthBump = line.filter(
       ([lat, lng]) => lat >= 41.9179 && lat <= 41.919 && lng >= 45.4765 && lng <= 45.4785,
     )
+    const aroundRoundabout = line.some(
+      ([lat, lng]) => lat >= 41.919 && lat <= 41.91912 && lng >= 45.48555 && lng <= 45.48575,
+    )
     expect(inPark).toEqual([])
+    expect(bathDip).toEqual([])
+    expect(innerWest).toEqual([])
     expect(erekleNorthBump).toEqual([])
+    expect(aroundRoundabout).toBe(true)
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
 
