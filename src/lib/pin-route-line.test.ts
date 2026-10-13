@@ -151,10 +151,22 @@ describe('pin route line', () => {
     expect(new Set(signatures).size).toBe(4)
   })
 
-  it('visits route 2 pins in sort_order along the street, without skipping ahead', () => {
-    const pins = fixturePins(2)
-    const line = examRouteLine('route-2', pins)
-    expect(visitPinsInOrder(pins, line)).toBe(true)
+  it('visits route 1 and route 2 pins in sort_order along the street, without skipping ahead', () => {
+    for (const route of [1, 2] as const) {
+      const pins = fixturePins(route)
+      const line = examRouteLine(`route-${route}`, pins)
+      expect(visitPinsInOrder(pins, line)).toBe(true)
+      expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
+    }
+  })
+
+  it('keeps route 1 on Alazani and does not loop through the Public Bath park', () => {
+    const pins = fixturePins(1)
+    const line = examRouteLine('route-1', pins)
+    const inPark = line.filter(
+      ([lat, lng]) => lat >= 41.928 && lat <= 41.92915 && lng >= 45.4757,
+    )
+    expect(inPark).toEqual([])
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
 
@@ -162,18 +174,18 @@ describe('pin route line', () => {
     const pins = fixturePins(4)
     const line = examRouteLine('route-4', pins)
     const straight = pinRouteLine(pins)
+    const overshoot = line.filter(
+      ([lat, lng]) => lat >= 41.9195 && lat <= 41.9203 && lng >= 45.50145,
+    )
 
     expect(line.length).toBeGreaterThan(straight.length)
     expect(maxPinOffsetFromLineM(straight, line)).toBeLessThanOrEqual(40)
     expect(shortOutAndBackNear(line, [41.919749, 45.501045], 80)).toBe(false)
+    expect(overshoot).toEqual([])
   })
 
-  it('leaves route 1 and route 3 street traces unchanged', () => {
-    const route1 = examRouteLine('route-1', fixturePins(1))
+  it('leaves the route 3 street trace unchanged', () => {
     const route3 = examRouteLine('route-3', fixturePins(3))
-    expect(route1).toHaveLength(344)
-    expect(route1[0]).toEqual([41.931477, 45.475406])
-    expect(route1[route1.length - 1]).toEqual([41.93154, 45.475194])
     expect(route3).toHaveLength(356)
     expect(route3.find((point) => point[1] < 45.456)).toBeTruthy()
   })
