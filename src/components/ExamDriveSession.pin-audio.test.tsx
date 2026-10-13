@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, act } from '@testing-library/react'
+import { render, act, cleanup } from '@testing-library/react'
 import { ExamDriveSession } from './ExamDriveSession'
 import { saveActiveExam } from '@/lib/exam-persistence'
 import { createExamSession } from '@/lib/exam-session'
@@ -211,11 +211,38 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(played()).toEqual(['pin-1'])
   })
 
-  it('missed PIN: GPS jumps to the next PIN → next voice plays, stale one is skipped, sequence continues', async () => {
+  it('route 2 does not skip a pin when GPS jumps ahead (Tbilisi sequential rule)', async () => {
     await emit(150) // approached PIN 1 (50 m)
-    await emit(392) // now 8 m from PIN 2
+    await emit(392) // 8 m from PIN 2 while PIN 1 is still next
+    expect(played()).toEqual([])
+    await emit(182) // at PIN 1
+    expect(played()).toEqual(['pin-1'])
+  })
+
+  it('route 1 still recovers a missed PIN by lookahead', async () => {
+    cleanup()
+    const r1 = { ...route, id: 'r1', slug: 'route-1', name_ka: 'მარშრუტი 1' }
+    saveActiveExam({
+      routeId: r1.id,
+      routeSlug: r1.slug,
+      routeName: r1.name_ka,
+      phase: 'active',
+      exam: createExamSession(r1.id, r1.name_ka),
+      userPos: [BASE_LAT, 45.4],
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 1000,
+      triggeredPins: [],
+      savedAt: Date.now(),
+    })
+    render(<ExamDriveSession route={r1} />)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    await emit(150)
+    await emit(392)
     expect(played()).toEqual(['pin-2'])
-    await emit(592) // 8 m from PIN 3 → sequence not blocked
+    await emit(592)
     expect(played()).toEqual(['pin-2', 'pin-3'])
   })
 

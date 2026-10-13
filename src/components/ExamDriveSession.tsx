@@ -26,6 +26,7 @@ import {
   examSessionOriginMs,
   examElapsedMsNow,
   hasSavedExamForSlug,
+  type SavedExamState,
 } from '@/lib/exam-persistence'
 import {
   distanceToPinMeters,
@@ -60,7 +61,13 @@ import {
   audioHeadingOk,
   decidePinAudio,
 } from '@/lib/pin-audio'
-import { nextSortOrder, ordersForIds, pinIdsForOrders, resolveExamResume } from '@/lib/route-resume'
+import {
+  nextSortOrder,
+  ordersForIds,
+  pinIdsForOrders,
+  resolveExamResume,
+  savedHandledOrders,
+} from '@/lib/route-resume'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
@@ -68,6 +75,15 @@ type Phase = 'preview' | 'active' | 'summary'
 
 /** Street line + sort_order resume for on-site GPS checks. Routes 1 and 4 stay on production behaviour. */
 const FIELD_TEST_SLUGS = new Set(['route-2', 'route-3'])
+
+function initialHandledOrders(
+  saved: SavedExamState,
+  pins: readonly PinRow[],
+  routeSlug: string,
+): Set<number> | null {
+  const orders = savedHandledOrders(saved, pins, routeSlug)
+  return orders === 'invalid' ? null : orders
+}
 
 /** Only the newest mounted session may write on pagehide / unmount. */
 let examSaveOwner = 0
@@ -134,6 +150,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [phase])
 
   const triggeredRef = useRef<Set<string>>(savedState ? new Set(savedState.triggeredPins) : new Set())
+  /** Routes 2/3: handled pins by sort_order (Tbilisi resume). Null until a save can be placed. */
+  const handledOrdersRef = useRef<Set<number> | null>(
+    FIELD_TEST_SLUGS.has(route.slug)
+      ? savedState
+        ? initialHandledOrders(savedState, route.pins, route.slug)
+        : new Set()
+      : null,
+  )
   // Audio catch-up bookkeeping (closest approach per PIN, failed-playback attempts). Not persisted.
   const pinApproachRef = useRef<Map<string, number>>(new Map())
   const audioAttemptsRef = useRef<Map<string, number>>(new Map())
@@ -206,11 +230,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setGpsStarted(true)
         setDriveView(features.mapNav ? 'map' : 'panel')
         if (FIELD_TEST_SLUGS.has(route.slug)) {
+          handledOrdersRef.current = initialHandledOrders(saved, sortedPins, route.slug)
           const resolution = resolveExamResume(saved, sortedPins, route.slug)
           if (resolution.status === 'resume') {
             resumePendingRef.current = resolution.handledOrders === null
             if (resolution.handledOrders) {
-              triggeredRef.current = pinIdsForOrders(sortedPins, new Set(resolution.handledOrders))
+              handledOrdersRef.current = new Set(resolution.handledOrders)
+              triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
               setNextPin(sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
               setRouteComplete(
                 sortedPins.length > 0 && resolution.nextSortOrder === null,
@@ -242,6 +268,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setGpsError(getGpsEnvironmentIssue())
     setLastSpoken(null)
     triggeredRef.current = new Set()
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
     resumePendingRef.current = false
     setRouteComplete(false)
     setNextPin(sortedPins[0] ?? null)
@@ -252,18 +279,25 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setHeading(0)
   }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav])
 
-  // Local p2-/p3- ids and Supabase UUIDs share sort_order. Progress is kept by sort_order.
+  // Local p2-/p3- ids and Supabase UUIDs share sort_order. Progress is kept by sort_order,
+  // so a pin list swap re-derives the handled ids instead of dropping or guessing them.
   useEffect(() => {
-    if (!FIELD_TEST_SLUGS.has(route.slug) || sortedPins.length === 0) return
-    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
-    if (!saved) return
-    const resolution = resolveExamResume(saved, sortedPins, route.slug)
-    if (resolution.status !== 'resume' || !resolution.handledOrders) return
-    triggeredRef.current = pinIdsForOrders(sortedPins, new Set(resolution.handledOrders))
+    if (!FIELD_TEST_SLUGS.has(route.slug)) return
+    if (handledOrdersRef.current === null) {
+      const derived = ordersForIds(triggeredRef.current, sortedPins, route.slug)
+      if (sortedPins.length === 0) return
+      if (derived.unknown.length > 0) {
+        resumePendingRef.current = true
+        return
+      }
+      handledOrdersRef.current = derived.orders
+    }
+    triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
     resumePendingRef.current = false
     if (phaseRef.current !== 'active') return
-    setNextPin(sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
-    setRouteComplete(resolution.nextSortOrder === null)
+    const progress = nextSortOrder(sortedPins, handledOrdersRef.current)
+    setNextPin(sortedPins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
+    setRouteComplete(sortedPins.length > 0 && progress.nextSortOrder === null)
   }, [sortedPins, route.id, route.slug, route.name_ka])
 
   const enableGps = useCallback(async (silent = false) => {
@@ -357,19 +391,28 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         ? Math.max(0, Date.now() - sessionStartRef.current)
         : elapsedMs
       const pins = pinsRef.current
-      const fieldTest =
-        FIELD_TEST_SLUGS.has(route.slug) && pins.length > 0
-          ? (() => {
-              const derived = ordersForIds(triggeredRef.current, pins, route.slug)
-              if (derived.unknown.length > 0) return {}
-              const progress = nextSortOrder(pins, derived.orders)
+      const fieldTest = FIELD_TEST_SLUGS.has(route.slug)
+        ? (() => {
+            const orders = handledOrdersRef.current
+            if (orders === null) return {}
+            const sorted = [...orders].sort((a, b) => a - b)
+            if (pins.length === 0) {
+              const previous = loadActiveExam(route.id, route.slug, route.name_ka)
               return {
-                triggeredSortOrders: [...derived.orders].sort((a, b) => a - b),
-                lastPassedSortOrder: progress.lastPassedSortOrder,
-                nextSortOrder: progress.nextSortOrder,
+                triggeredSortOrders: sorted,
+                lastPassedSortOrder:
+                  previous?.lastPassedSortOrder ?? (sorted.length ? sorted[sorted.length - 1]! : null),
+                nextSortOrder: previous?.nextSortOrder ?? null,
               }
-            })()
-          : {}
+            }
+            const progress = nextSortOrder(pins, orders)
+            return {
+              triggeredSortOrders: sorted,
+              lastPassedSortOrder: progress.lastPassedSortOrder,
+              nextSortOrder: progress.nextSortOrder,
+            }
+          })()
+        : {}
       saveActiveExam({
         routeId: route.id,
         routeSlug: route.slug,
@@ -449,7 +492,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         const triggeredCount = triggeredRef.current.size
         const totalPins = voicePins.length
         const fieldTest = FIELD_TEST_SLUGS.has(route.slug)
-        if (fieldTest && resumePendingRef.current && totalPins === 0) return
+        if (fieldTest && handledOrdersRef.current === null) {
+          setNextPin(null)
+          return
+        }
+        if (fieldTest && handledOrdersRef.current) {
+          triggeredRef.current = pinIdsForOrders(voicePins, handledOrdersRef.current)
+        }
         
         // Find the FIRST untriggered pin in sequence
         // This is THE ONLY pin that can trigger right now
@@ -457,7 +506,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         const pending = nextPinIndex >= 0 ? voicePins[nextPinIndex] : null
         
         setNextPin(pending ?? null)
-        if (fieldTest && totalPins > 0 && !pending) setRouteComplete(true)
+        if (fieldTest && handledOrdersRef.current && totalPins > 0) {
+          setRouteComplete(nextSortOrder(voicePins, handledOrdersRef.current).nextSortOrder === null)
+        }
         
         // Log current state
         if (pending) {
@@ -522,8 +573,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
         if (!decision) return
 
-        // Missed PINs (driver already beyond them): mark as passed, never speak a stale instruction.
-        decision.skipped.forEach((i) => triggeredRef.current.add(voicePins[i].id))
+        // Routes 2/3 follow Tbilisi: never skip a pin, never mark it done without visiting it.
+        if (fieldTest && (decision.reason === 'lookahead' || decision.skipped.length > 0 || decision.index !== nextPinIndex)) {
+          return
+        }
+
+        // Missed PINs on routes 1/4: mark as passed, never speak a stale instruction.
+        if (!fieldTest) {
+          decision.skipped.forEach((i) => triggeredRef.current.add(voicePins[i].id))
+        }
 
         const target = voicePins[decision.index]
         devLog('[PIN SEQUENCE]',
@@ -534,8 +592,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         )
         // Mark first (GPS fires every second) so the same PIN can never be spoken twice.
         triggeredRef.current.add(target.id)
-        if (fieldTest && !voicePins.some((pin) => !triggeredRef.current.has(pin.id))) {
-          setRouteComplete(true)
+        if (fieldTest) {
+          const orders = handledOrdersRef.current ?? new Set<number>()
+          orders.add(target.sort_order)
+          handledOrdersRef.current = orders
+          triggeredRef.current = pinIdsForOrders(pinsRef.current, orders)
+          const upcoming = nextSortOrder(pinsRef.current, orders).nextSortOrder
+          setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
+          setRouteComplete(pinsRef.current.length > 0 && upcoming === null)
         }
         setLastSpoken(target.instruction_ka)
         saveNowRef.current?.()
@@ -545,8 +609,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           const key = route.slug + ':' + target.id
           const attempts = (audioAttemptsRef.current.get(key) ?? 0) + 1
           audioAttemptsRef.current.set(key, attempts)
-          if (attempts < AUDIO_MAX_ATTEMPTS) triggeredRef.current.delete(target.id)
-          else console.warn('[AUDIO] giving up on PIN voice after', attempts, 'attempts:', target.id)
+          if (attempts < AUDIO_MAX_ATTEMPTS) {
+            triggeredRef.current.delete(target.id)
+            if (fieldTest && handledOrdersRef.current) {
+              handledOrdersRef.current.delete(target.sort_order)
+            }
+          } else console.warn('[AUDIO] giving up on PIN voice after', attempts, 'attempts:', target.id)
         })
       },
       (err) => setGpsError(formatGpsError(err)),
@@ -569,6 +637,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     const firstPin = voicePins[0]
     if (firstPin && isStartPinAlreadyAnnounced(route.slug, firstPin.id)) {
       triggeredRef.current.add(firstPin.id)
+    }
+    if (FIELD_TEST_SLUGS.has(route.slug)) {
+      handledOrdersRef.current = new Set(
+        voicePins.filter((pin) => triggeredRef.current.has(pin.id)).map((pin) => pin.sort_order),
+      )
     }
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
@@ -613,7 +686,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       if (FIELD_TEST_SLUGS.has(route.slug)) {
         const resolution = resolveExamResume(savedState, voicePins, route.slug)
         if (resolution.status === 'resume' && resolution.handledOrders) {
-          triggeredRef.current = pinIdsForOrders(voicePins, new Set(resolution.handledOrders))
+          handledOrdersRef.current = new Set(resolution.handledOrders)
+          triggeredRef.current = pinIdsForOrders(voicePins, handledOrdersRef.current)
           setNextPin(voicePins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
           setRouteComplete(voicePins.length > 0 && resolution.nextSortOrder === null)
           resumePendingRef.current = false
@@ -660,6 +734,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     triggeredRef.current = new Set()
     pinApproachRef.current = new Map()
     audioAttemptsRef.current = new Map()
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
     resumedSlugRef.current = null
     resumePendingRef.current = false
     setRouteComplete(false)

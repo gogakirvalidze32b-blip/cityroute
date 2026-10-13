@@ -305,6 +305,32 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(loadActiveExam(remote.id, remote.slug, remote.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
   })
 
+  it.each(cases)('%s: a later pin does not play while an earlier one is still next', async (slug) => {
+    const route = routeBySlug(slug)
+    await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    playDetailed.mockClear()
+    await driveTo(route, 4)
+    await driveTo(route, 5)
+    expect(playDetailed).not.toHaveBeenCalled()
+    expect(nextOrder()).toBe(3)
+    expect(screen.queryByTestId('route-complete')).toBeNull()
+  })
+
+  it.each(cases)('%s: driving back to a passed pin does not change the next pin', async (slug) => {
+    const route = routeBySlug(slug)
+    await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    expect(nextOrder()).toBe(3)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    expect(playedOrders(route)).toEqual([1, 2])
+    expect(nextOrder()).toBe(3)
+    expect(screen.queryByTestId('route-complete')).toBeNull()
+  })
+
   it.each(cases)('%s: a stale unmounted session cannot overwrite newer progress', async (slug) => {
     const route = routeBySlug(slug)
     const first = await startAtPin1(route)
