@@ -62,14 +62,44 @@ function matchesRoute(
   return false
 }
 
+function sameRoute(previous: SavedExamState, incoming: SavedExamState): boolean {
+  if (previous.routeSlug && incoming.routeSlug) return previous.routeSlug === incoming.routeSlug
+  return previous.routeId === incoming.routeId
+}
+
+function orderCount(state: SavedExamState): number {
+  return Array.isArray(state.triggeredSortOrders) ? state.triggeredSortOrders.length : 0
+}
+
+/**
+ * Keep the richer sort-order progress when a later write is empty or older.
+ * A different route still replaces the single active-exam slot.
+ */
+export function mergeExamSave(previous: SavedExamState | null, incoming: SavedExamState): SavedExamState {
+  if (!previous || !sameRoute(previous, incoming)) return incoming
+  const prevCount = orderCount(previous)
+  const nextCount = orderCount(incoming)
+  if (prevCount > 0 && nextCount === 0) {
+    return {
+      ...incoming,
+      triggeredSortOrders: previous.triggeredSortOrders,
+      lastPassedSortOrder: previous.lastPassedSortOrder ?? incoming.lastPassedSortOrder,
+      nextSortOrder: previous.nextSortOrder ?? incoming.nextSortOrder,
+    }
+  }
+  if (prevCount > nextCount) return previous
+  return incoming
+}
+
 /**
  * Save active exam state to localStorage
  */
 export function saveActiveExam(state: SavedExamState): void {
   try {
-    const data = JSON.stringify({ ...state, savedAt: Date.now() })
-    localStorage.setItem(STORAGE_KEY, data)
-    console.log('💾 Exam state saved:', state.routeName, state.routeSlug ?? state.routeId)
+    const previous = readSavedExam()
+    const merged = mergeExamSave(previous, { ...state, savedAt: Date.now() })
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
+    console.log('💾 Exam state saved:', merged.routeName, merged.routeSlug ?? merged.routeId)
   } catch (err) {
     console.error('Failed to save exam state:', err)
   }

@@ -4,8 +4,9 @@ import { userEvent } from '@testing-library/user-event'
 import { ExamDriveSession } from './ExamDriveSession'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { audioEngine } from '@/lib/audio'
-import { loadActiveExam } from '@/lib/exam-persistence'
-import { examRoadTrace, examRouteLine } from '@/lib/pin-route-line'
+import { createExamSession } from '@/lib/exam-session'
+import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
+import { examRoadTrace, examRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
 import type { GpsPosition } from '@/lib/gps'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
@@ -81,6 +82,14 @@ vi.mock('@/components/ExamSummary', () => ({
 }))
 
 const routeBySlug = (slug: string) => TELAVI_ROUTES_FALLBACK.find((route) => route.slug === slug)!
+const uuid = (order: number) => `00000000-0000-4000-8000-${String(order).padStart(12, '0')}`
+function withRemotePins(route: RouteWithPins): RouteWithPins {
+  return {
+    ...route,
+    id: '11111111-1111-4111-8111-111111111111',
+    pins: route.pins.map((pin) => ({ ...pin, id: uuid(pin.sort_order) })),
+  }
+}
 const cases = [
   ['route-2', 29],
   ['route-3', 31],
@@ -141,10 +150,27 @@ describe('routes 2 and 3 field-test resume on production', () => {
     localStorage.clear()
   })
 
-  it('does not add a Tbilisi test route or route 4 pins', () => {
+  it('does not add a Tbilisi test route or change routes 1 and 4', () => {
     expect(TELAVI_ROUTES_FALLBACK.some((route) => route.slug === 'test-route-tbilisi')).toBe(false)
     expect(routeBySlug('route-4').pins).toHaveLength(0)
     expect(routeBySlug('route-1').pins.length).toBeGreaterThan(1)
+    expect(EXAM_STREET_LINE_SLUGS.has('route-1')).toBe(false)
+    expect(EXAM_STREET_LINE_SLUGS.has('route-4')).toBe(false)
+    expect(examRoadTrace('route-1', routeBySlug('route-1').pins)).toBeNull()
+    expect(examRoadTrace('route-4', routeBySlug('route-1').pins)).toBeNull()
+  })
+
+  it('route 1 still saves only pin ids, without sort-order resume fields', async () => {
+    const route = routeBySlug('route-1')
+    gps.once = fix(route, 1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    await driveTo(route, 1)
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    expect(saved?.triggeredPins ?? []).toContain(pinAt(route, 1).id)
+    expect(saved?.triggeredSortOrders).toBeUndefined()
+    expect(screen.queryByTestId('route-complete')).toBeNull()
   })
 
   it.each(cases)('%s uses its street trace', (slug, count) => {
@@ -198,4 +224,107 @@ describe('routes 2 and 3 field-test resume on production', () => {
     await driveTo(route, last)
     expect(playDetailed).not.toHaveBeenCalled()
   }, 20_000)
+
+  it.each(cases)('%s: pagehide writes the current pin progress', async (slug) => {
+    const route = routeBySlug(slug)
+    await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(3)
+  })
+
+  it.each(cases)('%s: an incomplete empty-pin write does not erase saved progress', async (slug) => {
+    const route = routeBySlug(slug)
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam: createExamSession(route.id, route.name_ka),
+      userPos: null,
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 90_000,
+      triggeredPins: [uuid(1), uuid(2)],
+      triggeredSortOrders: [1, 2],
+      lastPassedSortOrder: 2,
+      nextSortOrder: 3,
+      savedAt: Date.now(),
+    })
+    gps.once = fix(route, 1)
+    const view = render(<ExamDriveSession route={{ ...route, pins: [] }} />)
+    await settle()
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(3)
+
+    view.rerender(<ExamDriveSession route={route} />)
+    await settle()
+    expect(nextOrder()).toBe(3)
+    expect(screen.queryByTestId('route-complete')).toBeNull()
+  })
+
+  it.each(cases)('%s: local ids resume, then Supabase UUID pins keep the same next pin', async (slug) => {
+    const local = routeBySlug(slug)
+    const remote = withRemotePins(local)
+    saveActiveExam({
+      routeId: local.id,
+      routeSlug: local.slug,
+      routeName: local.name_ka,
+      phase: 'active',
+      exam: createExamSession(local.id, local.name_ka),
+      userPos: null,
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 45_000,
+      triggeredPins: [pinAt(local, 1).id, pinAt(local, 2).id],
+      triggeredSortOrders: [1, 2],
+      lastPassedSortOrder: 2,
+      nextSortOrder: 3,
+      savedAt: Date.now(),
+    })
+    gps.once = fix(local, 1)
+    const view = render(<ExamDriveSession route={local} />)
+    await settle()
+    expect(nextOrder()).toBe(3)
+
+    view.rerender(<ExamDriveSession route={remote} />)
+    await settle()
+    expect(nextOrder()).toBe(3)
+    playDetailed.mockClear()
+    await driveTo(remote, 1)
+    expect(playDetailed).not.toHaveBeenCalled()
+    await driveTo(remote, 3)
+    expect(playDetailed.mock.calls[0][1]).toBe(uuid(3))
+    expect(loadActiveExam(remote.id, remote.slug, remote.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+  })
+
+  it.each(cases)('%s: a stale unmounted session cannot overwrite newer progress', async (slug) => {
+    const route = routeBySlug(slug)
+    const first = await startAtPin1(route)
+    await driveTo(route, 1)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+
+    gps.once = fix(route, 1)
+    const second = render(<ExamDriveSession route={route} />)
+    await settle()
+    await driveTo(route, 2)
+    await driveTo(route, 2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+
+    first.unmount()
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    expect(saved?.triggeredSortOrders).toEqual([1, 2])
+    expect(saved?.nextSortOrder).toBe(3)
+    second.unmount()
+  })
 })

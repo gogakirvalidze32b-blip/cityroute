@@ -69,6 +69,9 @@ type Phase = 'preview' | 'active' | 'summary'
 /** Street line + sort_order resume for on-site GPS checks. Routes 1 and 4 stay on production behaviour. */
 const FIELD_TEST_SLUGS = new Set(['route-2', 'route-3'])
 
+/** Only the newest mounted session may write on pagehide / unmount. */
+let examSaveOwner = 0
+
 // Per-GPS-fix diagnostics are development-only (production keeps console quiet).
 const devLog: typeof console.log = (...args) => {
   if (import.meta.env.DEV) console.log(...args)
@@ -138,6 +141,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const sessionStartRef = useRef(savedState ? examSessionOriginMs(savedState) : 0)
   const resumedSlugRef = useRef<string | null>(savedState ? route.slug : null)
   const finishInProgressRef = useRef(false)
+  const saveOwnerRef = useRef(0)
+  const saveNowRef = useRef<(() => void) | null>(null)
   const prevGpsRef = useRef<GpsPosition | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
   const gpsFilterRef = useRef(createGpsFilter())
@@ -150,6 +155,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     () => [...route.pins].sort((a, b) => a.sort_order - b.sort_order),
     [route.id, route.pins],
   )
+  const pinsRef = useRef(sortedPins)
+  pinsRef.current = sortedPins
   const voicePins = useMemo(
     () => enrichPinsWithLocalAudio(route.slug, sortedPins),
     [route.slug, sortedPins],
@@ -342,17 +349,20 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (phase !== 'active') return
     if (finishInProgressRef.current) return // Skip saving if finish is in progress
 
+    saveOwnerRef.current = ++examSaveOwner
     const saveState = () => {
       if (finishInProgressRef.current) return // Guard against saving during finish
+      if (saveOwnerRef.current !== examSaveOwner) return // a newer session already owns storage
       const liveElapsed = sessionStartRef.current
         ? Math.max(0, Date.now() - sessionStartRef.current)
         : elapsedMs
+      const pins = pinsRef.current
       const fieldTest =
-        FIELD_TEST_SLUGS.has(route.slug) && sortedPins.length > 0
+        FIELD_TEST_SLUGS.has(route.slug) && pins.length > 0
           ? (() => {
-              const derived = ordersForIds(triggeredRef.current, sortedPins, route.slug)
+              const derived = ordersForIds(triggeredRef.current, pins, route.slug)
               if (derived.unknown.length > 0) return {}
-              const progress = nextSortOrder(sortedPins, derived.orders)
+              const progress = nextSortOrder(pins, derived.orders)
               return {
                 triggeredSortOrders: [...derived.orders].sort((a, b) => a - b),
                 lastPassedSortOrder: progress.lastPassedSortOrder,
@@ -376,6 +386,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       })
     }
 
+    saveNowRef.current = saveState
     saveState()
     const id = window.setInterval(saveState, 5000)
     const persistOnLeave = () => saveState()
@@ -388,6 +399,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       window.clearInterval(id)
       window.removeEventListener('pagehide', persistOnLeave)
       document.removeEventListener('visibilitychange', persistIfHidden)
+      if (saveNowRef.current === saveState) saveNowRef.current = null
       if (!finishInProgressRef.current) saveState() // Only save on cleanup if not finishing
     }
   }, [phase, route.id, route.slug, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs, sortedPins])
@@ -526,6 +538,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           setRouteComplete(true)
         }
         setLastSpoken(target.instruction_ka)
+        saveNowRef.current?.()
         void audioEngine.playDetailed(target.audio_url, target.id, target.instruction_ka).then((status) => {
           if (status !== 'failed' || phaseRef.current !== 'active') return
           // Playback itself failed (MP3 + TTS): allow a few retries instead of losing this PIN's voice.
