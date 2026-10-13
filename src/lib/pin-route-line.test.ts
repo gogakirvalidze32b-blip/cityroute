@@ -166,7 +166,11 @@ describe('pin route line', () => {
     const inPark = line.filter(
       ([lat, lng]) => lat >= 41.928 && lat <= 41.92915 && lng >= 45.4757,
     )
+    const erekleNorthBump = line.filter(
+      ([lat, lng]) => lat >= 41.9179 && lat <= 41.919 && lng >= 45.4765 && lng <= 45.4785,
+    )
     expect(inPark).toEqual([])
+    expect(erekleNorthBump).toEqual([])
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
 

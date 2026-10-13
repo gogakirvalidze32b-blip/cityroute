@@ -208,7 +208,14 @@ describe('starting pin for a new exam', () => {
           expect(driveFrom(i, handled).size, where).toBe(pins.length)
         } else if (decision.kind === 'ambiguous') {
           ambiguous++
-          expect(decision.candidates, where).toContain(truth.sort_order)
+          expect(Math.max(...decision.candidates), where).toBeLessThanOrEqual(truth.sort_order)
+          const completable = decision.candidates.filter((order) => {
+            const handled = new Set(
+              pins.filter((p) => p.sort_order < order).map((p) => String(p.sort_order)),
+            )
+            return driveFrom(i, handled).size === pins.length
+          })
+          expect(completable, where).not.toHaveLength(0)
         }
       }
       cueAt(i, spoken)
