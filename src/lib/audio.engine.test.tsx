@@ -98,12 +98,14 @@ describe('AudioEngine', () => {
     vi.restoreAllMocks()
   })
 
-  it('plays the MP3 and routes it through the running shared context', async () => {
+  it('plays the MP3 at 1.0x with pitch preserved and without the EQ graph', async () => {
     const f = installFakes()
     const engine = await freshEngine()
     expect(await engine.playDetailed('/audio/a.mp3', 'p1', 'text')).toBe('played')
     expect(f.created[0].play).toHaveBeenCalledTimes(1)
-    expect(f.sources).toHaveLength(1)
+    expect(f.created[0].playbackRate).toBe(1)
+    expect(f.created[0].preservesPitch).toBe(true)
+    expect(f.sources).toHaveLength(0)
   })
 
   it('does NOT hang when AudioContext.resume() never resolves, and does not wire to a suspended context', async () => {
@@ -118,7 +120,7 @@ describe('AudioEngine', () => {
     expect(f.sources).toHaveLength(0) // plain playback = audible, not silent
   })
 
-  it('uses ONE AudioContext for many voice files', async () => {
+  it('does not open an AudioContext while pitch processing is off', async () => {
     const f = installFakes()
     const ctorSpy = vi.fn()
     const Base = (globalThis as unknown as { AudioContext: new () => object }).AudioContext
@@ -127,8 +129,9 @@ describe('AudioEngine', () => {
     await engine.playDetailed('/audio/a.mp3', 'p1', 't')
     await engine.playDetailed('/audio/b.mp3', 'p2', 't')
     await engine.playDetailed('/audio/c.mp3', 'p3', 't')
-    expect(ctorSpy).toHaveBeenCalledTimes(1)
-    expect(f.sources).toHaveLength(3)
+    expect(ctorSpy).toHaveBeenCalledTimes(0)
+    expect(f.sources).toHaveLength(0)
+    expect(f.created.every((audio) => audio.playbackRate === 1 && audio.preservesPitch)).toBe(true)
   })
 
   it('autoplay blocked → TTS fallback speaks the instruction text and the reason is recorded', async () => {
@@ -179,11 +182,11 @@ describe('AudioEngine', () => {
     expect(engine.isBusy()).toBe(false)
   })
 
-  it('unlock() starts the AudioContext synchronously inside the gesture and warms TTS', async () => {
+  it('unlock() warms TTS and does not start the EQ AudioContext', async () => {
     const f = installFakes({}, 'suspended-hang')
     const engine = await freshEngine()
     engine.unlock()
-    expect(f.resume).toHaveBeenCalled()
+    expect(f.resume).not.toHaveBeenCalled()
     expect(f.speak).toHaveBeenCalledTimes(1)
   })
 

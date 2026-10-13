@@ -1,6 +1,8 @@
 import type { LatLng } from '@/lib/gps'
+import route1Road from '@/data/route-1-road.json'
 import route2Road from '@/data/route-2-road.json'
 import route3Road from '@/data/route-3-road.json'
+import route4Road from '@/data/route-4-road.json'
 
 export type PinRoutePoint = {
   lat: number
@@ -8,8 +10,8 @@ export type PinRoutePoint = {
   sort_order: number
 }
 
-/** Live-map street line is drawn only for these exam routes. */
-export const EXAM_STREET_LINE_SLUGS = new Set(['route-2', 'route-3'])
+/** Live-map street line for the four Telavi exam routes. */
+export const EXAM_STREET_LINE_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
 
 /**
  * Full exam line: every existing pin, first to last, in sort_order.
@@ -30,8 +32,10 @@ export function pinRouteLine(pins: readonly PinRoutePoint[]): LatLng[] {
  * Side-street spurs that leave the road and come back are already removed.
  */
 const ROAD_BY_SLUG: Record<string, LatLng[]> = {
+  'route-1': route1Road as LatLng[],
   'route-2': route2Road as LatLng[],
   'route-3': route3Road as LatLng[],
+  'route-4': route4Road as LatLng[],
 }
 
 /** A loaded pin must sit on this road. Otherwise the straight pin line is used. */

@@ -219,7 +219,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(played()).toEqual(['pin-1'])
   })
 
-  it('route 1 still recovers a missed PIN by lookahead', async () => {
+  it('route 1 also refuses lookahead so an earlier pin is not skipped', async () => {
     cleanup()
     const r1 = { ...route, id: 'r1', slug: 'route-1', name_ka: 'მარშრუტი 1' }
     saveActiveExam({
@@ -241,9 +241,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     })
     await emit(150)
     await emit(392)
-    expect(played()).toEqual(['pin-2'])
-    await emit(592)
-    expect(played()).toEqual(['pin-2', 'pin-3'])
+    expect(played()).toEqual([])
   })
 
   it('defers while another voice is playing, then catches up (nothing lost)', async () => {

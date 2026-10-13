@@ -2,7 +2,7 @@
  * ხმის სიჩქარე — შეცვალე ეს რიცხვი.
  * 1 = ნორმალური · 0.9 = ოდნავ ნელი · 0.8 = უფრო ნელი · 0.75 = ნელი · 0.7 = ძალიან ნელი · 1.1 = ჩქარი · 1.2 = უფრო ჩქარი
  */
-export const VOICE_PLAYBACK_RATE = 0.90
+export const VOICE_PLAYBACK_RATE = 1
 
 /**
  * ტემბრი:
@@ -11,7 +11,7 @@ export const VOICE_PLAYBACK_RATE = 0.90
  * - low    — ღრმა ტემბრი (pitch follows — ბოხი შეიძლება)
  */
 export type VoicePitch = 'normal' | 'mid' | 'low'
-export const VOICE_PITCH: VoicePitch = 'mid'
+export const VOICE_PITCH: VoicePitch = 'normal'
 
 /** @deprecated გამოიყენე VOICE_PITCH */
 export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
@@ -270,7 +270,7 @@ export class AudioEngine {
     if (!text || !('speechSynthesis' in window)) return false
     const utter = new SpeechSynthesisUtterance(text)
     utter.lang = 'ka-GE'
-    utter.rate = 0.95
+    utter.rate = 1
     utter.pitch = 1
     const voice = pickGeorgianVoice()
     if (voice) utter.voice = voice

@@ -93,6 +93,7 @@ function withRemotePins(route: RouteWithPins): RouteWithPins {
 const cases = [
   ['route-2', 29],
   ['route-3', 31],
+  ['route-4', 32],
 ] as const
 
 const playDetailed = vi.mocked(audioEngine.playDetailed)
@@ -150,27 +151,29 @@ describe('routes 2 and 3 field-test resume on production', () => {
     localStorage.clear()
   })
 
-  it('does not add a Tbilisi test route or change routes 1 and 4', () => {
+  it('does not add a Tbilisi test route', () => {
     expect(TELAVI_ROUTES_FALLBACK.some((route) => route.slug === 'test-route-tbilisi')).toBe(false)
-    expect(routeBySlug('route-4').pins).toHaveLength(0)
-    expect(routeBySlug('route-1').pins.length).toBeGreaterThan(1)
-    expect(EXAM_STREET_LINE_SLUGS.has('route-1')).toBe(false)
-    expect(EXAM_STREET_LINE_SLUGS.has('route-4')).toBe(false)
-    expect(examRoadTrace('route-1', routeBySlug('route-1').pins)).toBeNull()
-    expect(examRoadTrace('route-4', routeBySlug('route-1').pins)).toBeNull()
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4']) {
+      expect(EXAM_STREET_LINE_SLUGS.has(slug)).toBe(true)
+    }
   })
 
-  it('route 1 still saves only pin ids, without sort-order resume fields', async () => {
+  it('route 1 resumes by sort order; the start announcement already counts pin 1', async () => {
     const route = routeBySlug('route-1')
+    const first = await startAtPin1(route)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(nextOrder()).toBe(2)
+    await driveTo(route, 2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(screen.queryByTestId('route-complete')).toBeNull()
+    first.unmount()
+    playDetailed.mockClear()
     gps.once = fix(route, 1)
     render(<ExamDriveSession route={route} />)
     await settle()
-    await pressStart()
+    expect(nextOrder()).toBe(3)
     await driveTo(route, 1)
-    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
-    expect(saved?.triggeredPins ?? []).toContain(pinAt(route, 1).id)
-    expect(saved?.triggeredSortOrders).toBeUndefined()
-    expect(screen.queryByTestId('route-complete')).toBeNull()
+    expect(playDetailed).not.toHaveBeenCalled()
   })
 
   it.each(cases)('%s uses its street trace', (slug, count) => {

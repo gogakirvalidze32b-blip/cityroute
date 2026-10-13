@@ -73,8 +73,8 @@ import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
 type Phase = 'preview' | 'active' | 'summary'
 
-/** Street line + sort_order resume for on-site GPS checks. Routes 1 and 4 stay on production behaviour. */
-const FIELD_TEST_SLUGS = new Set(['route-2', 'route-3'])
+/** Sort-order resume for the four Telavi exam routes. Tbilisi test data is not included. */
+const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
 
 function initialHandledOrders(
   saved: SavedExamState,
