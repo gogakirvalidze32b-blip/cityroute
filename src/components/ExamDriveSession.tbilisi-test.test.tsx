@@ -70,8 +70,8 @@ vi.mock('@/components/ExamSummary', () => ({
 
 const EXPECTED = [
   { lat: 41.6786037, lng: 44.9795425, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
-  { lat: 41.6789698, lng: 44.9786878, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
   { lat: 41.6792766, lng: 44.9781393, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
+  { lat: 41.6798062, lng: 44.9783244, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
 ]
 
 const play = vi.mocked(audioEngine.play)
@@ -242,5 +242,92 @@ describe('standalone test city „ტესტი — თბილისი“',
     await driveTo(3)
     expect(playedOrders()).toEqual([3])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+  })
+
+  it('after pin 2 the next target is pin 3; pin 1 never comes back, whatever GPS reports', async () => {
+    gps.once = fix(1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    expect(nextOrder()).toBe(1)
+    await driveTo(1)
+    expect(nextOrder()).toBe(2)
+    await driveTo(2)
+    expect(nextOrder()).toBe(3)
+    expect(screen.queryByTestId('route-complete')).toBeNull()
+
+    for (const order of [1, 2, 1]) {
+      await driveTo(order)
+      expect(nextOrder()).toBe(3)
+    }
+    expect(playedOrders()).toEqual([1, 2])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+  })
+
+  it('pin 3 completes the route: no reset, no jump to pin 1, no automatic restart', async () => {
+    gps.once = fix(1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    for (const order of [1, 2, 3]) await driveTo(order)
+    expect(playedOrders()).toEqual([1, 2, 3])
+
+    const complete = () => {
+      expect(screen.getByTestId('route-complete')).toBeTruthy()
+      expect(screen.getByTestId('next-pin').getAttribute('data-order')).toBe('')
+      expect(screen.getByRole('button', { name: 'დასრულება' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: /გამოცდის დაწყება/ })).toBeNull()
+    }
+    complete()
+
+    play.mockClear()
+    for (const order of [1, 2, 3, 1]) {
+      await driveTo(order)
+      complete()
+    }
+    await settle(6_000)
+    complete()
+    expect(play).not.toHaveBeenCalled()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+  }, 15_000)
+
+  it('a reload after pin 3 resumes as completed, not from pin 1', async () => {
+    gps.once = fix(1)
+    const first = render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    for (const order of [1, 2, 3]) await driveTo(order)
+    first.unmount()
+
+    play.mockClear()
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    expect(screen.getByTestId('route-complete')).toBeTruthy()
+    expect(screen.getByTestId('next-pin').getAttribute('data-order')).toBe('')
+    await driveTo(1)
+    expect(play).not.toHaveBeenCalled()
+    expect(screen.getByTestId('route-complete')).toBeTruthy()
+  })
+
+  it('only the „თავიდან დაწყება“ button starts over, and then from pin 1', async () => {
+    gps.once = fix(1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    for (const order of [1, 2, 3]) await driveTo(order)
+
+    await click('თავიდან დაწყება')
+    expect(screen.queryByTestId('route-complete')).toBeNull()
+    expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
+    expect(screen.getByRole('button', { name: /გამოცდის დაწყება/ })).toBeTruthy()
+
+    play.mockClear()
+    await sendFix(fix(1))
+    await pressStart()
+    expect(nextOrder()).toBe(1)
+    for (const order of [1, 2, 3]) await driveTo(order)
+    expect(playedOrders()).toEqual([1, 2, 3])
+    expect(screen.getByTestId('route-complete')).toBeTruthy()
   })
 })

@@ -177,6 +177,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [startSelection, setStartSelection] = useState<StartSelection | null>(null)
   const [startNotice, setStartNotice] = useState<string | null>(null)
+  // Every pin is handled. The exam stays where it is until the driver restarts or finishes it.
+  const [routeComplete, setRouteComplete] = useState(false)
   
   // DEBUG: Session diagnostic panel state
   // Production: panel and its 500 ms re-render timer are off. Development: unchanged.
@@ -366,6 +368,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setResumeError(null)
         setSelection(null)
         setStartNotice(null)
+        setRouteComplete(false)
         console.log('🔄 Saved exam is waiting for the start button', route.slug)
       }
       return
@@ -387,6 +390,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setResumeError(null)
     setSelection(null)
     setStartNotice(null)
+    setRouteComplete(false)
     setLastSpoken(null)
     triggeredRef.current = new Set()
     handledOrdersRef.current = new Set()
@@ -740,6 +744,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           orders.add(requestedOrder)
           handledOrdersRef.current = orders
           triggeredRef.current = pinIdsForOrders(pinsRef.current, orders)
+          const upcoming = nextSortOrder(pinsRef.current, orders).nextSortOrder
+          setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
+          if (upcoming === null) setRouteComplete(true)
           setLastSpoken(pending.instruction_ka)
           saveNowRef.current?.()
         }).catch((err) => {
@@ -826,6 +833,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     handledOrdersRef.current = new Set()
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
+    setRouteComplete(false)
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
     setLastSpoken(EXAM_START_TEXT)
@@ -865,10 +873,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       setResumeError(null)
       if (described.state.startPending && resolution.handledOrders?.length === 0) {
         // Left before the starting pin was chosen: there is no progress to restore, choose it now.
+        setRouteComplete(false)
         beginStartSelection()
       } else {
         setSelection(null)
         setNextPin(voicePins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
+        setRouteComplete(
+          voicePins.length > 0 && resolution.handledOrders !== null && resolution.nextSortOrder === null,
+        )
       }
       resumedSlugRef.current = route.slug
       if (phase !== 'active') setPhase('active')
@@ -892,6 +904,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     approachRef.current = null
     setSelection(null)
     setStartNotice(null)
+    setRouteComplete(false)
     clearActiveExam() // Clear saved state IMMEDIATELY before any state updates
     setSavedEpoch((v) => v + 1) // drop the stale savedState memo in the same batch as phase='summary'
     const summary = finishExamSession(exam)
@@ -922,12 +935,22 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     resumedSlugRef.current = null
     setSelection(null)
     setStartNotice(null)
+    setRouteComplete(false)
     setNextPin(sortedPins[0] ?? null)
     setLastSpoken(null)
     setElapsedMs(0)
     sessionStartRef.current = 0
     clearActiveExam() // Clear saved state when restarting
     setSavedEpoch((v) => v + 1)
+  }
+
+  /** „თავიდან დაწყება“ on a completed route: drop this exam and go back to the start screen. */
+  function restartRoute() {
+    restartPreview()
+    // Leaving the active phase runs the autosave cleanup; it must not write the dropped exam back.
+    finishInProgressRef.current = true
+    releaseWake.current?.()
+    audioEngine.stopAll()
   }
 
   const nextPinDistanceLabel =
@@ -1026,10 +1049,20 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
               )}
             </div>
           )}
-          {!startSelection && startNotice && (
+          {!startSelection && startNotice && !routeComplete && (
             <p className="exam-start-pin exam-start-pin__text" role="status" data-testid="start-pin-notice">
               {startNotice}
             </p>
+          )}
+          {routeComplete && (
+            <div className="exam-start-pin" role="status" data-testid="route-complete">
+              <p className="exam-start-pin__text">მარშრუტი დასრულებულია — ყველა PIN გავლილია.</p>
+              <div className="exam-start-pin__choices">
+                <button type="button" className="exam-start-pin__choice" onClick={restartRoute}>
+                  თავიდან დაწყება
+                </button>
+              </div>
+            </div>
           )}
 
           <div className="exam-drive-main">

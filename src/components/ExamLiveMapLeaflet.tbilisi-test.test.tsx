@@ -26,8 +26,8 @@ vi.mock('@/components/RoutePolyline', () => ({
 
 const EXPECTED: [number, number][] = [
   [41.6786037, 44.9795425],
-  [41.6789698, 44.9786878],
   [41.6792766, 44.9781393],
+  [41.6798062, 44.9783244],
 ]
 
 describe('Tbilisi test route on the live exam map', () => {

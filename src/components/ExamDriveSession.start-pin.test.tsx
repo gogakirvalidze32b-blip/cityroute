@@ -306,7 +306,9 @@ describe('starting pin of a new exam', () => {
     expect(screen.getByTestId('start-pin-selection')).toBeTruthy()
     await sendFix(fix(start.lat, start.lng, { accuracy: 6 }))
     expect(screen.queryByTestId('start-pin-selection')).toBeNull()
-    expect(nextOrder()).toBe(start.sort_order)
+    expect(pinPlays()).toHaveLength(1)
+    expectPlayedPin(route1, start.sort_order, pinPlays()[0])
+    expect(nextOrder()).toBe(start.sort_order + 1)
   })
 
   it('a car away from the route keeps PIN 1 and says why', async () => {
@@ -520,6 +522,8 @@ describe('starting pin of a new exam', () => {
     await pressStart()
     expect(screen.getByTestId('start-pin-selection')).toBeTruthy()
     await sendFix(fix(start.lat, start.lng))
-    expect(nextOrder()).toBe(start.sort_order)
+    expect(pinPlays()).toHaveLength(1)
+    expectPlayedPin(route1, start.sort_order, pinPlays()[0])
+    expect(nextOrder()).toBe(start.sort_order + 1)
   })
 })

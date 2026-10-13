@@ -8,8 +8,8 @@ const ROUTE_ID = 'local-test-tbilisi'
 
 const TEST_PINS: readonly { lat: number; lng: number; instruction: string }[] = [
   { lat: 41.6786037, lng: 44.9795425, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
-  { lat: 41.6789698, lng: 44.9786878, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
   { lat: 41.6792766, lng: 44.9781393, instruction: 'გთხოვთ, იმოძრაოთ პირდაპირ' },
+  { lat: 41.6798062, lng: 44.9783244, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
 ]
 
 const pins: PinRow[] = TEST_PINS.map((pin, index) => ({
