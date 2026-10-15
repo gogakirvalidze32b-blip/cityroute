@@ -60,7 +60,7 @@ function readLocalPlan(userId: string): SubscriptionPlan | null {
 
     const raw = localStorage.getItem(localPlanKey(userId))
 
-    if (raw === 'nav' || raw === 'panel' || raw === 'full') return raw as SubscriptionPlan
+    if (raw === 'nav' || raw === 'panel' || raw === 'full') return raw
 
   } catch {
 

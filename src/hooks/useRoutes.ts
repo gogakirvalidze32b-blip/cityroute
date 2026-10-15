@@ -1,7 +1,43 @@
 ﻿import { useEffect, useState } from 'react'
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+import { applyLocalTbilisiTestPin } from '@/data/local-tbilisi-test-pin'
 import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
+import auditedPins from '@/data/audio-audit-pins.fixture.json'
+
+const AUDITED_INSTRUCTION = new Map<string, string>(
+  (auditedPins as Array<{ route: number; pin: number; instruction: string }>).map((pin) => [
+    `${pin.route}:${pin.pin}`,
+    pin.instruction,
+  ]),
+)
+
+/**
+ * Pin 2 on routes 1, 3 and 4 is stored at 41.931052, 45.476154.
+ * Do not rewrite that point back to 41.930785, 45.475972.
+ */
+export function applyRelocatedPin<T extends { slug: string; pins: PinRow[] }>(routes: T[]): T[] {
+  return routes
+}
+
+/**
+ * The exam speaks the audited phrase for each route PIN.
+ * Only instruction text changes. Coordinates, order, and trigger distance stay as stored.
+ */
+export function applyAuditedPinInstructions<T extends { slug: string; pins: PinRow[] }>(routes: T[]): T[] {
+  return routes.map((route) => {
+    const routeNumber = /^route-(\d+)$/.exec(route.slug)?.[1]
+    if (!routeNumber) return route
+    return {
+      ...route,
+      pins: route.pins.map((pin) => {
+        const instruction = AUDITED_INSTRUCTION.get(`${routeNumber}:${pin.sort_order}`)
+        if (!instruction || instruction === pin.instruction_ka) return pin
+        return { ...pin, instruction_ka: instruction }
+      }),
+    }
+  })
+}
 
 /**
  * Merge Supabase metadata (id, pins) but NEVER remote polyline coordinates.
@@ -39,7 +75,9 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
 }
 
 export function useRoutes() {
-  const [routes, setRoutes] = useState<RouteWithPins[]>(TELAVI_ROUTES_FALLBACK)
+  const [routes, setRoutes] = useState<RouteWithPins[]>(() =>
+    applyRelocatedPin(applyAuditedPinInstructions(applyLocalTbilisiTestPin(TELAVI_ROUTES_FALLBACK))),
+  )
   const [source, setSource] = useState<'local' | 'merged'>('local')
 
   useEffect(() => {
@@ -82,7 +120,7 @@ export function useRoutes() {
         })
         
         if (!cancelled) {
-          setRoutes(merged)
+          setRoutes(applyRelocatedPin(applyAuditedPinInstructions(applyLocalTbilisiTestPin(merged))))
           setSource(routeRows?.length ? 'merged' : 'local')
         }
       } catch (e) {

@@ -3,15 +3,13 @@ import route1Road from '@/data/route-1-road.json'
 import route2Road from '@/data/route-2-road.json'
 import route3Road from '@/data/route-3-road.json'
 import route4Road from '@/data/route-4-road.json'
+import tbilisiTestRoad from '@/data/test-route-tbilisi-road.json'
 
 export type PinRoutePoint = {
   lat: number
   lng: number
   sort_order: number
 }
-
-/** Live-map street line for the four Telavi exam routes. */
-export const EXAM_STREET_LINE_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
 
 /**
  * Full exam line: every existing pin, first to last, in sort_order.
@@ -36,6 +34,7 @@ const ROAD_BY_SLUG: Record<string, LatLng[]> = {
   'route-2': route2Road as LatLng[],
   'route-3': route3Road as LatLng[],
   'route-4': route4Road as LatLng[],
+  'test-route-tbilisi': tbilisiTestRoad as LatLng[],
 }
 
 /** A loaded pin must sit on this road. Otherwise the straight pin line is used. */
@@ -76,7 +75,7 @@ export function examRoadTrace(slug: string, pins: readonly PinRoutePoint[]): Lat
 
 /**
  * Visual route line only. Pin order, coordinates, and triggers stay unchanged.
- * Only routes 2 and 3 have a bundled street trace on this production patch.
+ * Routes 1–4 use the street trace when every loaded pin lies on it.
  */
 export function examRouteLine(slug: string, pins: readonly PinRoutePoint[]): LatLng[] {
   return examRoadTrace(slug, pins) ?? pinRouteLine(pins)

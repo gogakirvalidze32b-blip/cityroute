@@ -23,6 +23,7 @@ import {
   loadActiveExam,
   saveActiveExam,
   clearActiveExam,
+  describeSavedExam,
   examSessionOriginMs,
   examElapsedMsNow,
   hasSavedExamForSlug,
@@ -33,10 +34,10 @@ import {
   formatGpsError,
   getGpsEnvironmentIssue,
   hasGpsConsent,
-  headingMatches,
   markGpsConsentGranted,
   clearGpsConsent,
   requestGpsOnce,
+  GPS_HARD_TIMEOUT_MS,
   requestWakeLock,
   shouldAutoStartGps,
   watchGps,
@@ -50,45 +51,38 @@ import {
   EXAM_START_TEXT,
   EXAM_SUCCESS_AUDIO,
   EXAM_SUCCESS_TEXT,
-  isStartPinAlreadyAnnounced,
 } from '@/data/route-audio'
-import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } from '@/lib/route-nav'
-import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
+import { evaluateNextPin, type PinApproach } from '@/lib/pin-cue'
 import {
-  AUDIO_HEADING_TOLERANCE_DEG,
-  AUDIO_MAX_ATTEMPTS,
-  AUDIO_TRIGGER_DISTANCE_M,
-  audioHeadingOk,
-  decidePinAudio,
-} from '@/lib/pin-audio'
-import { examRoadTrace } from '@/lib/pin-route-line'
+  describePinCue,
+  PIN_CUE_REASON_TEXT,
+  readPinDebugFlag,
+  type PinCueDiagnostic,
+} from '@/lib/pin-diagnostics'
 import {
+  examProgress,
   nextSortOrder,
   ordersForIds,
   pinIdsForOrders,
   resolveExamResume,
+  RESUME_PENDING_MESSAGE,
+  RESUME_UNRESOLVED_MESSAGE,
   savedHandledOrders,
 } from '@/lib/route-resume'
-import { chooseStartPin } from '@/lib/start-pin'
+import {
+  getCurrentSpeedLimit,
+  currentSegmentIndex,
+  isSpeedLimitViolation,
+  recordSpeedLimitViolation,
+} from '@/lib/speed-limit'
+import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } from '@/lib/route-nav'
+import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
+import { examRoadTrace } from '@/lib/pin-route-line'
+import { chooseStartPin, START_MAX_ACCURACY_M, type StartPinDecision } from '@/lib/start-pin'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
 type Phase = 'preview' | 'active' | 'summary'
-
-/** Sort-order resume for the four Telavi exam routes. Tbilisi test data is not included. */
-const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
-
-function initialHandledOrders(
-  saved: SavedExamState,
-  pins: readonly PinRow[],
-  routeSlug: string,
-): Set<number> | null {
-  const orders = savedHandledOrders(saved, pins, routeSlug)
-  return orders === 'invalid' ? null : orders
-}
-
-/** Only the newest mounted session may write on pagehide / unmount. */
-let examSaveOwner = 0
 
 // Per-GPS-fix diagnostics are development-only (production keeps console quiet).
 const devLog: typeof console.log = (...args) => {
@@ -98,6 +92,61 @@ const devLog: typeof console.log = (...args) => {
 type Props = {
   route: RouteWithPins
   onPhaseChange?: (phase: Phase) => void
+}
+
+type PinDiagState = PinCueDiagnostic & {
+  fixAt: number
+  rejected: boolean
+  accuracyM: number
+  headingDeg: number | null
+  speedKmh: number | null
+  nextOrder: number | null
+  distanceM: number | null
+  triggerM: number | null
+  handled: number
+  total: number
+  inFlightOrder: number | null
+  phaseActive: boolean
+}
+
+/** Starting pin of a NEW exam not decided yet. No pin can play meanwhile. */
+type StartSelection =
+  | { status: 'wait'; reason: 'gps' | 'stationary'; candidates: number[] }
+  | { status: 'choose'; candidates: number[] }
+
+/** A GPS fix older than this does not describe where the car is now. */
+const START_FIX_MAX_AGE_MS = 15_000
+/** How long a new exam waits for an accurate fix before starting at PIN 1. */
+const START_GPS_WAIT_MS = 10_000
+const START_NOTICE_MS = 12_000
+/** If getCurrentPosition never settles, do not leave the start button disabled. */
+const GPS_START_WATCHDOG_MS = 25_000
+
+const START_NO_GPS_MESSAGE = 'ზუსტი GPS მდებარეობა ვერ დადგინდა — გამოცდა იწყება PIN 1-დან'
+
+function startFallbackMessage(reason: 'accuracy' | 'off-route' | 'no-pins', accuracyM: number): string | null {
+  if (reason === 'accuracy') {
+    return `GPS სიზუსტე ${Math.round(accuracyM)} მ (საჭიროა ≤ ${START_MAX_ACCURACY_M} მ) — გამოცდა იწყება PIN 1-დან`
+  }
+  if (reason === 'off-route') return 'მანქანა მარშრუტის ქუჩაზე არ არის — გამოცდა იწყება PIN 1-დან'
+  return null
+}
+
+function describeStartDecision(decision: StartPinDecision): string {
+  if (decision.kind === 'start') return `საწყისი PIN ${decision.sortOrder} (${decision.basis})`
+  if (decision.kind === 'ambiguous') {
+    return `საწყისი PIN გაურკვეველია: ${decision.candidates.join(', ')}${decision.moving ? ' · მოძრაობისას' : ' · დგას'}`
+  }
+  return `საწყისი PIN 1 · ${decision.reason}`
+}
+
+function initialHandledOrders(
+  saved: SavedExamState,
+  pins: readonly PinRow[],
+  routeSlug: string,
+): Set<number> | null {
+  const orders = savedHandledOrders(saved, pins, routeSlug)
+  return orders === 'invalid' ? null : orders
 }
 
 export function ExamDriveSession({ route, onPhaseChange }: Props) {
@@ -111,31 +160,40 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [route.id, route.slug, route.name_ka, savedEpoch],
   )
-  const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
-  // Same-render sync: slug match after local→UUID must not paint preview+saved (empty map).
-  if (savedState && phase === 'preview') {
-    setPhase('active')
-  }
+  const [phase, setPhase] = useState<Phase>('preview')
   const [driveView, setDriveView] = useState<ExamDriveView>('map')
   const [exam, setExam] = useState(() => savedState?.exam || createExamSession(route.id, route.name_ka))
   const [examSummary, setExamSummary] = useState<ExamSessionSummary | null>(null)
   const [lastHistory] = useState(() => loadExamHistory(route.id))
 
-  const [gpsStarted, setGpsStarted] = useState(savedState ? true : false)
+  const [gpsStarted, setGpsStarted] = useState(false)
   const [gpsStarting, setGpsStarting] = useState(false)
   const [gpsError, setGpsError] = useState<string | null>(() => getGpsEnvironmentIssue())
   const [rawPos, setRawPos] = useState<GpsPosition | null>(null)
-  const [userPos, setUserPos] = useState<LatLng | null>(savedState?.userPos || null)
+  // The car position always comes from a live GPS fix, never from the saved session.
+  const [userPos, setUserPos] = useState<LatLng | null>(null)
   const [heading, setHeading] = useState(savedState?.heading || 0)
   const [speedKmh, setSpeedKmh] = useState(savedState?.speedKmh || 0)
   const [elapsedMs, setElapsedMs] = useState(() => (savedState ? examElapsedMsNow(savedState) : 0))
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
+  const [resumeError, setResumeError] = useState<string | null>(null)
+  const [startSelection, setStartSelection] = useState<StartSelection | null>(null)
+  const [startNotice, setStartNotice] = useState<string | null>(null)
+  // Every pin is handled. The exam stays where it is until the driver restarts or finishes it.
   const [routeComplete, setRouteComplete] = useState(false)
-  const resumePendingRef = useRef(false)
   
   // DEBUG: Session diagnostic panel state
   // Production: panel and its 500 ms re-render timer are off. Development: unchanged.
+  const [pinDebug] = useState(
+    () => typeof window !== 'undefined' && readPinDebugFlag(window.location.search, window.localStorage),
+  )
+  const [pinDiag, setPinDiag] = useState<PinDiagState | null>(null)
+  const [pinEvents, setPinEvents] = useState<string[]>([])
+  const pushPinEvent = useCallback((text: string) => {
+    const at = new Date().toLocaleTimeString('ka-GE', { hour12: false })
+    setPinEvents((prev) => (prev[0]?.endsWith(text) ? prev : [`${at} ${text}`, ...prev].slice(0, 8)))
+  }, [])
   const [debugSessionVisible, setDebugSessionVisible] = useState(import.meta.env.DEV)
   const [, forceDebugUpdate] = useState(0)
   useEffect(() => {
@@ -152,24 +210,23 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [phase])
 
   const triggeredRef = useRef<Set<string>>(savedState ? new Set(savedState.triggeredPins) : new Set())
-  /** Routes 2/3: handled pins by sort_order (Tbilisi resume). Null until a save can be placed. */
+  /** Handled pins by sort_order. Null while a legacy id-only save cannot be placed on this pin list. */
   const handledOrdersRef = useRef<Set<number> | null>(
-    FIELD_TEST_SLUGS.has(route.slug)
-      ? savedState
-        ? initialHandledOrders(savedState, route.pins, route.slug)
-        : new Set()
-      : null,
+    savedState ? initialHandledOrders(savedState, route.pins, route.slug) : new Set(),
   )
-  // Audio catch-up bookkeeping (closest approach per PIN, failed-playback attempts). Not persisted.
-  const pinApproachRef = useRef<Map<string, number>>(new Map())
-  const audioAttemptsRef = useRef<Map<string, number>>(new Map())
+  const inFlightPinRef = useRef<string | null>(null)
+  const inFlightOrderRef = useRef<number | null>(null)
+  const saveNowRef = useRef<(() => void) | null>(null)
+  const approachRef = useRef<PinApproach | null>(null)
+  const cueEpochRef = useRef(0)
   const releaseWake = useRef<(() => void) | null>(null)
   const sessionStartRef = useRef(savedState ? examSessionOriginMs(savedState) : 0)
   const resumedSlugRef = useRef<string | null>(savedState ? route.slug : null)
   const finishInProgressRef = useRef(false)
-  const saveOwnerRef = useRef(0)
-  const saveNowRef = useRef<(() => void) | null>(null)
   const prevGpsRef = useRef<GpsPosition | null>(null)
+  /** Last accepted fix, for choosing the starting pin. */
+  const lastFixRef = useRef<{ pos: GpsPosition; position: LatLng; at: number } | null>(null)
+  const startSelectionRef = useRef<StartSelection | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
   const gpsFilterRef = useRef(createGpsFilter())
 
@@ -181,12 +238,90 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     () => [...route.pins].sort((a, b) => a.sort_order - b.sort_order),
     [route.id, route.pins],
   )
-  const pinsRef = useRef(sortedPins)
-  pinsRef.current = sortedPins
   const voicePins = useMemo(
     () => enrichPinsWithLocalAudio(route.slug, sortedPins),
     [route.slug, sortedPins],
   )
+  const savedComplete = useMemo(() => {
+    if (!savedState || voicePins.length === 0) return false
+    const resolution = resolveExamResume(savedState, voicePins, route.slug)
+    return resolution.status === 'resume' && resolution.handledOrders !== null && resolution.nextSortOrder === null
+  }, [savedState, voicePins, route.slug])
+  const pinsRef = useRef(voicePins)
+  const slugRef = useRef(route.slug)
+  pinsRef.current = voicePins
+  slugRef.current = route.slug
+
+  const setSelection = useCallback((next: StartSelection | null) => {
+    startSelectionRef.current = next
+    setStartSelection(next)
+  }, [])
+
+  /** New exam: pins before `order` are done for this exam; the sequence continues from `order`. */
+  const applyStartPin = useCallback(
+    (order: number | null, notice: string | null) => {
+      const pins = pinsRef.current
+      const orders = new Set(order === null ? [] : pins.filter((pin) => pin.sort_order < order).map((pin) => pin.sort_order))
+      handledOrdersRef.current = orders
+      triggeredRef.current = pinIdsForOrders(pins, orders)
+      approachRef.current = null
+      setSelection(null)
+      setStartNotice(notice)
+      setNextPin(pins.find((pin) => !orders.has(pin.sort_order)) ?? null)
+      saveNowRef.current?.()
+    },
+    [setSelection],
+  )
+
+  /** One GPS fix towards the starting pin. `final`: no better fix is coming, decide now. */
+  const resolveStart = useCallback(
+    (pos: GpsPosition, position: LatLng, final: boolean) => {
+      const current = startSelectionRef.current
+      if (!current) return
+      const pins = pinsRef.current
+      if (pins.length === 0) {
+        if (final) applyStartPin(null, START_NO_GPS_MESSAGE)
+        return
+      }
+      const decision = chooseStartPin(
+        pins,
+        {
+          position,
+          accuracyM: pos.accuracy,
+          headingDeg: pos.heading,
+          speedMps: typeof pos.speed === 'number' ? pos.speed : null,
+        },
+        examRoadTrace(slugRef.current, pins),
+      )
+      if (pinDebug) pushPinEvent(describeStartDecision(decision))
+      const first = pins[0].sort_order
+      if (decision.kind === 'start') {
+        applyStartPin(
+          decision.sortOrder,
+          decision.sortOrder === first ? null : `გამოცდა იწყება PIN ${decision.sortOrder}-დან (მიმდინარე GPS მდებარეობით)`,
+        )
+        return
+      }
+      if (decision.kind === 'ambiguous') {
+        if (decision.moving) setSelection({ status: 'choose', candidates: decision.candidates })
+        else if (current.status !== 'choose') setSelection({ status: 'wait', reason: 'stationary', candidates: decision.candidates })
+        return
+      }
+      // Already narrowed down to a few pins: one coarse or drifting fix does not reset that.
+      if (current.status === 'choose' || current.reason === 'stationary') return
+      if (decision.reason === 'accuracy' && !final) return
+      applyStartPin(first, startFallbackMessage(decision.reason, pos.accuracy))
+    },
+    [applyStartPin, setSelection, pinDebug, pushPinEvent],
+  )
+
+  const beginStartSelection = useCallback(() => {
+    setSelection({ status: 'wait', reason: 'gps', candidates: [] })
+    setNextPin(null)
+    const fix = lastFixRef.current
+    if (fix && Date.now() - fix.at <= START_FIX_MAX_AGE_MS) resolveStart(fix.pos, fix.position, false)
+  }, [resolveStart, setSelection])
+
   const pinsActive = voicePins.length > 0
   const active = phase === 'active'
   const layoutMode = useExamLayoutMode()
@@ -215,47 +350,39 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     // (it is not consumed here), so a later re-run of this effect cannot overwrite the summary.
     if (finishInProgressRef.current || phaseRef.current === 'summary') return
 
-    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    const described = describeSavedExam(route.id, route.slug, route.name_ka)
+    if (described.kind === 'corrupt') {
+      setResumeError(RESUME_UNRESOLVED_MESSAGE)
+      return
+    }
+
+    const saved = described.kind === 'ok' ? described.state : null
 
     if (saved) {
       if (resumedSlugRef.current !== route.slug) {
         resumedSlugRef.current = route.slug
         triggeredRef.current = new Set(saved.triggeredPins)
+        handledOrdersRef.current = initialHandledOrders(saved, sortedPins, route.slug)
+        inFlightPinRef.current = null
+        inFlightOrderRef.current = null
         sessionStartRef.current = examSessionOriginMs(saved)
         setExam(saved.exam)
         setExamSummary(null)
-        setUserPos(saved.userPos)
         setHeading(saved.heading)
         setSpeedKmh(saved.speedKmh)
         setElapsedMs(examElapsedMsNow(saved))
-        setGpsStarted(true)
         setDriveView(features.mapNav ? 'map' : 'panel')
-        if (FIELD_TEST_SLUGS.has(route.slug)) {
-          handledOrdersRef.current = initialHandledOrders(saved, sortedPins, route.slug)
-          const resolution = resolveExamResume(saved, sortedPins, route.slug)
-          if (resolution.status === 'resume') {
-            resumePendingRef.current = resolution.handledOrders === null
-            if (resolution.handledOrders) {
-              handledOrdersRef.current = new Set(resolution.handledOrders)
-              triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
-              setNextPin(sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
-              setRouteComplete(
-                sortedPins.length > 0 && resolution.nextSortOrder === null,
-              )
-            }
-          } else if (resolution.status === 'pending') {
-            resumePendingRef.current = true
-          }
-        }
-        console.log('🔄 Resuming saved exam session', route.slug)
+        setResumeError(null)
+        setSelection(null)
+        setStartNotice(null)
+        setRouteComplete(false)
+        console.log('🔄 Saved exam is waiting for the start button', route.slug)
       }
-      setPhase('active')
       return
     }
 
     // Slug says a session exists; local id may not have matched yet. Do not reset to preview.
     if (hasSavedExamForSlug(route.slug, route.name_ka)) {
-      setPhase('active')
       setDriveView(features.mapNav ? 'map' : 'panel')
       return
     }
@@ -267,39 +394,47 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setPhase('preview')
     setDriveView(features.mapNav ? 'map' : 'panel')
     setGpsError(getGpsEnvironmentIssue())
+    setResumeError(null)
+    setSelection(null)
+    setStartNotice(null)
+    setRouteComplete(false)
     setLastSpoken(null)
     triggeredRef.current = new Set()
-    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
-    resumePendingRef.current = false
-    setRouteComplete(false)
+    handledOrdersRef.current = new Set()
+    inFlightPinRef.current = null
+    inFlightOrderRef.current = null
+    approachRef.current = null
     setNextPin(sortedPins[0] ?? null)
     prevGpsRef.current = null
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
     setHeading(0)
-  }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav])
+  }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav, setSelection])
 
-  // Local p2-/p3- ids and Supabase UUIDs share sort_order. Progress is kept by sort_order,
+  // Local pin ids (p1-3) and Supabase UUIDs share sort_order. Progress is kept by sort_order,
   // so a pin list swap re-derives the handled ids instead of dropping or guessing them.
   useEffect(() => {
-    if (!FIELD_TEST_SLUGS.has(route.slug)) return
     if (handledOrdersRef.current === null) {
       const derived = ordersForIds(triggeredRef.current, sortedPins, route.slug)
       if (sortedPins.length === 0) return
       if (derived.unknown.length > 0) {
-        resumePendingRef.current = true
+        if (phaseRef.current === 'active') setResumeError(RESUME_PENDING_MESSAGE)
         return
       }
       handledOrdersRef.current = derived.orders
     }
     triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
-    resumePendingRef.current = false
-    if (phaseRef.current !== 'active') return
-    const progress = nextSortOrder(sortedPins, handledOrdersRef.current)
-    setNextPin(sortedPins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
-    setRouteComplete(sortedPins.length > 0 && progress.nextSortOrder === null)
-  }, [sortedPins, route.id, route.slug, route.name_ka])
+    if (inFlightOrderRef.current !== null) {
+      const inFlight = sortedPins.find((pin) => pin.sort_order === inFlightOrderRef.current)
+      if (inFlight) inFlightPinRef.current = inFlight.id
+    }
+    if (phaseRef.current === 'active' && !startSelectionRef.current) {
+      const progress = examProgress(sortedPins, triggeredRef.current)
+      setNextPin(sortedPins.find((pin) => pin.id === progress.nextPinId) ?? null)
+      setResumeError(null)
+    }
+  }, [sortedPins, route.slug])
 
   const enableGps = useCallback(async (silent = false) => {
     if (!silent) setGpsStarting(true)
@@ -307,6 +442,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     try {
       const pos = await requestGpsOnce({ allowCached: silent || hasGpsConsent() })
       const raw = gpsToLatLng(pos)
+      lastFixRef.current = { pos, position: raw, at: Date.now() }
       setRawPos(pos)
       setUserPos(raw)
       setHeading(resolveHeading(pos, null, raw, polyline))
@@ -314,13 +450,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       setSpeedKmh(0)
       setGpsStarted(true)
       markGpsConsentGranted()
-      return { position: raw, fix: pos, denied: false }
+      return { position: raw, denied: false }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'GPS შეცდომა'
       setGpsError(msg)
       if (msg.includes('უარყოფილი')) clearGpsConsent()
       if (!msg.includes('უარყოფილი') && !getGpsEnvironmentIssue()) setGpsStarted(true)
-      return { position: null, fix: null, denied: msg.includes('უარყოფილი') }
+      return { position: null, denied: msg.includes('უარყოფილი') }
     } finally {
       if (!silent) setGpsStarting(false)
     }
@@ -339,20 +475,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
   }, [route.id, gpsStarted, gpsStarting, enableGps])
 
-  // Browser autoplay: the audio engine must be unlocked by a real user interaction.
-  // Covers resume-after-reload where the "start" button is never pressed again.
   useEffect(() => {
-    const unlock = () => audioEngine.unlock()
-    const opts = { capture: true, passive: true, once: true } as const
-    window.addEventListener('pointerdown', unlock, opts)
-    window.addEventListener('touchend', unlock, opts)
-    window.addEventListener('keydown', unlock, opts)
-    return () => {
-      window.removeEventListener('pointerdown', unlock, opts)
-      window.removeEventListener('touchend', unlock, opts)
-      window.removeEventListener('keydown', unlock, opts)
-    }
-  }, [])
+    if (!gpsStarting) return
+    const id = window.setTimeout(() => setGpsStarting(false), GPS_START_WATCHDOG_MS)
+    return () => window.clearTimeout(id)
+  }, [gpsStarting])
 
   useEffect(() => {
     const preload = () => audioEngine.preloadAll(collectPreloadAudioUrls(route.slug, sortedPins))
@@ -363,9 +490,18 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     return () => {
       window.clearTimeout(t)
       releaseWake.current?.()
-      audioEngine.stopAll()
     }
   }, [route.id, route.slug, sortedPins])
+
+  useEffect(() => {
+    return () => {
+      cueEpochRef.current += 1
+      inFlightPinRef.current = null
+      inFlightOrderRef.current = null
+      approachRef.current = null
+      audioEngine.stopAll()
+    }
+  }, [route.slug])
 
   useEffect(() => {
     if (phase !== 'active') return
@@ -384,49 +520,49 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (phase !== 'active') return
     if (finishInProgressRef.current) return // Skip saving if finish is in progress
 
-    saveOwnerRef.current = ++examSaveOwner
     const saveState = () => {
       if (finishInProgressRef.current) return // Guard against saving during finish
-      if (saveOwnerRef.current !== examSaveOwner) return // a newer session already owns storage
       const liveElapsed = sessionStartRef.current
         ? Math.max(0, Date.now() - sessionStartRef.current)
         : elapsedMs
+      const orders = handledOrdersRef.current
       const pins = pinsRef.current
-      const fieldTest = FIELD_TEST_SLUGS.has(route.slug)
-        ? (() => {
-            const orders = handledOrdersRef.current
-            if (orders === null) return {}
-            const sorted = [...orders].sort((a, b) => a - b)
-            if (pins.length === 0) {
-              const previous = loadActiveExam(route.id, route.slug, route.name_ka)
-              return {
-                triggeredSortOrders: sorted,
-                lastPassedSortOrder:
-                  previous?.lastPassedSortOrder ?? (sorted.length ? sorted[sorted.length - 1]! : null),
-                nextSortOrder: previous?.nextSortOrder ?? null,
-              }
-            }
-            const progress = nextSortOrder(pins, orders)
-            return {
-              triggeredSortOrders: sorted,
-              lastPassedSortOrder: progress.lastPassedSortOrder,
-              nextSortOrder: progress.nextSortOrder,
-            }
-          })()
-        : {}
-      saveActiveExam({
+      const base = {
         routeId: route.id,
         routeSlug: route.slug,
         routeName: route.name_ka,
-        phase: 'active',
+        phase: 'active' as const,
         exam,
         userPos,
         heading,
         speedKmh,
         elapsedMs: liveElapsed,
-        triggeredPins: Array.from(triggeredRef.current),
-        ...fieldTest,
+        startPending: startSelectionRef.current !== null,
         savedAt: Date.now(),
+      }
+      if (orders === null) {
+        // Legacy id-only save not yet placed on this pin list: keep it exactly as it was.
+        const previous = loadActiveExam(route.id, route.slug, route.name_ka)
+        saveActiveExam({
+          ...base,
+          triggeredPins: Array.from(triggeredRef.current),
+          lastPassedPinId: previous?.lastPassedPinId ?? null,
+          nextPinId: previous?.nextPinId ?? null,
+        })
+        return
+      }
+      const sorted = [...orders].sort((a, b) => a - b)
+      const placed = pins.length > 0
+      const byOrder = placed ? nextSortOrder(pins, orders) : null
+      const progress = examProgress(pins, triggeredRef.current)
+      saveActiveExam({
+        ...base,
+        triggeredPins: Array.from(triggeredRef.current),
+        triggeredSortOrders: sorted,
+        lastPassedSortOrder: byOrder ? byOrder.lastPassedSortOrder : sorted.length ? sorted[sorted.length - 1] : null,
+        nextSortOrder: byOrder ? byOrder.nextSortOrder : null,
+        lastPassedPinId: placed ? progress.lastPassedPinId : null,
+        nextPinId: placed ? progress.nextPinId : null,
       })
     }
 
@@ -446,7 +582,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       if (saveNowRef.current === saveState) saveNowRef.current = null
       if (!finishInProgressRef.current) saveState() // Only save on cleanup if not finishing
     }
-  }, [phase, route.id, route.slug, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs, sortedPins])
+  }, [phase, route.id, route.slug, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs])
 
   useEffect(() => {
     if (!gpsStarted) return
@@ -461,9 +597,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         }
         
         const filtered = gpsFilterRef.current.filter(reading)
-        
-        // Reject invalid readings
+
+        // A rejected fix is not accurate enough to move the exam. Do not skip pins.
         if (!filtered) {
+          if (pinDebug) {
+            pushPinEvent(`GPS უარყოფილია · სიზუსტე ${Math.round(pos.accuracy)} მ`)
+            setPinDiag((prev) => (prev ? { ...prev, fixAt: Date.now(), rejected: true, accuracyM: pos.accuracy } : prev))
+          }
           return
         }
         
@@ -479,56 +619,91 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           setSpeedKmh(0)
         }
         prevGpsRef.current = pos
+        lastFixRef.current = { pos, position: raw, at: Date.now() }
+
+        // New exam whose starting pin is not decided yet: no pin is next until it is.
+        if (startSelectionRef.current) {
+          if (phase === 'active') resolveStart(pos, raw, false)
+          if (startSelectionRef.current) {
+            setNextPin(null)
+            return
+          }
+        }
 
         // ============================================================
         // STRICT SEQUENTIAL PIN LOGIC
         // ============================================================
-        // Only ONE pin can be "next" at any time.
-        // All other pins are IGNORED regardless of proximity.
-        // 
-        // Rule: PIN N can only trigger after PIN N-1 has triggered.
-        // No skipping. No going backwards. No proximity-based activation.
+        // Only the next unhandled pin can play. A coarse fix or a parallel road
+        // does not skip it. Already spoken pins are not repeated.
         // ============================================================
-        
-        const triggeredCount = triggeredRef.current.size
-        const totalPins = voicePins.length
-        const fieldTest = FIELD_TEST_SLUGS.has(route.slug)
-        if (fieldTest && handledOrdersRef.current === null) {
+
+        // Saved progress not yet placed on this pin list: no pin is next until it is.
+        if (handledOrdersRef.current === null) {
           setNextPin(null)
+          if (pinDebug) pushPinEvent('შენახული პროგრესი PIN-ებს ჯერ არ დაუკავშირდა')
           return
         }
-        if (fieldTest && handledOrdersRef.current) {
-          triggeredRef.current = pinIdsForOrders(voicePins, handledOrdersRef.current)
-        }
-        
-        // Find the FIRST untriggered pin in sequence
-        // This is THE ONLY pin that can trigger right now
-        const nextPinIndex = voicePins.findIndex((p) => !triggeredRef.current.has(p.id))
+
+        const decision = evaluateNextPin({
+          pins: voicePins,
+          handledIds: triggeredRef.current,
+          inFlightId: inFlightPinRef.current,
+          user: raw,
+          heading: pos.heading,
+          speedMps: typeof pos.speed === 'number' ? pos.speed : null,
+          accuracyM: pos.accuracy,
+          approach: approachRef.current,
+        })
+        const nextPinIndex = decision.pinId
+          ? voicePins.findIndex((pin) => pin.id === decision.pinId)
+          : -1
         const pending = nextPinIndex >= 0 ? voicePins[nextPinIndex] : null
-        
+        const triggeredCount = triggeredRef.current.size
+        const totalPins = voicePins.length
+
         setNextPin(pending ?? null)
-        if (fieldTest && handledOrdersRef.current && totalPins > 0) {
-          setRouteComplete(nextSortOrder(voicePins, handledOrdersRef.current).nextSortOrder === null)
+
+        if (pinDebug) {
+          const inFlightOrder = inFlightOrderRef.current
+          setPinDiag({
+            fixAt: Date.now(),
+            rejected: false,
+            accuracyM: pos.accuracy,
+            headingDeg: pos.heading,
+            speedKmh: typeof pos.speed === 'number' ? pos.speed * 3.6 : null,
+            nextOrder: pending?.sort_order ?? null,
+            distanceM: decision.distanceM,
+            triggerM: decision.triggerM,
+            handled: triggeredRef.current.size,
+            total: totalPins,
+            inFlightOrder,
+            phaseActive: phase === 'active',
+            ...describePinCue({
+              decision,
+              pin: pending,
+              user: raw,
+              heading: pos.heading,
+              accuracyM: pos.accuracy,
+              inFlight: inFlightOrder !== null,
+            }),
+          })
         }
-        
-        // Log current state
+
         if (pending) {
           devLog('[PIN SEQUENCE]',
             route.slug.toUpperCase(),
             '| Expected: #' + (nextPinIndex + 1),
             '| ID:', pending.id,
-            '| Progress:', triggeredCount + '/' + totalPins
+            '| Progress:', triggeredCount + '/' + totalPins,
+            '| Trigger:', decision.triggerM == null ? '—' : Math.round(decision.triggerM) + 'm',
+            '| Distance:', decision.distanceM == null ? '—' : Math.round(decision.distanceM) + 'm',
+            '| Action:', decision.action,
           )
         }
-        
-        // Check if user is near ANY other pin (for diagnostic logging only)
+
         voicePins.forEach((pin, idx) => {
-          // Skip if this is the expected pin or already triggered
           if (idx === nextPinIndex || triggeredRef.current.has(pin.id)) return
-          
           const distToOther = distanceToPinMeters(raw, [pin.lat, pin.lng])
-          
-          // If user is close to a non-expected pin, log it as IGNORED
           if (distToOther <= 50) {
             devLog('[PIN SEQUENCE]',
               route.slug.toUpperCase(),
@@ -540,87 +715,118 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           }
         })
 
-        // აუდიო ყოველთვის ითამაშოს თუ routeAudio feature enabled-ია, view-ის მიუხედავად
-        if (!pending || phase !== 'active' || !features.routeAudio) return
-
-        // First PIN is already announced by the ▶ start audio.
-        if (isStartPinAlreadyAnnounced(route.slug, pending.id)) {
-          triggeredRef.current.add(pending.id)
+        if (!pending || phase !== 'active' || !features.routeAudio) {
+          approachRef.current = decision.approach
           return
         }
 
-        // Audio trigger distance: AUDIO_TRIGGER_DISTANCE_M (20 m) — PIN detection above is unchanged.
-        // Audio heading tolerance: AUDIO_HEADING_TOLERANCE_DEG (90°), skipped at very low speed.
-        const pinPoint = (i: number): LatLng => [voicePins[i].lat, voicePins[i].lng]
-        const dist = distanceToPinMeters(raw, pinPoint(nextPinIndex))
+        approachRef.current = decision.approach
+        if (decision.action !== 'play' || inFlightPinRef.current) return
 
-        const decision = decidePinAudio({
-          pinIds: voicePins.map((p) => p.id),
-          triggered: triggeredRef.current,
-          distanceTo: (i) => distanceToPinMeters(raw, pinPoint(i)),
-          headingOkAt: (i) =>
-            audioHeadingOk(headingMatches(raw, pinPoint(i), pos.heading, AUDIO_HEADING_TOLERANCE_DEG), pos.speed),
-          minDist: pinApproachRef.current,
-          busy: audioEngine.isBusy(),
-        })
-
+        const epoch = cueEpochRef.current
+        const requestedId = pending.id
+        const requestedOrder = pending.sort_order
+        inFlightPinRef.current = requestedId
+        inFlightOrderRef.current = requestedOrder
         devLog('[PIN SEQUENCE]',
           route.slug.toUpperCase(),
-          '| Expected: #' + (nextPinIndex + 1),
-          '| Distance:', Math.round(dist) + 'm',
-          '| Status:', dist <= AUDIO_TRIGGER_DISTANCE_M ? 'IN RANGE' : 'WAITING',
-          '| Decision:', decision ? decision.reason + ' #' + (decision.index + 1) : 'none',
+          '| 🔊 PIN #' + (nextPinIndex + 1) + ' QUEUED',
+          '| Audio:', pending.instruction_ka,
+          '| Progress:', (triggeredCount + 1) + '/' + totalPins,
         )
-
-        if (!decision) return
-
-        // Routes 2/3 follow Tbilisi: never skip a pin, never mark it done without visiting it.
-        if (fieldTest && (decision.reason === 'lookahead' || decision.skipped.length > 0 || decision.index !== nextPinIndex)) {
-          return
-        }
-
-        // Missed PINs on routes 1/4: mark as passed, never speak a stale instruction.
-        if (!fieldTest) {
-          decision.skipped.forEach((i) => triggeredRef.current.add(voicePins[i].id))
-        }
-
-        const target = voicePins[decision.index]
-        devLog('[PIN SEQUENCE]',
-          route.slug.toUpperCase(),
-          '| 🔊 PIN #' + (decision.index + 1) + ' TRIGGERED (' + decision.reason + ')!',
-          '| Audio:', target.instruction_ka,
-          '| Progress:', (triggeredRef.current.size + 1) + '/' + totalPins,
-        )
-        // Mark first (GPS fires every second) so the same PIN can never be spoken twice.
-        triggeredRef.current.add(target.id)
-        if (fieldTest) {
+        if (pinDebug) pushPinEvent(`PIN ${requestedOrder} → რიგში (${Math.round(decision.distanceM ?? 0)} მ)`)
+        void audioEngine.play(pending.audio_url, requestedId, pending.instruction_ka).then((started) => {
+          if (pinDebug) {
+            const note =
+              epoch !== cueEpochRef.current
+                ? 'გაუქმდა'
+                : !started
+                  ? 'ვერ დაიწყო'
+                  : phaseRef.current !== 'active'
+                    ? 'გამოცდა აქტიური არ არის'
+                    : 'დაიწყო'
+            pushPinEvent(`PIN ${requestedOrder} · აუდიო ${note}`)
+          }
+          if (epoch !== cueEpochRef.current) return
+          if (inFlightOrderRef.current === requestedOrder) {
+            inFlightPinRef.current = null
+            inFlightOrderRef.current = null
+          }
+          if (!started || phaseRef.current !== 'active') return
           const orders = handledOrdersRef.current ?? new Set<number>()
-          orders.add(target.sort_order)
+          orders.add(requestedOrder)
           handledOrdersRef.current = orders
           triggeredRef.current = pinIdsForOrders(pinsRef.current, orders)
           const upcoming = nextSortOrder(pinsRef.current, orders).nextSortOrder
           setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
-          setRouteComplete(pinsRef.current.length > 0 && upcoming === null)
-        }
-        setLastSpoken(target.instruction_ka)
-        saveNowRef.current?.()
-        void audioEngine.playDetailed(target.audio_url, target.id, target.instruction_ka).then((status) => {
-          if (status !== 'failed' || phaseRef.current !== 'active') return
-          // Playback itself failed (MP3 + TTS): allow a few retries instead of losing this PIN's voice.
-          const key = route.slug + ':' + target.id
-          const attempts = (audioAttemptsRef.current.get(key) ?? 0) + 1
-          audioAttemptsRef.current.set(key, attempts)
-          if (attempts < AUDIO_MAX_ATTEMPTS) {
-            triggeredRef.current.delete(target.id)
-            if (fieldTest && handledOrdersRef.current) {
-              handledOrdersRef.current.delete(target.sort_order)
-            }
-          } else console.warn('[AUDIO] giving up on PIN voice after', attempts, 'attempts:', target.id)
+          if (upcoming === null) setRouteComplete(true)
+          setLastSpoken(pending.instruction_ka)
+          saveNowRef.current?.()
+        }).catch((err) => {
+          console.error('[audio] PIN play crashed', requestedId, err)
+          if (pinDebug) pushPinEvent(`PIN ${requestedOrder} · აუდიოს შეცდომა`)
+          if (epoch === cueEpochRef.current && inFlightOrderRef.current === requestedOrder) {
+            inFlightPinRef.current = null
+            inFlightOrderRef.current = null
+          }
         })
       },
-      (err) => setGpsError(formatGpsError(err)),
+      (err) => {
+        setGpsError(formatGpsError(err))
+        if (pinDebug) pushPinEvent(`GPS შეცდომა · ${err.code}`)
+      },
     )
-  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline])
+  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline, pinDebug, pushPinEvent, resolveStart])
+
+  // No accurate fix within the wait: decide with what there is (PIN 1 when it is not reliable).
+  useEffect(() => {
+    if (phase !== 'active' || startSelection?.status !== 'wait' || startSelection.reason !== 'gps') return
+    const id = window.setTimeout(() => {
+      const fix = lastFixRef.current
+      if (fix && Date.now() - fix.at <= START_FIX_MAX_AGE_MS) resolveStart(fix.pos, fix.position, true)
+      else applyStartPin(pinsRef.current[0]?.sort_order ?? null, START_NO_GPS_MESSAGE)
+    }, START_GPS_WAIT_MS)
+    return () => window.clearTimeout(id)
+  }, [phase, startSelection, resolveStart, applyStartPin])
+
+  useEffect(() => {
+    if (!startNotice) return
+    const id = window.setTimeout(() => setStartNotice(null), START_NOTICE_MS)
+    return () => window.clearTimeout(id)
+  }, [startNotice])
+
+  // ============================================================
+  // SPEED LIMIT: limit follows the pin sequence (pin N governs the road after pin N).
+  // One violation is recorded per continuous violation on a section; it re-arms when
+  // speed drops to <= limit (or the section changes).
+  // ============================================================
+  const speedLimitKmh = useMemo(
+    () => getCurrentSpeedLimit(route.slug, voicePins, nextPin),
+    [route.slug, voicePins, nextPin],
+  )
+  const speedSegmentIdx = useMemo(() => currentSegmentIndex(voicePins, nextPin), [voicePins, nextPin])
+  const speedViolationKeyRef = useRef<number | null>(null)
+  const speedSkipFirstCheckRef = useRef(!!savedState)
+  useEffect(() => {
+    if (phase !== 'active') {
+      speedViolationKeyRef.current = null
+      return
+    }
+    const violating = isSpeedLimitViolation(speedKmh, speedLimitKmh)
+    if (speedSkipFirstCheckRef.current) {
+      // Resumed session: do not re-count a violation that was already recorded before leaving
+      speedSkipFirstCheckRef.current = false
+      speedViolationKeyRef.current = violating ? speedSegmentIdx : null
+      return
+    }
+    if (!violating) {
+      speedViolationKeyRef.current = null
+      return
+    }
+    if (speedViolationKeyRef.current === speedSegmentIdx) return
+    speedViolationKeyRef.current = speedSegmentIdx
+    setExam((prev) => recordSpeedLimitViolation(prev))
+  }, [phase, speedKmh, speedLimitKmh, speedSegmentIdx])
 
   const handleError = useCallback((errorId: string) => {
     setExam((prev) => recordExamError(prev, errorId, false))
@@ -630,59 +836,23 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setExam((prev) => recordSevereQuick(prev))
   }, [])
 
-  function startSession(fix: GpsPosition | null) {
+  function startSession() {
     finishInProgressRef.current = false
+    cueEpochRef.current += 1
+    inFlightPinRef.current = null
+    inFlightOrderRef.current = null
+    approachRef.current = null
     triggeredRef.current = new Set()
-    pinApproachRef.current = new Map()
-    audioAttemptsRef.current = new Map()
-    const firstPin = voicePins[0]
-    if (firstPin && isStartPinAlreadyAnnounced(route.slug, firstPin.id)) {
-      triggeredRef.current.add(firstPin.id)
-    }
-    // New exam only. Resume never reaches here. A fallback or an ambiguous fix
-    // keeps the existing sequence from PIN 1; street lines and pin audio stay as they are.
-    if (fix && FIELD_TEST_SLUGS.has(route.slug) && voicePins.length > 0) {
-      const decision = chooseStartPin(
-        voicePins,
-        {
-          position: [fix.lat, fix.lng],
-          accuracyM: fix.accuracy,
-          headingDeg: fix.heading,
-          speedMps: fix.speed,
-        },
-        examRoadTrace(route.slug, voicePins),
-      )
-      if (decision.kind === 'start') {
-        for (const pin of voicePins) {
-          if (pin.sort_order < decision.sortOrder) triggeredRef.current.add(pin.id)
-        }
-      }
-    }
-    if (FIELD_TEST_SLUGS.has(route.slug)) {
-      handledOrdersRef.current = new Set(
-        voicePins.filter((pin) => triggeredRef.current.has(pin.id)).map((pin) => pin.sort_order),
-      )
-    }
+    handledOrdersRef.current = new Set()
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
     setRouteComplete(false)
-    resumePendingRef.current = false
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
     setLastSpoken(EXAM_START_TEXT)
-    
-    // Apply sequence logic: Finish pins (last 3) should not be shown as next pin at start
-    const triggeredCount = triggeredRef.current.size
-    const totalPins = voicePins.length
-    const finishSectionStart = Math.max(0, totalPins - 3)
-    
-    const nextPinCandidate = voicePins.find((p, idx) => {
-      if (triggeredRef.current.has(p.id)) return false
-      if (idx >= finishSectionStart && triggeredCount < finishSectionStart) return false
-      return true
-    })
-    
-    setNextPin(nextPinCandidate ?? null)
+    // Starting pin from where the car is now (PIN 1 at the agency or when GPS is not reliable).
+    setStartNotice(null)
+    beginStartSelection()
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
@@ -693,41 +863,66 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   async function handleStartSession() {
-    // Must run synchronously inside the click, before any await (GPS prompt would lose the gesture).
-    audioEngine.unlock()
     if (gpsStarting) return
-    
-    // ============================================================
-    // If savedState exists, we're RESUMING - don't reset session!
-    // Just ensure GPS is ready and stay in active phase
-    // ============================================================
-    if (savedState) {
-      console.log('🔄 Resuming active session - not calling startSession()')
-      if (FIELD_TEST_SLUGS.has(route.slug)) {
-        const resolution = resolveExamResume(savedState, voicePins, route.slug)
-        if (resolution.status === 'resume' && resolution.handledOrders) {
-          handledOrdersRef.current = new Set(resolution.handledOrders)
-          triggeredRef.current = pinIdsForOrders(voicePins, handledOrdersRef.current)
-          setNextPin(voicePins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
-          setRouteComplete(voicePins.length > 0 && resolution.nextSortOrder === null)
-          resumePendingRef.current = false
-        }
+
+    const described = describeSavedExam(route.id, route.slug, route.name_ka)
+    if (described.kind === 'corrupt') {
+      setResumeError(RESUME_UNRESOLVED_MESSAGE)
+      return
+    }
+    if (described.kind === 'ok') {
+      const resolution = resolveExamResume(described.state, voicePins, route.slug)
+      if (resolution.status !== 'resume') {
+        setResumeError(resolution.message)
+        return
       }
+      console.log('🔄 Resuming saved exam from the start button - not calling startSession()')
+      cueEpochRef.current += 1
+      inFlightPinRef.current = null
+      inFlightOrderRef.current = null
+      approachRef.current = null
+      handledOrdersRef.current = resolution.handledOrders ? new Set(resolution.handledOrders) : null
+      triggeredRef.current = new Set(resolution.triggeredIds)
+      setResumeError(null)
+      if (described.state.startPending && resolution.handledOrders?.length === 0) {
+        // Left before the starting pin was chosen: there is no progress to restore, choose it now.
+        setRouteComplete(false)
+        beginStartSelection()
+      } else {
+        setSelection(null)
+        setNextPin(voicePins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
+        setRouteComplete(
+          voicePins.length > 0 && resolution.handledOrders !== null && resolution.nextSortOrder === null,
+        )
+      }
+      resumedSlugRef.current = route.slug
       if (phase !== 'active') setPhase('active')
       if (!gpsStarted) {
         await enableGps(true)
       }
       return
     }
-    
-    // No saved state - this is a NEW session. Resume returned above.
-    const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
-    if (gpsResult.denied) return
-    startSession(gpsResult.fix)
+
+    // Do not block the exam on a hanging getCurrentPosition (desktop / permission prompt).
+    // Start-pin already waits briefly, then PIN 1.
+    startSession()
+    if (!userPos) {
+      void enableGps(true).then((result) => {
+        if (result.denied) return
+        const fix = lastFixRef.current
+        if (fix && startSelectionRef.current) resolveStart(fix.pos, fix.position, false)
+      })
+    }
   }
 
   function finishSession() {
     finishInProgressRef.current = true
+    cueEpochRef.current += 1
+    inFlightPinRef.current = null
+    inFlightOrderRef.current = null
+    approachRef.current = null
+    setSelection(null)
+    setStartNotice(null)
     setRouteComplete(false)
     clearActiveExam() // Clear saved state IMMEDIATELY before any state updates
     setSavedEpoch((v) => v + 1) // drop the stale savedState memo in the same batch as phase='summary'
@@ -751,11 +946,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setExamSummary(null)
     setExam(createExamSession(route.id, route.name_ka))
     triggeredRef.current = new Set()
-    pinApproachRef.current = new Map()
-    audioAttemptsRef.current = new Map()
-    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
+    handledOrdersRef.current = new Set()
+    inFlightPinRef.current = null
+    inFlightOrderRef.current = null
+    approachRef.current = null
+    cueEpochRef.current += 1
     resumedSlugRef.current = null
-    resumePendingRef.current = false
+    setSelection(null)
+    setStartNotice(null)
     setRouteComplete(false)
     setNextPin(sortedPins[0] ?? null)
     setLastSpoken(null)
@@ -763,6 +961,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     sessionStartRef.current = 0
     clearActiveExam() // Clear saved state when restarting
     setSavedEpoch((v) => v + 1)
+  }
+
+  /** „თავიდან დაწყება“ on a completed route: drop this exam and go back to the start screen. */
+  function restartRoute() {
+    restartPreview()
+    // Leaving the active phase runs the autosave cleanup; it must not write the dropped exam back.
+    finishInProgressRef.current = true
+    releaseWake.current?.()
+    audioEngine.stopAll()
   }
 
   const nextPinDistanceLabel =
@@ -795,6 +1002,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             <ExamScoreboard
               elapsedMs={elapsedMs}
               speedKmh={speedKmh}
+              speedLimitKmh={speedLimitKmh}
               minorTotal={exam.minorTotal}
               severeTotal={exam.severeTotal}
               onRecordSevere={handleSevereQuick}
@@ -827,31 +1035,55 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             </button>
           </div>
 
-          {routeComplete && FIELD_TEST_SLUGS.has(route.slug) && (
-            <div
-              role="status"
-              data-testid="route-complete"
-              style={{
-                position: 'relative',
-                zIndex: 20,
-                margin: '0.5rem',
-                padding: '0.75rem',
-                borderRadius: '8px',
-                background: '#ecfdf5',
-                border: '2px solid #10b981',
-              }}
-            >
-              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#065f46' }}>
-                მარშრუტი დასრულებულია — ყველა PIN გავლილია.
+          {resumeError && <p className="error-text">{resumeError}</p>}
+
+          {startSelection && (
+            <div className="exam-start-pin" role="status" data-testid="start-pin-selection">
+              <p className="exam-start-pin__text">
+                {startSelection.status === 'wait' && startSelection.reason === 'gps'
+                  ? `საწყისი PIN-ის დასადგენად ზუსტ GPS მდებარეობას ველოდები (≤ ${START_MAX_ACCURACY_M} მ)…`
+                  : startSelection.status === 'wait'
+                    ? 'რამდენიმე PIN ახლოსაა — დაიძარით, რომ მიმართულებით დადგინდეს, ან აირჩიეთ:'
+                    : 'საწყისი PIN ზუსტად ვერ დადგინდა — აირჩიეთ, საიდან გაგრძელდეს:'}
               </p>
-              <button
-                type="button"
-                className="nav-start-btn"
-                style={{ marginTop: '0.5rem' }}
-                onClick={restartPreview}
-              >
-                თავიდან დაწყება
-              </button>
+              {startSelection.candidates.length > 0 && (
+                <div className="exam-start-pin__choices">
+                  {[...new Set([voicePins[0]?.sort_order, ...startSelection.candidates])]
+                    .filter((order): order is number => typeof order === 'number')
+                    .map((order) => {
+                      const pin = voicePins.find((p) => p.sort_order === order)
+                      const isFirst = order === voicePins[0]?.sort_order
+                      return (
+                        <button
+                          key={order}
+                          type="button"
+                          className="exam-start-pin__choice"
+                          onClick={() =>
+                            applyStartPin(order, isFirst ? null : `გამოცდა იწყება PIN ${order}-დან (არჩეული)`)
+                          }
+                        >
+                          <strong>PIN {order}{isFirst ? ' · დასაწყისი' : ''}</strong>
+                          {pin?.instruction_ka && <small>{pin.instruction_ka}</small>}
+                        </button>
+                      )
+                    })}
+                </div>
+              )}
+            </div>
+          )}
+          {!startSelection && startNotice && !routeComplete && (
+            <p className="exam-start-pin exam-start-pin__text" role="status" data-testid="start-pin-notice">
+              {startNotice}
+            </p>
+          )}
+          {routeComplete && (
+            <div className="exam-start-pin" role="status" data-testid="route-complete">
+              <p className="exam-start-pin__text">მარშრუტი დასრულებულია — ყველა PIN გავლილია.</p>
+              <div className="exam-start-pin__choices">
+                <button type="button" className="exam-start-pin__choice" onClick={restartRoute}>
+                  თავიდან დაწყება
+                </button>
+              </div>
             </div>
           )}
 
@@ -862,14 +1094,63 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             {showPanelView && <ExamErrorGrid counts={exam.counts} onError={handleError} />}
           </div>
 
+          {pinDebug && (
+            <div className="exam-pin-debug" data-testid="pin-debug" aria-live="off">
+              {pinDiag ? (
+                <>
+                  <div>
+                    შემდეგი PIN {pinDiag.nextOrder ?? '—'} · {pinDiag.handled}/{pinDiag.total} გავლილი
+                    {pinDiag.inFlightOrder !== null && ` · რიგში PIN ${pinDiag.inFlightOrder}`}
+                  </div>
+                  <div>
+                    მანძილი {pinDiag.distanceM == null ? '—' : Math.round(pinDiag.distanceM)} მ · ტრიგერი{' '}
+                    {pinDiag.triggerM ?? '—'} მ
+                  </div>
+                  <div>
+                    მიმართ. {pinDiag.headingDeg == null ? 'არ არის' : `${Math.round(pinDiag.headingDeg)}°`} · PIN-ისკენ{' '}
+                    {pinDiag.bearingToPin == null ? '—' : `${Math.round(pinDiag.bearingToPin)}°`} · სხვაობა{' '}
+                    {pinDiag.headingDiff == null ? '—' : `${Math.round(pinDiag.headingDiff)}°`} {pinDiag.facing ? '✓' : '✗'}
+                  </div>
+                  <div>
+                    სიზუსტე {Math.round(pinDiag.accuracyM)} მ {pinDiag.accuracyOk ? '✓' : '✗'} · სიჩქ.{' '}
+                    {pinDiag.speedKmh == null ? '—' : Math.round(pinDiag.speedKmh)} კმ/სთ
+                    {pinDiag.rejected && ' · ბოლო GPS უარყოფილია'}
+                  </div>
+                  <div>
+                    <strong>{PIN_CUE_REASON_TEXT[pinDiag.reason]}</strong>
+                    {!pinDiag.phaseActive && ' · გამოცდა აქტიური არ არის'} ·{' '}
+                    {new Date(pinDiag.fixAt).toLocaleTimeString('ka-GE', { hour12: false })}
+                  </div>
+                </>
+              ) : (
+                <div>GPS წერტილს ველოდები…</div>
+              )}
+              {pinEvents.map((event) => (
+                <div key={event} className="exam-pin-debug__event">
+                  {event}
+                </div>
+              ))}
+            </div>
+          )}
+
         </>
       )}
 
-      {phase === 'preview' && !savedState && (
+      {phase === 'preview' && (
         <div className="exam-preview">
           <RoutePreviewMap route={route} />
           <div className="exam-preview__panel">
-            {savedState && (
+            {savedState && savedComplete && (
+              <div className="exam-start-pin exam-start-pin--inline" role="status" data-testid="route-complete">
+                <p className="exam-start-pin__text">მარშრუტი დასრულებულია — ყველა PIN გავლილია.</p>
+                <div className="exam-start-pin__choices">
+                  <button type="button" className="exam-start-pin__choice" onClick={restartPreview}>
+                    თავიდან დაწყება
+                  </button>
+                </div>
+              </div>
+            )}
+            {savedState && !savedComplete && (
               <div style={{ 
                 background: '#fef3c7', 
                 padding: '0.75rem', 
@@ -885,6 +1166,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
                 </p>
               </div>
             )}
+            {resumeError && <p className="error-text">{resumeError}</p>}
             {gpsError && <p className="error-text">{gpsError}</p>}
             {gpsStarted && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
@@ -898,7 +1180,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
               </div>
             )}
             <button type="button" className="nav-start-btn" onClick={() => void handleStartSession()} disabled={gpsStarting}>
-              {gpsStarting ? 'GPS იტვირთება...' : savedState ? '▶ გაგრძელება' : '▶ გამოცდის დაწყება'}
+              {gpsStarting ? 'GPS იტვირთება...' : '▶ გამოცდის დაწყება'}
             </button>
             {lastHistory[0] && features.errorPanel && !savedState && (
               <p className="session-hint">

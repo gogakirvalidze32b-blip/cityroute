@@ -42,9 +42,6 @@ vi.mock('@/hooks/useExamLayoutMode', () => ({
 vi.mock('@/lib/audio', () => ({
   audioEngine: {
     play: vi.fn(),
-    playDetailed: vi.fn(() => Promise.resolve('played')),
-    unlock: vi.fn(),
-    isBusy: vi.fn(() => false),
     stopAll: vi.fn(),
     preloadAll: vi.fn(),
   },
@@ -126,7 +123,7 @@ vi.mock('@/components/RoutePreviewMap', () => ({
 }))
 
 describe('Bug Condition Exploration - Finish Button Clears Session', () => {
-  const mockRoute = {
+  const mockRoute: RouteWithPins = {
     id: 'test-route-id',
     slug: 'route-1',
     name_ka: 'მარშრუტი 1',
@@ -147,7 +144,7 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
     duration_minutes: 15,
     difficulty: 'medium',
     created_at: new Date().toISOString(),
-  } as unknown as RouteWithPins
+  }
 
   const mockUserPos: LatLng = [41.9, 45.4]
 
@@ -183,12 +180,17 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
     expect(storedData).not.toBeNull()
     console.log('✅ Initial session saved to localStorage')
 
-    // RENDER: Component should detect saved session and resume to 'active' phase
+    // RENDER: Saved exam waits on the start button, then resumes.
     const { rerender } = render(<ExamDriveSession route={mockRoute} />)
 
     // Wait for component to stabilize
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
+    })
+
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /გაგრძელება|გამოცდის დაწყება/ }))
     })
 
     // Verify we're in active phase (finish button should be visible)
@@ -197,7 +199,6 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
     console.log('✅ Finish button found - component in active phase')
 
     // ACT: Click the finish button
-    const user = userEvent.setup()
     await act(async () => {
       await user.click(finishButton)
     })
@@ -266,16 +267,20 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       savedAt: Date.now(),
     })
 
-    // RENDER: Start in active phase
-    const { unmount, rerender } = render(<ExamDriveSession route={mockRoute} />)
+    // RENDER: Start stays on the preview until the start button resumes it.
+    const { unmount } = render(<ExamDriveSession route={mockRoute} />)
 
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
     })
 
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /გაგრძელება|გამოცდის დაწყება/ }))
+    })
+
     // Find and click finish button
     const finishButton = screen.getByText('დასრულება')
-    const user = userEvent.setup()
     await act(async () => {
       await user.click(finishButton)
     })
@@ -345,9 +350,13 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
     })
 
+    const user = userEvent.setup()
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /გაგრძელება|გამოცდის დაწყება/ }))
+    })
+
     // Click finish
     const finishButton = screen.getByText('დასრულება')
-    const user = userEvent.setup()
     await act(async () => {
       await user.click(finishButton)
     })

@@ -136,7 +136,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 4,
     active: true,
     polyline: line('route-4', route4Fallback),
-    pins: pinsFromAudit(4, 'local-route-4', 'p4'),
+    pins: [], // Pins will be loaded from Supabase (32 pins)
   },
   {
     id: 'local-route-5',

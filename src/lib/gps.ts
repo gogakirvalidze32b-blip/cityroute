@@ -108,6 +108,21 @@ export function formatGpsError(err: GeolocationPositionError): string {
   }
 }
 
+/** Some browsers never fire getCurrentPosition's own timeout (high-accuracy + permission prompt). */
+export const GPS_HARD_TIMEOUT_MS = 20_000
+
+function gpsTimeoutError(): Error {
+  return new Error(
+    formatGpsError({
+      code: 3,
+      message: 'Timeout',
+      PERMISSION_DENIED: 1,
+      POSITION_UNAVAILABLE: 2,
+      TIMEOUT: 3,
+    } as GeolocationPositionError),
+  )
+}
+
 export function requestGpsOnce(options?: { allowCached?: boolean }): Promise<GpsPosition> {
   return new Promise((resolve, reject) => {
     const envIssue = getGpsEnvironmentIssue()
@@ -116,22 +131,33 @@ export function requestGpsOnce(options?: { allowCached?: boolean }): Promise<Gps
       return
     }
 
+    let settled = false
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(hardTimer)
+      fn()
+    }
+    const hardTimer = window.setTimeout(() => finish(() => reject(gpsTimeoutError())), GPS_HARD_TIMEOUT_MS)
+
     navigator.geolocation.getCurrentPosition(
       (p) => {
-        resolve({
-          lat: p.coords.latitude,
-          lng: p.coords.longitude,
-          accuracy: p.coords.accuracy,
-          heading: p.coords.heading,
-          speed: p.coords.speed,
-          timestamp: p.timestamp,
-        })
+        finish(() =>
+          resolve({
+            lat: p.coords.latitude,
+            lng: p.coords.longitude,
+            accuracy: p.coords.accuracy,
+            heading: p.coords.heading,
+            speed: p.coords.speed,
+            timestamp: p.timestamp,
+          }),
+        )
       },
-      (err) => reject(new Error(formatGpsError(err))),
+      (err) => finish(() => reject(new Error(formatGpsError(err)))),
       {
         enableHighAccuracy: true, // GPS სატელიტები (არა WiFi/IP)
         maximumAge: options?.allowCached ? 60_000 : 0,
-        timeout: 20000, // 15→20 წამი უფრო დიდი timeout
+        timeout: GPS_HARD_TIMEOUT_MS,
       },
     )
   })

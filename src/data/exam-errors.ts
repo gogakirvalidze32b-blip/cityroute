@@ -29,7 +29,7 @@ export const EXAM_ERROR_GRID: ExamErrorDef[] = [
   { id: 'accelerator', label: 'აქსელერატორი', tone: 'yellow', scorable: true },
   { id: 'braking', label: 'დამუხრუჭება', tone: 'yellow', scorable: true },
   { id: 'speed', label: 'სიჩქარე', tone: 'yellow', scorable: true },
-  { id: 'empty-1', label: '.....', tone: 'empty', scorable: false },
+  { id: 'speed-limit', label: 'სიჩქარის ლიმიტის დარღვევა', tone: 'yellow', scorable: true },
 
   { id: 'indicator', label: 'შუქ-მაჩვენებელი', tone: 'grey', scorable: true },
   { id: 'steering', label: 'საჭის მართვა', tone: 'grey', scorable: true },

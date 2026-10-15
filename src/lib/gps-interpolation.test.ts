@@ -1,11 +1,15 @@
-﻿import { describe, it, expect } from 'vitest'
-import { GpsInterpolator } from './gps-interpolation.ts'
-
-globalThis.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0) as unknown as number
-globalThis.cancelAnimationFrame = (id) => clearTimeout(id as unknown as ReturnType<typeof setTimeout>)
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { GpsInterpolator } from './gps-interpolation'
 
 describe('GpsInterpolator', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('accepts minor heading changes while moving', () => {
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+
     const interpolator = new GpsInterpolator()
 
     interpolator.updateTarget({
@@ -23,5 +27,6 @@ describe('GpsInterpolator', () => {
     })
 
     expect(interpolator['targetState']?.heading).toBe(13)
+    interpolator.stop()
   })
 })
