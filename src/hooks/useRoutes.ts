@@ -3,6 +3,36 @@ import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
 
+const MOVED_PINS: Array<[[number, number], [number, number]]> = [
+  [[41.926909, 45.461327], [41.926887, 45.461319]],
+  [[41.926626, 45.461236], [41.924423, 45.46041]],
+  [[41.926429, 45.461338], [41.923639, 45.460725]],
+  [[41.922093, 45.469893], [41.921929, 45.469923]],
+  [[41.917228, 45.475799], [41.917136, 45.476094]],
+  [[41.917267, 45.475761], [41.91745, 45.475199]],
+  [[41.920189, 45.470198], [41.920288, 45.470219]],
+  [[41.929098, 45.475144], [41.92918, 45.475192]],
+  [[41.933977, 45.478151], [41.933672, 45.477947]],
+]
+
+function sameCoordinate(left: number, right: number) {
+  return Math.abs(left - right) < 1e-7
+}
+
+/** Rewrite only the nine corrected pin positions. Order, text, and audio stay unchanged. */
+export function applyRelocatedPin<T extends { pins: Array<{ lat: number; lng: number }> }>(routes: T[]): T[] {
+  return routes.map((route) => ({
+    ...route,
+    pins: route.pins.map((pin) => {
+      const moved = MOVED_PINS.find(
+        ([from]) => sameCoordinate(pin.lat, from[0]) && sameCoordinate(pin.lng, from[1]),
+      )
+      if (!moved) return pin
+      return { ...pin, lat: moved[1][0], lng: moved[1][1] }
+    }),
+  }))
+}
+
 /**
  * Merge Supabase metadata (id, pins) but NEVER remote polyline coordinates.
  * route-polylines.ts / TELAVI_ROUTES_FALLBACK is the source of truth for map geometry —
@@ -11,10 +41,10 @@ import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
 function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): RouteWithPins[] {
   if (!remoteRows?.length) {
     console.log('[DEBUG] mergeRoutes: No remote rows, returning TELAVI_ROUTES_FALLBACK')
-    return TELAVI_ROUTES_FALLBACK
+    return applyRelocatedPin(TELAVI_ROUTES_FALLBACK)
   }
 
-  return TELAVI_ROUTES_FALLBACK.map((local) => {
+  return applyRelocatedPin(TELAVI_ROUTES_FALLBACK).map((local) => {
     const remote = remoteRows.find((r) => r.slug === local.slug)
     if (!remote) {
       console.log(`[DEBUG] mergeRoutes: ${local.slug} - no remote match, using local (${local.pins.length} pins)`)
@@ -32,14 +62,13 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
       id: remote.id,
       city_id: remote.city_id,
       polyline: local.polyline,
-      // FIX: Always prefer remote pins if available (>=2), regardless of local pins
       pins: remotePins.length >= 2 ? remotePins : local.pins,
     }
   })
 }
 
 export function useRoutes() {
-  const [routes, setRoutes] = useState<RouteWithPins[]>(TELAVI_ROUTES_FALLBACK)
+  const [routes, setRoutes] = useState<RouteWithPins[]>(() => applyRelocatedPin(TELAVI_ROUTES_FALLBACK))
   const [source, setSource] = useState<'local' | 'merged'>('local')
 
   useEffect(() => {
@@ -74,7 +103,7 @@ export function useRoutes() {
           console.log('  route-1 pins from Supabase:', route1Pins.length)
         }
 
-        const merged = mergeRoutes(routeRows as RouteRow[] | null, pinRows as PinRow[] | null)
+        const merged = applyRelocatedPin(mergeRoutes(routeRows as RouteRow[] | null, pinRows as PinRow[] | null))
         
         console.log('[DEBUG] Merged routes:')
         merged.forEach(r => {
