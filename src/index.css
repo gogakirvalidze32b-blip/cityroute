@@ -3571,3 +3571,731 @@ button:disabled {
     padding-bottom: 0.35rem;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Exam drive screen — one responsive system for car Android monitors
+   (800×480, 1024×600, 1280×720, 1280×800) and everything around them.
+   All sizes come from the real viewport (vh / vw / vmin) through the CSS
+   variables below — there are no per-device "modes" any more.
+   ═══════════════════════════════════════════════════════════════════════ */
+.exam-session {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  position: relative;
+  background: #efefef;
+  --exam-hud-h: clamp(56px, 12vh, 76px);
+  --exam-ctl-h: calc(var(--exam-hud-h) - 12px);
+  --exam-gap: clamp(5px, 0.95vmin, 10px);
+  --exam-pad: clamp(6px, 1.5vmin, 14px);
+  --exam-radius: clamp(8px, 1.9vmin, 14px);
+  --exam-btn-radius: clamp(6px, 1.1vmin, 10px);
+  --exam-label-size: clamp(12px, min(1.6vw, 3vh), 22px);
+  --exam-ctl-font: clamp(12px, calc(var(--exam-ctl-h) * 0.34), 18px);
+  --exam-voice-strong: clamp(11px, 1.3vw, 15px);
+}
+
+.exam-session--active {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.exam-session--active > .exam-topbar {
+  grid-row: 1;
+}
+
+.exam-session--active > [data-testid='route-complete'] {
+  grid-row: 2;
+}
+
+.exam-session--active > .exam-drive-main {
+  grid-row: 3;
+}
+
+.exam-drive-main {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.exam-drive-main > .exam-live-map,
+.exam-drive-main > .exam-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.exam-session--active .exam-drive-main > .exam-live-map {
+  position: absolute;
+  inset: 0;
+}
+
+/* ——— Top bar: limit sign · time/speed · voice hint · view switch · score · severe · finish ——— */
+.exam-topbar {
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, 1.2vmin, 12px);
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: calc(var(--exam-hud-h) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) var(--exam-pad) 0;
+  background: #ffffff;
+  border-bottom: 1px solid #d3d3d3;
+  color: #111;
+  font-variant-numeric: tabular-nums;
+}
+
+/* the scoreboard <header> only groups its parts; they sit directly in the bar */
+.exam-hud {
+  display: contents;
+}
+
+.exam-hud__limit {
+  order: 1;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  /* fixed place + size — kept even when no real limit value exists */
+  width: calc(var(--exam-hud-h) - 8px);
+  height: calc(var(--exam-hud-h) - 8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: clamp(4px, 0.95vh, 6px) solid #d92d2d;
+  background: #ffffff;
+  color: #111;
+  font-weight: 800;
+  font-size: calc(var(--exam-hud-h) * 0.36);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.exam-hud__limit--unknown {
+  color: #b4b4b4;
+}
+
+.exam-hud__readout {
+  order: 2;
+  flex: 0 0 auto;
+  margin-right: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.exam-hud__time {
+  font-size: calc(var(--exam-hud-h) * 0.42);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #111;
+  white-space: nowrap;
+}
+
+.exam-hud__meta {
+  display: flex;
+  gap: 0.9em;
+  font-size: calc(var(--exam-hud-h) * 0.25);
+  font-weight: 600;
+  line-height: 1.1;
+  color: #444;
+  white-space: nowrap;
+}
+
+.exam-hud__meta strong {
+  font-weight: 800;
+  color: #111;
+}
+
+.exam-voice-bar--toolbar {
+  order: 3;
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0 0.25rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  background: none;
+  border: 0;
+  color: #222;
+}
+
+.exam-view-switch {
+  order: 4;
+  flex: 0 0 auto;
+  display: flex;
+  height: var(--exam-ctl-h);
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: var(--exam-btn-radius);
+  background: #e4e4e4;
+}
+
+.exam-view-switch__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  height: 100%;
+  min-width: 44px;
+  margin: 0;
+  padding: 0 clamp(8px, 1.3vw, 16px);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #444;
+  font: inherit;
+  font-weight: 800;
+  font-size: var(--exam-ctl-font);
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.exam-view-switch__btn--active {
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.exam-view-switch__icon {
+  width: 1.3em;
+  height: 1.3em;
+  flex: 0 0 auto;
+}
+
+.exam-live-map {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.navigation-screen {
+  position: relative;
+  overflow: hidden;
+}
+
+.navigation-map-shell {
+  position: absolute;
+  inset: 0;
+  transform-origin: center center;
+  will-change: transform;
+  transition: transform 0.18s ease-out;
+}
+
+.exam-live-map__canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 12rem;
+  background: #1e293b !important;
+  position: relative;
+  overflow: hidden !important;
+}
+
+/* Force dark background on leaflet container */
+.exam-live-map__canvas .leaflet-container {
+  background: #1e293b !important;
+}
+
+/* Hide white flash on tile loading */
+.exam-live-map__canvas .leaflet-tile-container {
+  background: #1e293b !important;
+}
+
+.exam-live-map__canvas::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(94, 234, 212, 0.2);
+  border-top-color: #5eead4;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  z-index: 1;
+  pointer-events: none;
+}
+
+@keyframes spin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.exam-live-map__recenter {
+  z-index: 1001;
+}
+
+.exam-live-map__hud {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  top: 0.5rem;
+  z-index: 1000;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #f8fafc;
+  pointer-events: none;
+}
+
+.exam-live-map__hud small {
+  display: block;
+  font-size: 0.72rem;
+  color: #5eead4;
+}
+
+.exam-live-map__hud strong {
+  display: block;
+  font-size: 0.88rem;
+  line-height: 1.25;
+}
+
+.exam-pin-pulse {
+  animation: exam-pin-pulse 1s ease-in-out infinite;
+}
+
+@keyframes exam-pin-pulse {
+  50% {
+    opacity: 0.55;
+    stroke-width: 4;
+  }
+}
+
+.exam-live-map__badge {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  z-index: 1002;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.exam-live-map__fallback-hint {
+  margin: 0 0 0.35rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.45rem;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.exam-live-map__canvas--yandex {
+  overflow: hidden;
+}
+
+.exam-yandex-pin {
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  border-radius: 50%;
+  background: #5eead4;
+  border: 2px solid #0f766e;
+  box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.25);
+}
+
+.exam-yandex-pin--pulse {
+  animation: exam-pin-pulse 1s ease-in-out infinite;
+  transform: scale(1.15);
+}
+
+
+/* —— Top status bar: 4 equal zones —— */
+.exam-hud__minor {
+  order: 5;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--exam-ctl-h) * 1.25);
+  height: var(--exam-ctl-h);
+  padding: 0 0.5em;
+  border-radius: var(--exam-btn-radius);
+  background: #2fa66a;
+  color: #ffffff;
+}
+
+.exam-hud__minor strong {
+  font-size: calc(var(--exam-ctl-h) * 0.62);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.exam-hud__minor-cap {
+  display: none;
+}
+
+.exam-hud__minor--fail {
+  background: #e53935;
+  animation: exam-pulse 1s ease-in-out infinite;
+}
+
+@keyframes exam-pulse {
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.exam-hud__severe {
+  order: 6;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  height: var(--exam-ctl-h);
+  margin: 0;
+  padding: 0 clamp(8px, 1.5vw, 16px);
+  border: 0;
+  border-radius: var(--exam-btn-radius);
+  background: #2d5dc3;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 800;
+  font-size: var(--exam-ctl-font);
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.exam-hud__severe:active {
+  background: #1f4496;
+}
+
+.exam-hud__severe--fail {
+  background: #e53935;
+  animation: exam-pulse 1s ease-in-out infinite;
+}
+
+.exam-hud__severe--fail:active {
+  background: #c62828;
+}
+
+.exam-hud__severe-label {
+  display: block;
+  line-height: 1.1;
+}
+
+.exam-hud__severe-word {
+  display: inline;
+}
+
+.exam-hud__severe-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 1.7em;
+  height: 1.7em;
+  padding: 0 0.35em;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #2d5dc3;
+  font-size: 0.95em;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.exam-hud__severe--fail .exam-hud__severe-count {
+  color: #e53935;
+}
+
+/* ——— voice hint (shown inside the bar while the error panel is visible) ——— */
+.exam-voice-next {
+  margin: 0;
+}
+
+.exam-voice-next small {
+  display: block;
+  color: #1e4a8a;
+  font-size: clamp(10px, calc(var(--exam-hud-h) * 0.2), 13px);
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.exam-voice-next strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--exam-voice-strong);
+  line-height: 1.2;
+  margin-top: 1px;
+  color: #111;
+}
+
+/* the "last spoken" line is secondary — only shown when the bar wraps (portrait) */
+.exam-voice-last {
+  display: none;
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: #444;
+}
+
+.exam-voice-last small {
+  margin-right: 0.35rem;
+  font-weight: 600;
+}
+
+.exam-voice-muted {
+  margin: 0;
+  font-size: clamp(11px, 1.3vw, 14px);
+  line-height: 1.2;
+  color: #666;
+}
+
+/* ——— error grid: 7 × 4 equal tiles ——— */
+.exam-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: var(--exam-pad);
+  padding-bottom: calc(var(--exam-pad) + env(safe-area-inset-bottom, 0px));
+  background: #efefef;
+  display: flex;
+  flex-direction: column;
+}
+
+.exam-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: var(--exam-gap);
+  width: 100%;
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.exam-cell {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0 3px;
+  border: 0;
+  border-radius: var(--exam-radius);
+  font: inherit;
+  font-weight: 800;
+  color: #262626;
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+.exam-cell:active {
+  filter: brightness(0.92);
+}
+
+.exam-cell--grey {
+  background: #dedede;
+  color: #5a5a5a;
+}
+
+.exam-cell--yellow {
+  background: #f2c230;
+  color: #262626;
+}
+
+.exam-cell--green {
+  background: #bfe7d0;
+  color: #24352b;
+}
+
+.exam-cell--blue {
+  background: #2b5fc4;
+  color: #ffffff;
+}
+
+.exam-cell--empty {
+  background: #e8e8e8;
+  color: #a0a0a0;
+  cursor: default;
+}
+
+.exam-cell__clip {
+  position: absolute;
+  top: 6%;
+  left: 5%;
+  width: clamp(12px, calc(var(--exam-label-size) * 1.15), 24px);
+  height: clamp(12px, calc(var(--exam-label-size) * 1.15), 24px);
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.exam-cell__label {
+  display: block;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: calc(var(--exam-label-size) * 0.8) 0.1em calc(var(--exam-label-size) * 0.3);
+  text-align: center;
+  font-size: var(--exam-label-size);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.exam-cell__label--dash {
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.exam-cell__badges {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 70%;
+}
+
+.exam-badge {
+  font-style: normal;
+  font-weight: 800;
+  font-size: clamp(11px, calc(var(--exam-label-size) * 0.8), 16px);
+  min-width: 1.4em;
+  padding: 0.08em 0.4em;
+  border-radius: 999px;
+  line-height: 1.2;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.exam-badge--minor {
+  background: #2e7d32;
+  color: #fff;
+}
+
+.exam-badge--severe {
+  background: #c62828;
+  color: #fff;
+}
+
+.exam-finish-fab {
+  order: 7;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: var(--exam-ctl-h);
+  margin: 0 0 0 clamp(8px, 2vw, 24px);
+  padding: 0 clamp(10px, 1.8vw, 22px);
+  border: 0;
+  border-radius: var(--exam-btn-radius);
+  background: #c62828;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 800;
+  font-size: var(--exam-ctl-font);
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.exam-finish-fab:active {
+  background: #9f1f1f;
+}
+
+/* ——— 800–1024 px class: icons only on the view switch, so the voice hint keeps room ——— */
+@media (max-width: 1100px) {
+  .exam-view-switch__text {
+    display: none;
+  }
+
+  .exam-view-switch__btn {
+    min-width: calc(var(--exam-ctl-h) * 1.05);
+  }
+}
+
+/* ——— portrait phones / narrow windows: the bar wraps, hint gets its own row ——— */
+@media (orientation: portrait) {
+  .exam-session {
+    --exam-hud-h: clamp(48px, 7vh, 64px);
+    --exam-label-size: clamp(9px, 2.5vw, 14px);
+    --exam-voice-strong: 0.85rem;
+  }
+
+  .exam-topbar {
+    flex-wrap: wrap;
+    padding-bottom: 4px;
+    row-gap: 4px;
+  }
+
+  .exam-voice-bar--toolbar {
+    order: 8;
+    flex: 1 1 100%;
+  }
+
+  .exam-voice-last {
+    display: block;
+  }
+
+  .exam-finish-fab {
+    margin-left: 0;
+  }
+}
+
+.exam-session--nav-only.exam-session--active,
+.exam-session--panel-only.exam-session--active,
+.exam-session--switchable.exam-session--active {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.exam-session--active > .exam-topbar {
+  grid-row: 1;
+  position: relative;
+  z-index: 30;
+}
+.exam-session--active > .exam-drive-main {
+  grid-row: 2;
+}
+.exam-topbar .exam-finish-fab {
+  position: static;
+  width: auto;
+  max-width: none;
+  bottom: auto;
+  right: auto;
+}
