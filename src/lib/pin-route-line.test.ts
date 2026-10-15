@@ -223,11 +223,11 @@ describe('pin route line', () => {
     expect(route3.find((point) => point[1] < 45.456)).toBeTruthy()
   })
 
-  it('moves only the route 1, 3 and 4 pin that used the old coordinate', () => {
+  it('keeps 41.931052, 45.476154 on routes 1, 3 and 4', () => {
     for (const route of [1, 3, 4]) {
       const pin = fixture.find((item) => item.route === route && item.pin === 2)!
-      expect(pin.lat).toBe(41.930785)
-      expect(pin.lng).toBe(45.475972)
+      expect(pin.lat).toBe(41.931052)
+      expect(pin.lng).toBe(45.476154)
     }
     const route2 = fixture.find((item) => item.route === 2 && item.pin === 2)!
     expect(route2.lat).toBe(41.931068)
@@ -244,13 +244,13 @@ describe('pin route line', () => {
       { slug: 'route-3', pins: [pin(41.931052, 45.476154, 2)] },
       { slug: 'route-4', pins: [pin(41.930785, 45.475972, 2)] },
     ])
-    expect(routes[0].pins[0].lat).toBe(41.930785)
-    expect(routes[0].pins[0].lng).toBe(45.475972)
+    expect(routes[0].pins[0].lat).toBe(41.931052)
+    expect(routes[0].pins[0].lng).toBe(45.476154)
     expect(routes[0].pins[0].instruction_ka).toBe('იგივე')
     expect(routes[0].pins[0].sort_order).toBe(2)
     expect(routes[0].pins[1].lat).toBe(41.929826)
     expect(routes[1].pins[0].lat).toBe(41.931052)
-    expect(routes[2].pins[0].lat).toBe(41.930785)
+    expect(routes[2].pins[0].lat).toBe(41.931052)
     expect(routes[3].pins[0].lat).toBe(41.930785)
   })
 

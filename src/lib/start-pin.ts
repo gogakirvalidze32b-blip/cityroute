@@ -135,7 +135,8 @@ function pathFrom(car: LatLng, path: readonly LatLng[], index: number): LatLng[]
 }
 
 /** Drives `path` in 3 m steps: does the cue rule (in zone and facing the pin) hold anywhere? */
-function cueFiresAlong(path: readonly LatLng[], pin: LatLng, triggerM: number): boolean {
+function cueFiresAlong(path: readonly LatLng[], pin: LatLng, triggerM: number, skipM = 0): boolean {
+  let travelled = 0
   for (let i = 0; i + 1 < path.length; i++) {
     const a = path[i]
     const b = path[i + 1]
@@ -143,12 +144,39 @@ function cueFiresAlong(path: readonly LatLng[], pin: LatLng, triggerM: number): 
     if (length === 0) continue
     const heading = bearingOf(a, b)
     for (let d = 0; d <= length; d += 3) {
+      if (travelled + d + 1e-6 < skipM) continue
       const t = d / length
       const at: LatLng = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
       if (distanceToPinMeters(at, pin) <= triggerM && headingMatches(at, pin, heading, CUE_HEADING_DEG)) return true
     }
+    travelled += length
   }
   return false
+}
+
+/** Metres ahead of `car` along `path` until the cue would fire, or Infinity. */
+function firstCueMeters(path: readonly LatLng[], car: LatLng, pin: LatLng, triggerM: number): number {
+  if (path.length < 2) return Infinity
+  const { index, distanceM } = nearestSegment(car, path)
+  if (distanceM > ON_ROUTE_M) return Infinity
+  const forward = pathFrom(car, path, index)
+  let travelled = 0
+  for (let i = 0; i + 1 < forward.length; i++) {
+    const a = forward[i]
+    const b = forward[i + 1]
+    const length = distanceToPinMeters(a, b)
+    if (length === 0) continue
+    const heading = bearingOf(a, b)
+    for (let d = 0; d <= length; d += 3) {
+      const t = d / length
+      const at: LatLng = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+      if (distanceToPinMeters(at, pin) <= triggerM && headingMatches(at, pin, heading, CUE_HEADING_DEG)) {
+        return travelled + d
+      }
+    }
+    travelled += length
+  }
+  return Infinity
 }
 
 function bearingOf(from: LatLng, to: LatLng): number {
@@ -218,7 +246,8 @@ export function chooseStartPin(
   /**
    * Inside pin i's zone and moving: will the driving cue still fire for it? It fires when the car
    * is in the zone and faces the pin, so it must do that now or further along the street.
-   * Otherwise the pin is behind the car (starting there would block every pin after it).
+   * The current fix already missed. A facing patch shorter than one second of travel is gone
+   * before the next fix, and starting here would block every pin after it.
    */
   const passedPin = (i: number): 'ahead' | 'passed' | 'unsure' => {
     const pin = ordered[i]
@@ -234,7 +263,8 @@ export function chooseStartPin(
       arriving.distanceM < leaving.distanceM - SIDE_MARGIN_M
         ? [...pathFrom(car, paths[i - 1], arriving.index), ...paths[i].slice(1)]
         : pathFrom(car, paths[i], leaving.index)
-    return cueFiresAlong(ahead, pinAt(pin), resolveTriggerDistanceM(pin.trigger_distance_m)) ? 'ahead' : 'passed'
+    const skipM = Math.max(0, fix.speedMps ?? 0)
+    return cueFiresAlong(ahead, pinAt(pin), resolveTriggerDistanceM(pin.trigger_distance_m), skipM) ? 'ahead' : 'passed'
   }
 
   // Within a pin's trigger distance: that pin. At the agency a new exam is the start of the route.
@@ -289,9 +319,20 @@ export function chooseStartPin(
     return { kind: 'start', sortOrder: orders[0], basis: candidates[0].at ? 'at-pin' : 'between' }
   }
 
-  // Neighbouring pins inside each other's trigger zone (e.g. 23 m apart) are one spot:
-  // start at the first of them still ahead (when moving, passed ones are already replaced above).
+  // Neighbouring pins inside each other's trigger zone (e.g. 23 m apart) are one spot.
+  // When the car is moving, start at whichever of them the cue reaches first. An earlier pin
+  // that the street only faces again later would block the pin the car is about to pass.
   if (between.length === 0 && isConsecutive(orders, ordered)) {
+    if (moving && roadTrace && roadTrace.length >= 2) {
+      const meters = (order: number) => {
+        const pin = ordered.find((item) => item.sort_order === order)!
+        return firstCueMeters(roadTrace, car, pinAt(pin), resolveTriggerDistanceM(pin.trigger_distance_m))
+      }
+      const soonest = orders.reduce((best, order) => (meters(order) < meters(best) - 3 ? order : best))
+      if (Number.isFinite(meters(soonest))) {
+        return { kind: 'start', sortOrder: soonest, basis: 'heading' }
+      }
+    }
     return { kind: 'start', sortOrder: orders[0], basis: moving ? 'heading' : 'at-pin' }
   }
 

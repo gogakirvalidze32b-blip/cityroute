@@ -12,24 +12,12 @@ const AUDITED_INSTRUCTION = new Map<string, string>(
   ]),
 )
 
-const OLD_PIN_LAT = 41.931052
-const OLD_PIN_LNG = 45.476154
-const NEW_PIN_LAT = 41.930785
-const NEW_PIN_LNG = 45.475972
-const RELOCATED_PIN_ROUTES = new Set(['route-1', 'route-3', 'route-4'])
-
-/** Routes 1, 3 and 4 use the slightly higher point. Other pins and route 2 stay. */
+/**
+ * Pin 2 on routes 1, 3 and 4 is stored at 41.931052, 45.476154.
+ * Do not rewrite that point back to 41.930785, 45.475972.
+ */
 export function applyRelocatedPin<T extends { slug: string; pins: PinRow[] }>(routes: T[]): T[] {
-  return routes.map((route) => {
-    if (!RELOCATED_PIN_ROUTES.has(route.slug)) return route
-    return {
-      ...route,
-      pins: route.pins.map((pin) => {
-        if (Math.abs(pin.lat - OLD_PIN_LAT) > 1e-7 || Math.abs(pin.lng - OLD_PIN_LNG) > 1e-7) return pin
-        return { ...pin, lat: NEW_PIN_LAT, lng: NEW_PIN_LNG }
-      }),
-    }
-  })
+  return routes
 }
 
 /**
