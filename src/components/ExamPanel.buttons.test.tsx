@@ -10,7 +10,7 @@ describe('exam panel buttons', () => {
   it('switches between the map and the error panel', async () => {
     const onChange = vi.fn()
     render(<ExamViewSwitcher view="map" onChange={onChange} />)
-    await userEvent.setup().click(screen.getByRole('tab', { name: 'შეცდომები' }))
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'პანელი' }))
     expect(onChange).toHaveBeenCalledWith('panel')
     await userEvent.setup().click(screen.getByRole('tab', { name: 'რუკა' }))
     expect(onChange).toHaveBeenCalledWith('map')

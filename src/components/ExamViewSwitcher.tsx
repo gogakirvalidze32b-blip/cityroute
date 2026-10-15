@@ -45,12 +45,12 @@ export function ExamViewSwitcher({ view, onChange }: Props) {
         type="button"
         role="tab"
         aria-selected={view === 'panel'}
-        aria-label="შეცდომები"
+        aria-label="პანელი"
         className={`exam-view-switch__btn${view === 'panel' ? ' exam-view-switch__btn--active' : ''}`}
         onClick={() => onChange('panel')}
       >
         <PanelIcon />
-        <span className="exam-view-switch__text">შეცდომები</span>
+        <span className="exam-view-switch__text">პანელი</span>
       </button>
     </div>
   )
