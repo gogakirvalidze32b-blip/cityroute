@@ -93,10 +93,13 @@ describe('pin route line', () => {
     expect(line).toEqual(pinRouteLine(fixturePins(1)))
   })
 
-  it('does not draw a line from another route when local pins are empty', () => {
+  it('draws route 4 from its own pins along its street trace', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-4')
-    expect(pinRouteLine(route!.pins)).toEqual([])
-    expect(examRouteLine('route-4', route!.pins)).toEqual([])
+    expect(route?.pins).toHaveLength(32)
+    const line = examRouteLine('route-4', route!.pins)
+    expect(line).toEqual(examRoadTrace('route-4', route!.pins))
+    expect(line.length).toBeGreaterThan(pinRouteLine(route!.pins).length)
+    expect(maxPinOffsetFromLineM(pinRouteLine(route!.pins), line)).toBeLessThanOrEqual(40)
   })
 
   it('route 2 and 3 local pins follow their own street traces, in pin order', () => {
@@ -252,6 +255,21 @@ describe('pin route line', () => {
     expect(routes[1].pins[0].lat).toBe(41.931052)
     expect(routes[2].pins[0].lat).toBe(41.931052)
     expect(routes[3].pins[0].lat).toBe(41.930785)
+  })
+
+  it('moves a stale remote pin onto the corrected coordinate and leaves a new pin', () => {
+    const pin = (lat: number, lng: number, sort_order: number): PinRow =>
+      ({ id: 'x', route_id: 'r', lat, lng, radius_m: 25, trigger_distance_m: 50, instruction_ka: 'იგივე', audio_url: null, sort_order, active: true }) as PinRow
+    const routes = applyRelocatedPin([
+      {
+        slug: 'route-1',
+        pins: [pin(41.926626, 45.461236, 10), pin(41.924423, 45.46041, 10)],
+      },
+    ])
+    expect(routes[0].pins[0].lat).toBeCloseTo(41.924423, 6)
+    expect(routes[0].pins[0].lng).toBeCloseTo(45.46041, 6)
+    expect(routes[0].pins[0].instruction_ka).toBe('იგივე')
+    expect(routes[0].pins[1].lat).toBeCloseTo(41.924423, 6)
   })
 
   it('keeps the straight pin line when a route 1 pin is not on that road', () => {

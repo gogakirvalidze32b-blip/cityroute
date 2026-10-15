@@ -13,11 +13,36 @@ const AUDITED_INSTRUCTION = new Map<string, string>(
 )
 
 /**
- * Pin 2 on routes 1, 3 and 4 is stored at 41.931052, 45.476154.
- * Do not rewrite that point back to 41.930785, 45.475972.
+ * Supabase still stores the previous coordinates for the nine corrected pins.
+ * Rewrite only those old points. Pin 2 at 41.931052 / 41.930785 is left as stored.
  */
+const MOVED_PINS: Array<[[number, number], [number, number]]> = [
+  [[41.926909, 45.461327], [41.926887, 45.461319]],
+  [[41.926626, 45.461236], [41.924423, 45.46041]],
+  [[41.926429, 45.461338], [41.923639, 45.460725]],
+  [[41.922093, 45.469893], [41.921929, 45.469923]],
+  [[41.917228, 45.475799], [41.917136, 45.476094]],
+  [[41.917267, 45.475761], [41.91745, 45.475199]],
+  [[41.920189, 45.470198], [41.920288, 45.470219]],
+  [[41.929098, 45.475144], [41.92918, 45.475192]],
+  [[41.933977, 45.478151], [41.933672, 45.477947]],
+]
+
+function sameCoordinate(left: number, right: number) {
+  return Math.abs(left - right) < 1e-7
+}
+
 export function applyRelocatedPin<T extends { slug: string; pins: PinRow[] }>(routes: T[]): T[] {
-  return routes
+  return routes.map((route) => ({
+    ...route,
+    pins: route.pins.map((pin) => {
+      const moved = MOVED_PINS.find(
+        ([from]) => sameCoordinate(pin.lat, from[0]) && sameCoordinate(pin.lng, from[1]),
+      )
+      if (!moved) return pin
+      return { ...pin, lat: moved[1][0], lng: moved[1][1] }
+    }),
+  }))
 }
 
 /**

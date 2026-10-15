@@ -38,7 +38,7 @@ function route1Pins(routeId: string) {
 
 type AuditPin = { route: number; pin: number; lat: number; lng: number; instruction: string }
 
-/** Same coordinates, order, and texts as the live exam. Remote Supabase pins still replace these when loaded. */
+/** Same coordinates, order, and texts as the audited exam. Stale remote coordinates are corrected by applyRelocatedPin. */
 function pinsFromAudit(routeNumber: number, routeId: string, idPrefix: string) {
   const rows = (auditedPins as AuditPin[])
     .filter((item) => item.route === routeNumber)
@@ -136,7 +136,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 4,
     active: true,
     polyline: line('route-4', route4Fallback),
-    pins: [], // Pins will be loaded from Supabase (32 pins)
+    pins: pinsFromAudit(4, 'local-route-4', 'p4'),
   },
   {
     id: 'local-route-5',

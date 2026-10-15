@@ -30,7 +30,7 @@ export function ExamViewSwitcher({ view, onChange }: Props) {
         <span className="exam-view-switch__icon" aria-hidden="true">
           📋
         </span>
-        <span>შეცდომები</span>
+        <span>პანელი</span>
       </button>
     </div>
   )

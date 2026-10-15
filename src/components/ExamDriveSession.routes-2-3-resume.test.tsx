@@ -158,7 +158,8 @@ describe('routes 2 and 3 resume from the last saved pin', () => {
 
   it('does not change route 1 pins, route 4 local pins, or the Tbilisi test route', () => {
     expect(route1.pins).toHaveLength(34)
-    expect(route4.pins).toHaveLength(0)
+    expect(route4.pins).toHaveLength(32)
+    expect(route4.pins.find((pin) => pin.sort_order === 29)?.lat).toBeCloseTo(41.933672, 6)
     expect(liveRoutes.some((route) => route.slug === 'test-route-tbilisi')).toBe(false)
   })
 
