@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { useAuth } from '@/context/AuthContext'
+import { SupportFooterLinks } from '@/components/support/SupportLinks'
 
 export function LoginPage() {
   const { signIn, user, loading } = useAuth()
@@ -112,6 +113,7 @@ export function LoginPage() {
           ანგარიში არ გაქვს? <Link to="/register">რეგისტრაცია</Link>
         </p>
       </div>
+      <SupportFooterLinks />
     </div>
   )
 }

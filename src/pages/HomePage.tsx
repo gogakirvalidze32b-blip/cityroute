@@ -3,6 +3,7 @@
 import { AppBrand } from '@/components/AppBrand'
 import { PaymentButton } from '@/components/PaymentButton'
 import { useAuth } from '@/context/AuthContext'
+import { SupportButton, SupportFooterLinks } from '@/components/support/SupportLinks'
 
 import { accessLabel, routeSourceLabel } from '@/types/database'
 
@@ -34,6 +35,7 @@ export function HomePage() {
         <h1>მოწყობილობა დაბლოკილია</h1>
         <p>{deviceBlocked}</p>
         <p className="muted">1 ანგარიში = მაქსიმუმ 2 მანქანა. მხარდაჭერასთან დაუკავშირდი მოწყობილობის გადატვირთვისთვის.</p>
+        <SupportButton />
         <button type="button" onClick={() => void signOut()}>
           გასვლა
         </button>
@@ -91,9 +93,11 @@ export function HomePage() {
             />
           </div>
 
+          <SupportButton />
           <button type="button" className="home-signout" onClick={() => void signOut()}>
             გასვლა
           </button>
+          <SupportFooterLinks />
         </footer>
       </div>
     )
@@ -139,9 +143,11 @@ export function HomePage() {
           {profile?.subscription_plan && ' · '}
           {routeSourceLabel(source)}
         </p>
+        <SupportButton />
         <button type="button" className="home-signout" onClick={() => void signOut()}>
           გასვლა
         </button>
+        <SupportFooterLinks />
       </footer>
     </div>
   )
