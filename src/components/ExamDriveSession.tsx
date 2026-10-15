@@ -330,6 +330,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const panelOnly = features.errorPanel && !features.mapNav
   const showMapView = active && features.mapNav && driveView === 'map'
   const showPanelView = active && features.errorPanel && (panelOnly || (features.canSwitchViews && driveView === 'panel'))
+  const showToolbar = active && (features.canSwitchViews || (panelOnly && showPanelView))
   const showVoiceInToolbar = showPanelView && !mapOnly
 
   useEffect(() => {
@@ -998,42 +999,39 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     >
       {active && (
         <>
-          <div className="exam-topbar">
-            <ExamScoreboard
-              elapsedMs={elapsedMs}
-              speedKmh={speedKmh}
-              speedLimitKmh={speedLimitKmh}
-              minorTotal={exam.minorTotal}
-              severeTotal={exam.severeTotal}
-              onRecordSevere={handleSevereQuick}
-              showErrors={features.errorPanel && (panelOnly || driveView === 'panel')}
-              compact={mapOnly}
-            />
+          <ExamScoreboard
+            elapsedMs={elapsedMs}
+            speedKmh={speedKmh}
+            speedLimitKmh={speedLimitKmh}
+            minorTotal={exam.minorTotal}
+            severeTotal={exam.severeTotal}
+            onRecordSevere={handleSevereQuick}
+            showErrors={features.errorPanel && (panelOnly || driveView === 'panel')}
+            compact={mapOnly}
+          />
 
-            {showVoiceInToolbar && (
-              <div className="exam-voice-bar exam-voice-bar--toolbar">
-                {nextPinDistanceLabel && nextPin && (
-                  <p className="exam-voice-next">
-                    <small>შემდეგი · {nextPinDistanceLabel}</small>
-                    <strong>{nextPin.instruction_ka}</strong>
-                  </p>
-                )}
-                {lastSpoken && (
-                  <p className="exam-voice-last">
-                    <small>ბოლო ხმა</small>
-                    <span>{lastSpoken}</span>
-                  </p>
-                )}
-                {!pinsActive && <p className="exam-voice-muted">ამ მარშრუტზე GPS წერტილები არ არის</p>}
-              </div>
-            )}
-
-            {features.canSwitchViews && <ExamViewSwitcher view={driveView} onChange={setDriveView} />}
-
-            <button type="button" className="exam-finish-fab" onClick={finishSession}>
-              დასრულება
-            </button>
-          </div>
+          {showToolbar && (
+            <div className="exam-drive-toolbar">
+              {features.canSwitchViews && <ExamViewSwitcher view={driveView} onChange={setDriveView} />}
+              {showVoiceInToolbar && (
+                <div className="exam-voice-bar exam-voice-bar--toolbar">
+                  {nextPinDistanceLabel && nextPin && (
+                    <p className="exam-voice-next">
+                      <small>შემდეგი · {nextPinDistanceLabel}</small>
+                      <strong>{nextPin.instruction_ka}</strong>
+                    </p>
+                  )}
+                  {lastSpoken && (
+                    <p className="exam-voice-last">
+                      <small>ბოლო ხმა</small>
+                      <span>{lastSpoken}</span>
+                    </p>
+                  )}
+                  {!pinsActive && <p className="exam-voice-muted">ამ მარშრუტზე GPS წერტილები არ არის</p>}
+                </div>
+              )}
+            </div>
+          )}
 
           {resumeError && <p className="error-text">{resumeError}</p>}
 
@@ -1133,6 +1131,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             </div>
           )}
 
+          <button type="button" className="exam-finish-fab" onClick={finishSession}>
+            დასრულება
+          </button>
         </>
       )}
 
