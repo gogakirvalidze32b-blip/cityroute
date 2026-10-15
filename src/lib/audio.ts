@@ -16,8 +16,11 @@ export const VOICE_PITCH: VoicePitch = 'mid'
 /** @deprecated გამოიყენე VOICE_PITCH */
 export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
 
-/** ხმის სიმაღლე (volume): 0 = ჩუმი · 1 = სრული */
+/** ხმის სიმაღლე (volume): 0 = ჩუმი · 1 = სრული. HTML media volume 1-ზე მეტს არ იღებს. */
 export const VOICE_VOLUME = 1
+
+/** 130% loudness through a GainNode. The prepared mid timbre stays; this does not change pitch or speed. */
+export const VOICE_GAIN = 1.3
 
 const WIRED = Symbol('cityroute-audio-wired')
 
@@ -155,6 +158,9 @@ export class AudioEngine {
     smooth.attack.value = 0.008
     smooth.release.value = 0.22
 
+    const loud = ctx.createGain()
+    loud.gain.value = VOICE_GAIN
+
     source
       .connect(depth)
       .connect(chest)
@@ -162,6 +168,7 @@ export class AudioEngine {
       .connect(soften)
       .connect(darken)
       .connect(smooth)
+      .connect(loud)
       .connect(ctx.destination)
 
     const chain: WarmChain = { ctx, resume: () => ctx.resume() }

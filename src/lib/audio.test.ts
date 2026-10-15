@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AudioEngine, VOICE_PLAYBACK_RATE, VOICE_PITCH } from '@/lib/audio'
+import { AudioEngine, VOICE_GAIN, VOICE_PLAYBACK_RATE, VOICE_PITCH, VOICE_VOLUME } from '@/lib/audio'
 
 class FakeAudio {
   src = ''
@@ -76,6 +76,8 @@ describe('audio queue', () => {
   it('plays every voice clip at 1.0x and keeps the original pitch', async () => {
     expect(VOICE_PLAYBACK_RATE).toBe(1)
     expect(VOICE_PITCH).toBe('mid')
+    expect(VOICE_VOLUME).toBe(1)
+    expect(VOICE_GAIN).toBe(1.3)
 
     const playback = engine()
     const instances: FakeAudio[] = []
