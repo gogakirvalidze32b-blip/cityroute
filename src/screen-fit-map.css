@@ -1,0 +1,17 @@
+.leaflet-container .leaflet-bar a {
+  width: 36px;
+  height: 36px;
+  line-height: 36px;
+}
+
+.leaflet-container .leaflet-top {
+  top: max(6px, env(safe-area-inset-top));
+}
+
+.leaflet-container .leaflet-left {
+  left: max(6px, env(safe-area-inset-left));
+}
+
+.leaflet-container .leaflet-bottom {
+  bottom: max(6px, env(safe-area-inset-bottom));
+}

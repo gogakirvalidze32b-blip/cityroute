@@ -2679,3 +2679,199 @@ button:disabled {
 .maplibregl-ctrl-attrib {
   display: none !important;
 }
+
+/* Screen fit: phone, tablet, and Android car monitors. Layout only. */
+.page.home-page {
+  height: 100svh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  padding-top: max(0.35rem, env(safe-area-inset-top));
+  padding-right: max(0.65rem, env(safe-area-inset-right));
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
+  padding-left: max(0.65rem, env(safe-area-inset-left));
+}
+
+.home-page .home-header {
+  flex-shrink: 0;
+  padding: clamp(0.35rem, 1.6vh, 1.1rem) 0 0.15rem;
+}
+
+.home-page .route-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: clamp(0.35rem, 1.4vh, 1.2rem);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.3rem, 1vh, 0.7rem);
+  overflow: hidden;
+}
+
+.home-page .route-card {
+  flex: 1 1 0;
+  min-height: 44px;
+  padding: clamp(0.4rem, 1.5vh, 1.15rem) clamp(0.7rem, 2vw, 1.25rem);
+}
+
+.home-page .route-card__name {
+  font-size: clamp(0.95rem, 2.4vh, 1.1rem);
+}
+
+.home-page .home-footer {
+  flex-shrink: 0;
+  padding-top: clamp(0.3rem, 1vh, 0.8rem);
+  gap: clamp(0.25rem, 0.8vh, 0.55rem);
+}
+
+.home-page .home-signout {
+  min-height: 40px;
+  padding: clamp(0.4rem, 1.2vh, 0.7rem) 1.1rem;
+}
+
+.route-page--exam {
+  height: 100svh;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.route-toolbar {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding-top: max(0.3rem, env(safe-area-inset-top));
+  padding-right: max(0.5rem, env(safe-area-inset-right));
+  padding-bottom: 0.3rem;
+  padding-left: max(0.5rem, env(safe-area-inset-left));
+}
+
+.toolbar-title {
+  min-width: 0;
+}
+
+.toolbar-title strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.car-fullscreen-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0.4rem 0.7rem;
+  border-radius: 10px;
+  background: #0f766e;
+  color: #fff;
+  font-weight: 700;
+  font-size: clamp(0.78rem, 1.6vw, 0.95rem);
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.car-fullscreen-btn--floating {
+  position: fixed;
+  z-index: 1100;
+  right: max(0.65rem, env(safe-area-inset-right));
+  bottom: max(0.65rem, env(safe-area-inset-bottom));
+}
+
+.route-page--exam .exam-preview,
+.route-page--exam .exam-preview__map,
+.route-page--exam .exam-preview__map--official {
+  overflow: hidden;
+  min-height: 0;
+  max-height: none;
+  height: auto;
+}
+
+.route-page--exam .exam-preview {
+  flex: 1 1 auto;
+}
+
+.route-page--exam .exam-preview__map,
+.route-page--exam .exam-preview__map--official {
+  flex: 1 1 auto;
+}
+
+.route-page--exam .exam-preview__official-viewport {
+  aspect-ratio: auto;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+}
+
+.route-page--exam .exam-preview__panel {
+  flex-shrink: 0;
+  gap: clamp(0.25rem, 0.8vh, 0.45rem);
+  padding: clamp(0.4rem, 1.3vh, 0.9rem) clamp(0.7rem, 2vw, 1.15rem)
+    max(0.4rem, env(safe-area-inset-bottom));
+}
+
+.route-page--exam .exam-preview__panel .nav-start-btn {
+  margin-top: 0;
+  min-height: 44px;
+  padding: clamp(0.5rem, 1.5vh, 0.9rem) 1rem;
+  font-size: clamp(0.95rem, 2.2vh, 1.08rem);
+}
+
+.route-page--exam .session-hint {
+  padding: 0;
+  font-size: clamp(0.75rem, 1.8vh, 0.9rem);
+  line-height: 1.3;
+}
+
+.route-page--exam .exam-preview__zoom-controls {
+  right: max(0.45rem, env(safe-area-inset-right));
+  bottom: max(0.45rem, env(safe-area-inset-bottom));
+}
+
+.route-page--exam .exam-preview__zoom-btn {
+  width: 40px;
+  height: 40px;
+}
+
+@media (orientation: landscape) and (max-height: 560px) {
+  .home-page .route-list {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .home-page .route-card {
+    min-width: 0;
+  }
+
+  .home-page .home-header {
+    padding-top: 0.2rem;
+  }
+
+  .home-page .app-brand__city,
+  .home-page .home-city {
+    font-size: clamp(1.05rem, 4vh, 1.35rem);
+  }
+
+  .exam-session {
+    --exam-hud-h: clamp(44px, 12dvh, 58px);
+  }
+
+  .exam-topbar {
+    flex-wrap: nowrap;
+  }
+}
+
+@media (orientation: portrait) and (max-height: 700px) {
+  .exam-session {
+    --exam-hud-h: clamp(44px, 8dvh, 56px);
+  }
+}
+
+@media (orientation: landscape) and (min-width: 900px) {
+  .exam-session {
+    --exam-hud-h: clamp(52px, 11dvh, 72px);
+  }
+}
