@@ -61,6 +61,7 @@ import {
   audioHeadingOk,
   decidePinAudio,
 } from '@/lib/pin-audio'
+import { examRoadTrace } from '@/lib/pin-route-line'
 import {
   nextSortOrder,
   ordersForIds,
@@ -68,6 +69,7 @@ import {
   resolveExamResume,
   savedHandledOrders,
 } from '@/lib/route-resume'
+import { chooseStartPin } from '@/lib/start-pin'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
@@ -193,7 +195,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const panelOnly = features.errorPanel && !features.mapNav
   const showMapView = active && features.mapNav && driveView === 'map'
   const showPanelView = active && features.errorPanel && (panelOnly || (features.canSwitchViews && driveView === 'panel'))
-  const showToolbar = active && (features.canSwitchViews || (panelOnly && showPanelView))
   const showVoiceInToolbar = showPanelView && !mapOnly
 
   useEffect(() => {
@@ -313,13 +314,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       setSpeedKmh(0)
       setGpsStarted(true)
       markGpsConsentGranted()
-      return { position: raw, denied: false }
+      return { position: raw, fix: pos, denied: false }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'GPS შეცდომა'
       setGpsError(msg)
       if (msg.includes('უარყოფილი')) clearGpsConsent()
       if (!msg.includes('უარყოფილი') && !getGpsEnvironmentIssue()) setGpsStarted(true)
-      return { position: null, denied: msg.includes('უარყოფილი') }
+      return { position: null, fix: null, denied: msg.includes('უარყოფილი') }
     } finally {
       if (!silent) setGpsStarting(false)
     }
@@ -629,7 +630,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setExam((prev) => recordSevereQuick(prev))
   }, [])
 
-  function startSession(position: LatLng | null = userPos) {
+  function startSession(fix: GpsPosition | null) {
     finishInProgressRef.current = false
     triggeredRef.current = new Set()
     pinApproachRef.current = new Map()
@@ -637,6 +638,25 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     const firstPin = voicePins[0]
     if (firstPin && isStartPinAlreadyAnnounced(route.slug, firstPin.id)) {
       triggeredRef.current.add(firstPin.id)
+    }
+    // New exam only. Resume never reaches here. A fallback or an ambiguous fix
+    // keeps the existing sequence from PIN 1; street lines and pin audio stay as they are.
+    if (fix && FIELD_TEST_SLUGS.has(route.slug) && voicePins.length > 0) {
+      const decision = chooseStartPin(
+        voicePins,
+        {
+          position: [fix.lat, fix.lng],
+          accuracyM: fix.accuracy,
+          headingDeg: fix.heading,
+          speedMps: fix.speed,
+        },
+        examRoadTrace(route.slug, voicePins),
+      )
+      if (decision.kind === 'start') {
+        for (const pin of voicePins) {
+          if (pin.sort_order < decision.sortOrder) triggeredRef.current.add(pin.id)
+        }
+      }
     }
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       handledOrdersRef.current = new Set(
@@ -700,11 +720,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       return
     }
     
-    // No saved state - this is a NEW session
-    const gpsResult = userPos ? { position: userPos, denied: false } : await enableGps(false)
+    // No saved state - this is a NEW session. Resume returned above.
+    const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
     if (gpsResult.denied) return
-    const position = gpsResult.position
-    startSession(position)
+    startSession(gpsResult.fix)
   }
 
   function finishSession() {
@@ -772,38 +791,41 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     >
       {active && (
         <>
-          <ExamScoreboard
-            elapsedMs={elapsedMs}
-            speedKmh={speedKmh}
-            minorTotal={exam.minorTotal}
-            severeTotal={exam.severeTotal}
-            onRecordSevere={handleSevereQuick}
-            showErrors={features.errorPanel && (panelOnly || driveView === 'panel')}
-            compact={mapOnly}
-          />
+          <div className="exam-topbar">
+            <ExamScoreboard
+              elapsedMs={elapsedMs}
+              speedKmh={speedKmh}
+              minorTotal={exam.minorTotal}
+              severeTotal={exam.severeTotal}
+              onRecordSevere={handleSevereQuick}
+              showErrors={features.errorPanel && (panelOnly || driveView === 'panel')}
+              compact={mapOnly}
+            />
 
-          {showToolbar && (
-            <div className="exam-drive-toolbar">
-              {features.canSwitchViews && <ExamViewSwitcher view={driveView} onChange={setDriveView} />}
-              {showVoiceInToolbar && (
-                <div className="exam-voice-bar exam-voice-bar--toolbar">
-                  {nextPinDistanceLabel && nextPin && (
-                    <p className="exam-voice-next">
-                      <small>შემდეგი · {nextPinDistanceLabel}</small>
-                      <strong>{nextPin.instruction_ka}</strong>
-                    </p>
-                  )}
-                  {lastSpoken && (
-                    <p className="exam-voice-last">
-                      <small>ბოლო ხმა</small>
-                      <span>{lastSpoken}</span>
-                    </p>
-                  )}
-                  {!pinsActive && <p className="exam-voice-muted">ამ მარშრუტზე GPS წერტილები არ არის</p>}
-                </div>
-              )}
-            </div>
-          )}
+            {showVoiceInToolbar && (
+              <div className="exam-voice-bar exam-voice-bar--toolbar">
+                {nextPinDistanceLabel && nextPin && (
+                  <p className="exam-voice-next">
+                    <small>შემდეგი · {nextPinDistanceLabel}</small>
+                    <strong>{nextPin.instruction_ka}</strong>
+                  </p>
+                )}
+                {lastSpoken && (
+                  <p className="exam-voice-last">
+                    <small>ბოლო ხმა</small>
+                    <span>{lastSpoken}</span>
+                  </p>
+                )}
+                {!pinsActive && <p className="exam-voice-muted">ამ მარშრუტზე GPS წერტილები არ არის</p>}
+              </div>
+            )}
+
+            {features.canSwitchViews && <ExamViewSwitcher view={driveView} onChange={setDriveView} />}
+
+            <button type="button" className="exam-finish-fab" onClick={finishSession}>
+              დასრულება
+            </button>
+          </div>
 
           {routeComplete && FIELD_TEST_SLUGS.has(route.slug) && (
             <div
@@ -840,9 +862,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             {showPanelView && <ExamErrorGrid counts={exam.counts} onError={handleError} />}
           </div>
 
-          <button type="button" className="exam-finish-fab" onClick={finishSession}>
-            დასრულება
-          </button>
         </>
       )}
 

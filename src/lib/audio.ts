@@ -16,13 +16,26 @@ export const VOICE_PITCH: VoicePitch = 'normal'
 /** @deprecated გამოიყენე VOICE_PITCH */
 export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
 
-/** ხმის სიმაღლე (volume): 0 = ჩუმი · 1 = სრული */
+/** ხმის სიმაღლე (volume): 0 = ჩუმი · 1 = სრული. HTML media volume 1-ზე მეტს არ იღებს. */
 export const VOICE_VOLUME = 1
+
+/**
+ * Voice signal gain. 1.3 is 130% of the file.
+ * Applied with a GainNode, not audio.volume, and only because every bundled WAV
+ * peaks low enough that this gain stays below full scale.
+ */
+export const VOICE_GAIN = 1.3
 
 /** Shared Web Audio graph (one AudioContext for all voice files — mobile browsers cap contexts). */
 type WarmGraph = {
   ctx: AudioContext
   input: AudioNode
+}
+
+/** Loudness only: one gain into the speakers. No EQ, no pitch shift. */
+type LoudGraph = {
+  ctx: AudioContext
+  gain: GainNode
 }
 
 /** Result of a playback attempt. 'failed' = neither the MP3 nor the TTS fallback could start. */
@@ -55,6 +68,7 @@ export class AudioEngine {
   private pitch: VoicePitch = VOICE_PITCH
   private volume = VOICE_VOLUME
   private graph: WarmGraph | null = null
+  private loud: LoudGraph | null = null
   private wired = new WeakMap<HTMLAudioElement, Promise<boolean>>()
   private busySince = 0
   private diagnostics: AudioDiagnostic[] = []
@@ -97,6 +111,26 @@ export class AudioEngine {
 
     // @ts-expect-error — Safari/WebKit პრეფიქსი
     audio.webkitPreservesPitch = audio.preservesPitch
+  }
+
+ /** Gain-only graph. Does not filter or change playback rate. */
+  private getLoudGraph(): LoudGraph | null {
+    if (this.loud) return this.loud
+    if (typeof AudioContext === 'undefined') return null
+
+    let ctx: AudioContext
+    try {
+      ctx = new AudioContext()
+    } catch (err) {
+      this.report('engine', null, 'audio-context-not-running', err instanceof Error ? err.message : String(err))
+      return null
+    }
+
+    const gain = ctx.createGain()
+    gain.gain.value = VOICE_GAIN
+    gain.connect(ctx.destination)
+    this.loud = { ctx, gain }
+    return this.loud
   }
 
   /** Builds the shared "mid" EQ graph once. Returns null if Web Audio is unavailable. */
@@ -178,6 +212,36 @@ export class AudioEngine {
    * An element is never wired to a suspended context: that would make playback silent
    * while audio.play() still "succeeds". In that case we fall back to plain playback.
    */
+  /**
+   * 130% loudness through a GainNode. The media element stays at volume 1.
+   * A suspended context is not wired: playback would succeed and stay silent.
+   */
+  private ensureLoudChain(audio: HTMLAudioElement): Promise<boolean> {
+    if (this.pitch === 'mid') return Promise.resolve(false)
+
+    const existing = this.wired.get(audio)
+    if (existing) return existing
+
+    const task = (async () => {
+      const graph = this.getLoudGraph()
+      if (!graph) return false
+      await this.resumeContext(graph.ctx)
+      if (graph.ctx.state !== 'running') return false
+      try {
+        graph.ctx.createMediaElementSource(audio).connect(graph.gain)
+        return true
+      } catch {
+        return false
+      }
+    })()
+
+    this.wired.set(audio, task)
+    void task.then((ok) => {
+      if (!ok && this.wired.get(audio) === task) this.wired.delete(audio)
+    })
+    return task
+  }
+
   private ensureWarmChain(audio: HTMLAudioElement): Promise<boolean> {
     if (this.pitch !== 'mid') return Promise.resolve(false)
 
@@ -218,6 +282,13 @@ export class AudioEngine {
         if (graph) {
           void this.resumeContext(graph.ctx).then(() => {
             if (graph.ctx.state === 'running') this.cache.forEach((a) => void this.ensureWarmChain(a))
+          })
+        }
+      } else {
+        const graph = this.getLoudGraph()
+        if (graph) {
+          void this.resumeContext(graph.ctx).then(() => {
+            if (graph.ctx.state === 'running') this.cache.forEach((a) => void this.ensureLoudChain(a))
           })
         }
       }
@@ -301,7 +372,8 @@ export class AudioEngine {
       try {
         audio.currentTime = 0
         this.applyRate(audio)
-        await this.ensureWarmChain(audio)
+        if (this.pitch === 'mid') await this.ensureWarmChain(audio)
+        else await this.ensureLoudChain(audio)
 
         this.speaking.add(pinId)
         this.busySince = Date.now()

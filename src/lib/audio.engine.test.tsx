@@ -29,6 +29,8 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
   }
 
   const sources: unknown[] = []
+  const gains: FakeNode[] = []
+  const filters: FakeNode[] = []
   const resume = vi.fn(() => (ctxState === 'running' ? Promise.resolve() : new Promise<void>(() => {})))
   class FakeNode {
     type = ''
@@ -49,7 +51,16 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
     destination = new FakeNode()
     resume = resume
     close = vi.fn()
-    createBiquadFilter = () => new FakeNode()
+    createGain = () => {
+      const n = new FakeNode()
+      gains.push(n)
+      return n
+    }
+    createBiquadFilter = () => {
+      const n = new FakeNode()
+      filters.push(n)
+      return n
+    }
     createDynamicsCompressor = () => new FakeNode()
     createMediaElementSource = () => {
       const n = new FakeNode()
@@ -80,7 +91,7 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
     configurable: true,
     value: { speak, cancel: vi.fn(), getVoices: () => [], addEventListener: vi.fn() },
   })
-  return { created, sources, resume, speak }
+  return { created, sources, gains, filters, resume, speak }
 }
 
 async function freshEngine() {
@@ -98,14 +109,18 @@ describe('AudioEngine', () => {
     vi.restoreAllMocks()
   })
 
-  it('plays the MP3 at 1.0x with pitch preserved and without the EQ graph', async () => {
+  it('plays the MP3 at 1.0x with pitch preserved, media volume 1, and a 1.3 gain', async () => {
     const f = installFakes()
     const engine = await freshEngine()
     expect(await engine.playDetailed('/audio/a.mp3', 'p1', 'text')).toBe('played')
     expect(f.created[0].play).toHaveBeenCalledTimes(1)
+    expect(f.created[0].volume).toBe(1)
     expect(f.created[0].playbackRate).toBe(1)
     expect(f.created[0].preservesPitch).toBe(true)
-    expect(f.sources).toHaveLength(0)
+    expect(f.gains).toHaveLength(1)
+    expect(f.gains[0].gain.value).toBe(1.3)
+    expect(f.filters).toHaveLength(0)
+    expect(f.sources).toHaveLength(1)
   })
 
   it('does NOT hang when AudioContext.resume() never resolves, and does not wire to a suspended context', async () => {
@@ -117,21 +132,31 @@ describe('AudioEngine', () => {
     ])
     expect(status).toBe('played')
     expect(f.created[0].play).toHaveBeenCalledTimes(1)
-    expect(f.sources).toHaveLength(0) // plain playback = audible, not silent
+    expect(f.created[0].volume).toBe(1)
+    expect(f.created[0].playbackRate).toBe(1)
+    expect(f.sources).toHaveLength(0) // suspended context stays unwired so playback is audible
   })
 
-  it('does not open an AudioContext while pitch processing is off', async () => {
+  it('uses one 1.3 gain for every voice and does not open the EQ graph', async () => {
     const f = installFakes()
     const ctorSpy = vi.fn()
     const Base = (globalThis as unknown as { AudioContext: new () => object }).AudioContext
     vi.stubGlobal('AudioContext', class extends Base { constructor() { super(); ctorSpy() } })
     const engine = await freshEngine()
-    await engine.playDetailed('/audio/a.mp3', 'p1', 't')
-    await engine.playDetailed('/audio/b.mp3', 'p2', 't')
-    await engine.playDetailed('/audio/c.mp3', 'p3', 't')
-    expect(ctorSpy).toHaveBeenCalledTimes(0)
-    expect(f.sources).toHaveLength(0)
-    expect(f.created.every((audio) => audio.playbackRate === 1 && audio.preservesPitch)).toBe(true)
+    for (const [url, id] of [
+      ['/audio/points/route-1.wav', 'p1'],
+      ['/audio/points/route-2.wav', 'p2'],
+      ['/audio/points/route-3.wav', 'p3'],
+      ['/audio/points/route-4.wav', 'p4'],
+    ] as const) {
+      expect(await engine.playDetailed(url, id, 't')).toBe('played')
+    }
+    expect(ctorSpy).toHaveBeenCalledTimes(1)
+    expect(f.gains).toHaveLength(1)
+    expect(f.gains[0].gain.value).toBe(1.3)
+    expect(f.filters).toHaveLength(0)
+    expect(f.sources).toHaveLength(4)
+    expect(f.created.every((audio) => audio.volume === 1 && audio.playbackRate === 1 && audio.preservesPitch)).toBe(true)
   })
 
   it('autoplay blocked → TTS fallback speaks the instruction text and the reason is recorded', async () => {
@@ -182,11 +207,14 @@ describe('AudioEngine', () => {
     expect(engine.isBusy()).toBe(false)
   })
 
-  it('unlock() warms TTS and does not start the EQ AudioContext', async () => {
+  it('unlock() warms TTS and the gain context, without the EQ graph', async () => {
     const f = installFakes({}, 'suspended-hang')
     const engine = await freshEngine()
     engine.unlock()
-    expect(f.resume).not.toHaveBeenCalled()
+    expect(f.resume).toHaveBeenCalledTimes(1)
+    expect(f.gains).toHaveLength(1)
+    expect(f.gains[0].gain.value).toBe(1.3)
+    expect(f.filters).toHaveLength(0)
     expect(f.speak).toHaveBeenCalledTimes(1)
   })
 

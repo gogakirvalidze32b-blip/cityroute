@@ -7,7 +7,8 @@ import { audioEngine } from '@/lib/audio'
 import { createExamSession } from '@/lib/exam-session'
 import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
 import { examRoadTrace, examRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
-import type { GpsPosition } from '@/lib/gps'
+import { distanceToPinMeters, type GpsPosition, type LatLng } from '@/lib/gps'
+import { chooseStartPin } from '@/lib/start-pin'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 vi.mock('@/context/AuthContext', () => ({
@@ -355,5 +356,55 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(saved?.triggeredSortOrders).toEqual([1, 2])
     expect(saved?.nextSortOrder).toBe(3)
     second.unmount()
+  })
+
+  it('a new route 1 exam can start at PIN 10, and reload keeps that resume', async () => {
+    const route = routeBySlug('route-1')
+    const pins = sorted(route)
+    const line = examRoadTrace(route.slug, pins)!
+    const bearing = (from: LatLng, to: LatLng) => {
+      const φ1 = (from[0] * Math.PI) / 180
+      const φ2 = (to[0] * Math.PI) / 180
+      const Δλ = ((to[1] - from[1]) * Math.PI) / 180
+      const y = Math.sin(Δλ) * Math.cos(φ2)
+      const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
+      return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360
+    }
+    let chosen: GpsPosition | null = null
+    for (let i = 1; i < line.length && !chosen; i++) {
+      const length = distanceToPinMeters(line[i - 1], line[i])
+      if (length === 0) continue
+      const heading = bearing(line[i - 1], line[i])
+      for (let d = 0; d <= length; d += 12) {
+        const t = d / length
+        const position: LatLng = [
+          line[i - 1][0] + (line[i][0] - line[i - 1][0]) * t,
+          line[i - 1][1] + (line[i][1] - line[i - 1][1]) * t,
+        ]
+        const decision = chooseStartPin(
+          pins,
+          { position, accuracyM: 5, headingDeg: heading, speedMps: 8 },
+          line,
+        )
+        if (decision.kind === 'start' && decision.sortOrder === 10) {
+          chosen = { lat: position[0], lng: position[1], accuracy: 5, heading, speed: 8, timestamp: Date.now() }
+          break
+        }
+      }
+    }
+    expect(chosen).not.toBeNull()
+    gps.once = chosen
+    const first = render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    expect(nextOrder()).toBe(10)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    first.unmount()
+
+    gps.once = fix(route, 1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(nextOrder()).toBe(10)
+    expect(screen.queryByRole('button', { name: /გამოცდის დაწყება/ })).toBeNull()
   })
 })
