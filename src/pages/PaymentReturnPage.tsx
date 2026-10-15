@@ -35,7 +35,7 @@ export function PaymentReturnPage() {
       })
 
       // Build query string manually since Supabase client doesn't support query params well
-      const verifyUrl = `${supabase.functions._url}/payment-verify?paymentId=${paymentId}&provider=${provider}`
+      const verifyUrl = `${(supabase.functions as unknown as { _url: string })._url}/payment-verify?paymentId=${paymentId}&provider=${provider}`
       const response = await fetch(verifyUrl)
       const result = await response.json()
 

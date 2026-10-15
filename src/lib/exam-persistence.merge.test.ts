@@ -1,0 +1,88 @@
+import { afterEach, describe, expect, it } from 'vitest'
+import { createExamSession } from '@/lib/exam-session'
+import { loadActiveExam, mergeExamSave, saveActiveExam, type SavedExamState } from '@/lib/exam-persistence'
+
+function saved(over: Partial<SavedExamState> = {}): SavedExamState {
+  return {
+    routeId: 'local-route-2',
+    routeSlug: 'route-2',
+    routeName: 'მარშრუტი 2',
+    phase: 'active',
+    exam: createExamSession('local-route-2', 'მარშრუტი 2'),
+    userPos: null,
+    heading: 0,
+    speedKmh: 0,
+    elapsedMs: 60_000,
+    triggeredPins: ['p2-1', 'p2-2'],
+    triggeredSortOrders: [1, 2],
+    lastPassedSortOrder: 2,
+    nextSortOrder: 3,
+    savedAt: 1_000,
+    ...over,
+  }
+}
+
+describe('exam save merge: incomplete writes do not replace progress', () => {
+  afterEach(() => localStorage.clear())
+
+  it('keeps sort-order progress when a later save has no orders (empty pin list)', () => {
+    const previous = saved()
+    const incomplete = saved({
+      triggeredPins: ['uuid-1', 'uuid-2'],
+      triggeredSortOrders: undefined,
+      lastPassedSortOrder: undefined,
+      nextSortOrder: undefined,
+      savedAt: 2_000,
+    })
+    const merged = mergeExamSave(previous, incomplete)
+    expect(merged.triggeredSortOrders).toEqual([1, 2])
+    expect(merged.nextSortOrder).toBe(3)
+    expect(merged.lastPassedSortOrder).toBe(2)
+    expect(merged.triggeredPins).toEqual(['uuid-1', 'uuid-2'])
+  })
+
+  it('keeps the richer prefix when a stale save has fewer handled pins', () => {
+    const previous = saved({ triggeredSortOrders: [1, 2, 3], lastPassedSortOrder: 3, nextSortOrder: 4 })
+    const stale = saved({ triggeredSortOrders: [1], lastPassedSortOrder: 1, nextSortOrder: 2, savedAt: 9_000 })
+    expect(mergeExamSave(previous, stale)).toBe(previous)
+  })
+
+  it('accepts a later save that advanced further along the same route', () => {
+    const previous = saved()
+    const next = saved({
+      triggeredPins: ['p2-1', 'p2-2', 'p2-3'],
+      triggeredSortOrders: [1, 2, 3],
+      lastPassedSortOrder: 3,
+      nextSortOrder: 4,
+      savedAt: 3_000,
+    })
+    expect(mergeExamSave(previous, next)).toEqual(next)
+  })
+
+  it('lets a different route replace the single active slot', () => {
+    const previous = saved()
+    const other = saved({
+      routeId: 'local-route-1',
+      routeSlug: 'route-1',
+      routeName: 'მარშრუტი 1',
+      triggeredPins: ['p1-1'],
+      triggeredSortOrders: undefined,
+    })
+    expect(mergeExamSave(previous, other)).toEqual(other)
+  })
+
+  it('saveActiveExam does not drop stored orders when writing an incomplete snapshot', () => {
+    saveActiveExam(saved())
+    saveActiveExam(
+      saved({
+        triggeredPins: [],
+        triggeredSortOrders: undefined,
+        lastPassedSortOrder: undefined,
+        nextSortOrder: undefined,
+      }),
+    )
+    const loaded = loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')
+    expect(loaded?.triggeredSortOrders).toEqual([1, 2])
+    expect(loaded?.nextSortOrder).toBe(3)
+  })
+})

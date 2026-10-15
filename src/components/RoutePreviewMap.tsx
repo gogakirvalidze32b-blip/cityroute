@@ -4,7 +4,6 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
 import { RoutePolyline } from '@/components/RoutePolyline'
-import { examRouteLine } from '@/lib/pin-route-line'
 import { getRouteOfficialPreviewMap } from '@/data/route-preview-maps'
 import { OfficialRoutePreviewZoom } from '@/components/OfficialRoutePreviewZoom'
 import { MAP_TILES } from '@/lib/map-tiles'
@@ -64,8 +63,7 @@ function OfficialRoutePreviewImage({ map }: { map: NonNullable<ReturnType<typeof
 }
 
 function InteractiveRoutePreviewMap({ route }: { route: RouteWithPins }) {
-  const road = examRouteLine(route.slug, route.pins)
-  const line = (road.length >= 2 ? road : route.polyline) as LatLng[]
+  const line = route.polyline as LatLng[]
   const hasLine = line.length >= 2
   const start = hasLine ? line[0] : null
   const finish = hasLine ? line[line.length - 1] : null

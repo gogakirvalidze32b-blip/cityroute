@@ -12,34 +12,6 @@ import { useRoutes } from '@/hooks/useRoutes'
 
 type NavPhase = 'preview' | 'active' | 'summary'
 
-function CarFullscreenButton({ floating = false }: { floating?: boolean }) {
-  const [active, setActive] = useState(false)
-
-  useEffect(() => {
-    const sync = () => setActive(Boolean(document.fullscreenElement))
-    document.addEventListener('fullscreenchange', sync)
-    return () => document.removeEventListener('fullscreenchange', sync)
-  }, [])
-
-  if (typeof document === 'undefined' || !document.fullscreenEnabled) return null
-
-  return (
-    <button
-      type="button"
-      className={`car-fullscreen-btn${floating ? ' car-fullscreen-btn--floating' : ''}`}
-      onClick={() => {
-        if (document.fullscreenElement) {
-          void document.exitFullscreen()
-          return
-        }
-        void document.documentElement.requestFullscreen().catch(() => {})
-      }}
-    >
-      {active ? 'ჩვეულებრივი' : 'სრული ეკრანი'}
-    </button>
-  )
-}
-
 export function RoutePage() {
   const { slug } = useParams<{ slug: string }>()
   const { hasAccess, deviceBlocked } = useAuth()
@@ -94,11 +66,8 @@ export function RoutePage() {
           </div>
 
           <span className="tag tag--exam">გამოცდა</span>
-          <CarFullscreenButton />
         </div>
       )}
-
-      {driving && <CarFullscreenButton floating />}
 
       <ExamDriveSession route={route} onPhaseChange={setNavPhase} />
     </div>

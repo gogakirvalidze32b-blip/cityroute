@@ -45,7 +45,7 @@ describe('voice gain headroom', () => {
   it('keeps media volume, pitch and speed, and boosts the signal to 130%', () => {
     expect(VOICE_VOLUME).toBe(1)
     expect(VOICE_GAIN).toBe(1.3)
-    expect(VOICE_PITCH).toBe('mid')
+    expect(VOICE_PITCH).toBe('normal')
     expect(VOICE_PLAYBACK_RATE).toBe(1)
   })
 

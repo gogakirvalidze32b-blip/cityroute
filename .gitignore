@@ -5,5 +5,3 @@ dist
 *.local
 .vercel
 .env*
-.certs
-.certs/

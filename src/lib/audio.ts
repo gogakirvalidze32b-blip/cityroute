@@ -2,7 +2,7 @@
  * ხმის სიჩქარე — შეცვალე ეს რიცხვი.
  * 1 = ნორმალური · 0.9 = ოდნავ ნელი · 0.8 = უფრო ნელი · 0.75 = ნელი · 0.7 = ძალიან ნელი · 1.1 = ჩქარი · 1.2 = უფრო ჩქარი
  */
-export const VOICE_PLAYBACK_RATE = 1.0
+export const VOICE_PLAYBACK_RATE = 1
 
 /**
  * ტემბრი:
@@ -11,7 +11,7 @@ export const VOICE_PLAYBACK_RATE = 1.0
  * - low    — ღრმა ტემბრი (pitch follows — ბოხი შეიძლება)
  */
 export type VoicePitch = 'normal' | 'mid' | 'low'
-export const VOICE_PITCH: VoicePitch = 'mid'
+export const VOICE_PITCH: VoicePitch = 'normal'
 
 /** @deprecated გამოიყენე VOICE_PITCH */
 export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
@@ -19,48 +19,68 @@ export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
 /** ხმის სიმაღლე (volume): 0 = ჩუმი · 1 = სრული. HTML media volume 1-ზე მეტს არ იღებს. */
 export const VOICE_VOLUME = 1
 
-/** 130% loudness through a GainNode. The prepared mid timbre stays; this does not change pitch or speed. */
+/**
+ * Voice signal gain. 1.3 is 130% of the file.
+ * Applied with a GainNode, not audio.volume, and only because every bundled WAV
+ * peaks low enough that this gain stays below full scale.
+ */
 export const VOICE_GAIN = 1.3
 
-const WIRED = Symbol('cityroute-audio-wired')
-
-type WarmChain = {
+/** Shared Web Audio graph (one AudioContext for all voice files — mobile browsers cap contexts). */
+type WarmGraph = {
   ctx: AudioContext
-  resume: () => Promise<void>
+  input: AudioNode
 }
 
-type QueueJob = {
-  url: string | null
-  pinId: string
-  fallbackText: string
-  resolve: (started: boolean) => void
+/** Loudness only: one gain into the speakers. No EQ, no pitch shift. */
+type LoudGraph = {
+  ctx: AudioContext
+  gain: GainNode
 }
+
+/** Result of a playback attempt. 'failed' = neither the MP3 nor the TTS fallback could start. */
+export type PlayStatus = 'played' | 'tts' | 'duplicate' | 'failed'
+
+export type AudioDiagnostic = {
+  at: number
+  pinId: string
+  url: string | null
+  reason:
+    | 'no-audio-url'
+    | 'autoplay-blocked'
+    | 'media-not-supported'
+    | 'media-error'
+    | 'play-rejected'
+    | 'audio-context-not-running'
+    | 'tts-unavailable'
+  detail?: string
+}
+
+/** A voice that has been "playing" longer than this is treated as stuck, not busy. */
+const MAX_BUSY_MS = 12000
+/** Never wait longer than this for AudioContext.resume() (it can hang without a user gesture). */
+const RESUME_TIMEOUT_MS = 400
 
 export class AudioEngine {
   private cache = new Map<string, HTMLAudioElement>()
+  private speaking = new Set<string>()
   private playbackRate = VOICE_PLAYBACK_RATE
   private pitch: VoicePitch = VOICE_PITCH
   private volume = VOICE_VOLUME
-  private warmChains = new WeakMap<HTMLAudioElement, WarmChain>()
-  private sharedCtx: AudioContext | null = null
-  private warmFailed = false
-  private player: HTMLAudioElement | null = null
-  private queue: QueueJob[] = []
-  private draining = false
-  private generation = 0
-  private currentPinId: string | null = null
-  private stopWaiters = new Set<() => void>()
-  private speechDone: Promise<void> | null = null
-  private finishSpeech: (() => void) | null = null
+  private graph: WarmGraph | null = null
+  private loud: LoudGraph | null = null
+  private wired = new WeakMap<HTMLAudioElement, Promise<boolean>>()
+  private busySince = 0
+  private diagnostics: AudioDiagnostic[] = []
 
   setPlaybackRate(rate: number) {
     this.playbackRate = rate
-    this.applyToLive()
+    this.cache.forEach((a) => this.applyRate(a))
   }
 
   setPitch(pitch: VoicePitch) {
     this.pitch = pitch
-    this.applyToLive()
+    this.cache.forEach((a) => this.applyRate(a))
   }
 
   /** @deprecated გამოიყენე setPitch('low' | 'normal') */
@@ -70,12 +90,7 @@ export class AudioEngine {
 
   setVolume(volume: number) {
     this.volume = volume
-    this.applyToLive()
-  }
-
-  private applyToLive() {
-    this.cache.forEach((audio) => this.applyRate(audio))
-    if (this.player) this.applyRate(this.player)
+    this.cache.forEach((a) => this.applyRate(a))
   }
 
   private applyRate(audio: HTMLAudioElement) {
@@ -98,28 +113,36 @@ export class AudioEngine {
     audio.webkitPreservesPitch = audio.preservesPitch
   }
 
-  /** mid — თბილი, ღრმა, გლუვი ტემბრი (pitch-ის დაწევის გარეშე). ერთი საერთო AudioContext. */
-  private ensureWarmChain(audio: HTMLAudioElement): WarmChain | null {
-    if (this.pitch !== 'mid' || this.warmFailed) return null
+ /** Gain-only graph. Does not filter or change playback rate. */
+  private getLoudGraph(): LoudGraph | null {
+    if (this.loud) return this.loud
+    if (typeof AudioContext === 'undefined') return null
 
-    const existing = this.warmChains.get(audio)
-    if (existing) return existing
-
-    const wired = (audio as HTMLAudioElement & { [WIRED]?: WarmChain })[WIRED]
-    if (wired) {
-      this.warmChains.set(audio, wired)
-      return wired
+    let ctx: AudioContext
+    try {
+      ctx = new AudioContext()
+    } catch (err) {
+      this.report('engine', null, 'audio-context-not-running', err instanceof Error ? err.message : String(err))
+      return null
     }
 
-    const ctx = this.ensureContext()
-    if (!ctx) return null
+    const gain = ctx.createGain()
+    gain.gain.value = VOICE_GAIN
+    gain.connect(ctx.destination)
+    this.loud = { ctx, gain }
+    return this.loud
+  }
 
-    let source: MediaElementAudioSourceNode
+  /** Builds the shared "mid" EQ graph once. Returns null if Web Audio is unavailable. */
+  private getGraph(): WarmGraph | null {
+    if (this.graph) return this.graph
+    if (typeof AudioContext === 'undefined') return null
+
+    let ctx: AudioContext
     try {
-      source = ctx.createMediaElementSource(audio)
+      ctx = new AudioContext()
     } catch (err) {
-      console.error('[audio] warm chain failed', err)
-      this.warmFailed = true
+      this.report('engine', null, 'audio-context-not-running', err instanceof Error ? err.message : String(err))
       return null
     }
 
@@ -158,51 +181,146 @@ export class AudioEngine {
     smooth.attack.value = 0.008
     smooth.release.value = 0.22
 
-    const loud = ctx.createGain()
-    loud.gain.value = VOICE_GAIN
-
-    source
-      .connect(depth)
+    depth
       .connect(chest)
       .connect(intimacy)
       .connect(soften)
       .connect(darken)
       .connect(smooth)
-      .connect(loud)
       .connect(ctx.destination)
 
-    const chain: WarmChain = { ctx, resume: () => ctx.resume() }
-    ;(audio as HTMLAudioElement & { [WIRED]?: WarmChain })[WIRED] = chain
-    this.warmChains.set(audio, chain)
-    return chain
+    this.graph = { ctx, input: depth }
+    return this.graph
   }
 
-  private ensureContext(): AudioContext | null {
-    if (this.sharedCtx && this.sharedCtx.state !== 'closed') return this.sharedCtx
-    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!Ctx) return null
-    try {
-      this.sharedCtx = new Ctx()
-      return this.sharedCtx
-    } catch (err) {
-      console.error('[audio] AudioContext failed', err)
-      this.warmFailed = true
-      this.sharedCtx = null
-      return null
-    }
-  }
-
-  private async resumeSharedContext(): Promise<void> {
-    const ctx = this.pitch === 'mid' && !this.warmFailed ? this.ensureContext() : null
-    if (!ctx || ctx.state !== 'suspended') return
+  /** resume() can stay pending forever outside a user gesture — never block playback on it. */
+  private async resumeContext(ctx: AudioContext): Promise<void> {
+    if (ctx.state === 'running') return
     try {
       await Promise.race([
         ctx.resume(),
-        new Promise((resolve) => window.setTimeout(resolve, 300)),
+        new Promise<void>((resolve) => window.setTimeout(resolve, RESUME_TIMEOUT_MS)),
       ])
-    } catch (err) {
-      console.error('[audio] AudioContext.resume failed', err)
+    } catch {
+      /* state is checked by the caller */
     }
+  }
+
+  /**
+   * mid — warm timbre through the shared graph (pitch unchanged).
+   * Resolves true only if the element is routed through a RUNNING context.
+   * An element is never wired to a suspended context: that would make playback silent
+   * while audio.play() still "succeeds". In that case we fall back to plain playback.
+   */
+  /**
+   * 130% loudness through a GainNode. The media element stays at volume 1.
+   * A suspended context is not wired: playback would succeed and stay silent.
+   */
+  private ensureLoudChain(audio: HTMLAudioElement): Promise<boolean> {
+    if (this.pitch === 'mid') return Promise.resolve(false)
+
+    const existing = this.wired.get(audio)
+    if (existing) return existing
+
+    const task = (async () => {
+      const graph = this.getLoudGraph()
+      if (!graph) return false
+      await this.resumeContext(graph.ctx)
+      if (graph.ctx.state !== 'running') return false
+      try {
+        graph.ctx.createMediaElementSource(audio).connect(graph.gain)
+        return true
+      } catch {
+        return false
+      }
+    })()
+
+    this.wired.set(audio, task)
+    void task.then((ok) => {
+      if (!ok && this.wired.get(audio) === task) this.wired.delete(audio)
+    })
+    return task
+  }
+
+  private ensureWarmChain(audio: HTMLAudioElement): Promise<boolean> {
+    if (this.pitch !== 'mid') return Promise.resolve(false)
+
+    const existing = this.wired.get(audio)
+    if (existing) return existing
+
+    const task = (async () => {
+      const graph = this.getGraph()
+      if (!graph) return false
+      await this.resumeContext(graph.ctx)
+      if (graph.ctx.state !== 'running') return false
+      try {
+        graph.ctx.createMediaElementSource(audio).connect(graph.input)
+        return true
+      } catch {
+        return false
+      }
+    })()
+
+    this.wired.set(audio, task)
+    // A failed (not-yet-running) attempt must be retryable later, e.g. after unlock().
+    void task.then((ok) => {
+      if (!ok && this.wired.get(audio) === task) this.wired.delete(audio)
+    })
+    return task
+  }
+
+  /**
+   * Call synchronously from a user gesture (tap on "start", first touch/click).
+   * Starts the AudioContext inside the gesture, wires already-preloaded voices to it
+   * and unlocks speech synthesis, so later PIN voices can play from GPS callbacks.
+   */
+  unlock(): void {
+    if (typeof window === 'undefined') return
+    try {
+      if (this.pitch === 'mid') {
+        const graph = this.getGraph()
+        if (graph) {
+          void this.resumeContext(graph.ctx).then(() => {
+            if (graph.ctx.state === 'running') this.cache.forEach((a) => void this.ensureWarmChain(a))
+          })
+        }
+      } else {
+        const graph = this.getLoudGraph()
+        if (graph) {
+          void this.resumeContext(graph.ctx).then(() => {
+            if (graph.ctx.state === 'running') this.cache.forEach((a) => void this.ensureLoudChain(a))
+          })
+        }
+      }
+    } catch {
+      /* best effort */
+    }
+    try {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.getVoices()
+        const warm = new SpeechSynthesisUtterance('')
+        warm.volume = 0
+        window.speechSynthesis.speak(warm)
+      }
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /** True while a voice is playing (with a safety timeout so a stuck state can never block PIN audio). */
+  isBusy(): boolean {
+    return this.speaking.size > 0 && Date.now() - this.busySince < MAX_BUSY_MS
+  }
+
+  getDiagnostics(): readonly AudioDiagnostic[] {
+    return this.diagnostics
+  }
+
+  private report(pinId: string, url: string | null, reason: AudioDiagnostic['reason'], detail?: string) {
+    const entry: AudioDiagnostic = { at: Date.now(), pinId, url, reason, detail }
+    this.diagnostics.push(entry)
+    if (this.diagnostics.length > 30) this.diagnostics.shift()
+    console.warn('[AUDIO]', reason, '| pin:', pinId, '| url:', url ?? '-', detail ? '| ' + detail : '')
   }
 
   preload(url: string) {
@@ -219,223 +337,88 @@ export class AudioEngine {
   }
 
   speakText(text: string, pinId: string): boolean {
-    return this.startSpeech(text, pinId)
+    if (this.speaking.has(pinId)) return false
+    if (!text || !('speechSynthesis' in window)) return false
+    const utter = new SpeechSynthesisUtterance(text)
+    utter.lang = 'ka-GE'
+    utter.rate = 1
+    utter.pitch = 1
+    const voice = pickGeorgianVoice()
+    if (voice) utter.voice = voice
+    this.speaking.add(pinId)
+    this.busySince = Date.now()
+    utter.onend = () => this.speaking.delete(pinId)
+    utter.onerror = () => this.speaking.delete(pinId)
+    window.speechSynthesis.speak(utter)
+    return true
   }
 
-  private startSpeech(text: string, pinId: string): boolean {
-    if (!text || typeof window.speechSynthesis?.speak !== 'function') return false
-    try {
-      const utter = new SpeechSynthesisUtterance(text)
-      utter.lang = 'ka-GE'
-      utter.rate = 0.95
-      utter.pitch = 1
-      const voice = pickGeorgianVoice()
-      if (voice) utter.voice = voice
-      this.speechDone = new Promise((resolve) => {
-        this.finishSpeech = resolve
-        utter.onend = () => resolve()
-        utter.onerror = (event) => {
-          console.error('[audio] speech error', pinId, event)
-          resolve()
+  async play(url: string | null | undefined, pinId: string, fallbackText: string): Promise<boolean> {
+    const status = await this.playDetailed(url, pinId, fallbackText)
+    return status === 'played' || status === 'tts'
+  }
+
+  /** Same as play() but tells the caller what happened, so a failed PIN voice can be retried. */
+  async playDetailed(url: string | null | undefined, pinId: string, fallbackText: string): Promise<PlayStatus> {
+    if (this.speaking.has(pinId)) return 'duplicate'
+
+    if (url) {
+      let audio = this.cache.get(url)
+      if (!audio) {
+        audio = new Audio(url)
+        this.cache.set(url, audio)
+      }
+      let fellBackToTts = false
+      try {
+        audio.currentTime = 0
+        this.applyRate(audio)
+        if (this.pitch === 'mid') await this.ensureWarmChain(audio)
+        else await this.ensureLoudChain(audio)
+
+        this.speaking.add(pinId)
+        this.busySince = Date.now()
+        audio.onended = () => this.speaking.delete(pinId)
+        audio.onerror = () => {
+          this.speaking.delete(pinId)
+          this.report(pinId, url, 'media-error', 'code=' + (audio?.error?.code ?? '?'))
+          fellBackToTts = this.speakText(fallbackText, pinId)
         }
-      })
-      window.speechSynthesis.speak(utter)
-      return true
-    } catch (err) {
-      console.error('[audio] speech failed', pinId, err)
-      this.speechDone = null
-      this.finishSpeech = null
-      return false
+        await audio.play()
+        return 'played'
+      } catch (err) {
+        if (fellBackToTts) return 'tts'
+        this.speaking.delete(pinId)
+        const name = err instanceof DOMException ? err.name : ''
+        this.report(
+          pinId,
+          url,
+          name === 'NotAllowedError'
+            ? 'autoplay-blocked'
+            : name === 'NotSupportedError'
+              ? 'media-not-supported'
+              : 'play-rejected',
+          err instanceof Error ? err.name + ': ' + err.message : String(err),
+        )
+      }
+    } else {
+      this.report(pinId, null, 'no-audio-url')
     }
-  }
 
-  /**
-   * Queue a clip. Resolves true once playback has started (not when it ends).
-   * The next clip waits until this one finishes. The same pinId is not queued twice.
-   */
-  play(url: string | null | undefined, pinId: string, fallbackText: string): Promise<boolean> {
-    if (this.currentPinId === pinId || this.queue.some((job) => job.pinId === pinId)) {
-      return Promise.resolve(false)
+    if (this.speakText(fallbackText, pinId)) {
+      this.busySince = Date.now()
+      return 'tts'
     }
-    return new Promise((resolve) => {
-      this.queue.push({ url: url || null, pinId, fallbackText, resolve })
-      void this.drain()
-    })
+    this.report(pinId, url ?? null, 'tts-unavailable')
+    return 'failed'
   }
 
   stopAll() {
-    this.generation += 1
-    this.currentPinId = null
-    const dropped = this.queue.splice(0)
-    for (const job of dropped) job.resolve(false)
-    this.player?.pause()
-    if (this.player && this.player.readyState >= 1) {
-      try {
-        this.player.currentTime = 0
-      } catch (err) {
-        console.warn('[audio] stop seek failed', err)
-      }
-    }
-    this.cache.forEach((audio) => {
-      audio.pause()
+    this.speaking.clear()
+    this.cache.forEach((a) => {
+      a.pause()
+      a.currentTime = 0
     })
-    for (const wake of this.stopWaiters) wake()
-    this.stopWaiters.clear()
-    this.finishSpeech?.()
-    this.finishSpeech = null
-    this.speechDone = null
     window.speechSynthesis?.cancel()
-  }
-
-  private async drain() {
-    if (this.draining) return
-    this.draining = true
-    const token = this.generation
-    try {
-      while (this.queue.length > 0 && this.generation === token) {
-        const job = this.queue.shift()
-        if (!job) break
-        this.currentPinId = job.pinId
-        this.speechDone = null
-        const started = await this.startJob(job, token)
-        job.resolve(started)
-        if (started && this.generation === token) {
-          const speech = this.speechDone
-          if (speech) await this.withCap(speech, 15000)
-          else await this.waitForCurrentEnd(token)
-        }
-        if (this.currentPinId === job.pinId) this.currentPinId = null
-      }
-    } finally {
-      this.draining = false
-      this.currentPinId = null
-      if (this.queue.length > 0) void this.drain()
-    }
-  }
-
-  private async startJob(job: QueueJob, token: number): Promise<boolean> {
-    if (job.url) {
-      try {
-        await this.startClip(job.url, token)
-        if (token !== this.generation) return false
-        return true
-      } catch (err) {
-        if (token !== this.generation) return false
-        console.error('[audio] playback failed', { pinId: job.pinId, url: job.url, err })
-        this.player?.pause()
-      }
-    } else if (!job.fallbackText) {
-      console.error('[audio] nothing to play', job.pinId)
-      return false
-    }
-
-    if (token !== this.generation) return false
-    const spoke = this.startSpeech(job.fallbackText, job.pinId)
-    if (!spoke) console.error('[audio] fallback speech unavailable', job.pinId, job.fallbackText)
-    return spoke
-  }
-
-  private ensurePlayer(): HTMLAudioElement {
-    if (!this.player) {
-      this.player = new Audio()
-      this.player.preload = 'auto'
-      this.applyRate(this.player)
-    }
-    return this.player
-  }
-
-  private sameSource(audio: HTMLAudioElement, url: string): boolean {
-    if (audio.src === url) return true
-    try {
-      return audio.src === new URL(url, window.location.href).href
-    } catch {
-      return false
-    }
-  }
-
-  private async startClip(url: string, token: number): Promise<void> {
-    const audio = this.ensurePlayer()
-    if (!this.sameSource(audio, url)) {
-      audio.src = url
-      audio.load()
-    }
-    if (audio.readyState < 1) await this.waitForMetadata(audio, token)
-    if (token !== this.generation) throw new Error('audio stopped')
-    if (audio.readyState >= 1) {
-      try {
-        audio.currentTime = 0
-      } catch (err) {
-        console.warn('[audio] seek failed', url, err)
-      }
-    }
-    this.applyRate(audio)
-    this.ensureWarmChain(audio)
-    await this.resumeSharedContext()
-    if (token !== this.generation) throw new Error('audio stopped')
-    await audio.play()
-  }
-
-  private waitForMetadata(audio: HTMLAudioElement, token: number): Promise<void> {
-    if (audio.readyState >= 1) return Promise.resolve()
-    return new Promise((resolve, reject) => {
-      const timer = window.setTimeout(() => {
-        cleanup()
-        reject(new Error('audio load timeout'))
-      }, 8000)
-      const ok = () => {
-        cleanup()
-        resolve()
-      }
-      const bad = () => {
-        cleanup()
-        reject(new Error('audio load error'))
-      }
-      const stop = () => {
-        cleanup()
-        reject(new Error('audio stopped'))
-      }
-      const cleanup = () => {
-        window.clearTimeout(timer)
-        audio.removeEventListener('loadedmetadata', ok)
-        audio.removeEventListener('error', bad)
-        this.stopWaiters.delete(stop)
-      }
-      this.stopWaiters.add(stop)
-      audio.addEventListener('loadedmetadata', ok)
-      audio.addEventListener('error', bad)
-      if (token !== this.generation) stop()
-    })
-  }
-
-  private withCap(pending: Promise<void>, ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      const timer = window.setTimeout(resolve, ms)
-      void pending.finally(() => {
-        window.clearTimeout(timer)
-        resolve()
-      })
-    })
-  }
-
-  private waitForCurrentEnd(token: number): Promise<void> {
-    const audio = this.player
-    if (!audio || token !== this.generation) return Promise.resolve()
-    if (audio.ended) return Promise.resolve()
-    return new Promise((resolve) => {
-      let timer = 0
-      const finish = () => {
-        window.clearTimeout(timer)
-        audio.removeEventListener('ended', finish)
-        audio.removeEventListener('error', finish)
-        this.stopWaiters.delete(finish)
-        resolve()
-      }
-      timer = window.setTimeout(finish, 15000)
-      this.stopWaiters.add(finish)
-      audio.addEventListener('ended', finish)
-      audio.addEventListener('error', finish)
-      if (token !== this.generation || audio.ended) finish()
-    })
   }
 }
 

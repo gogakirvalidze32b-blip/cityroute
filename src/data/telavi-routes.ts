@@ -38,7 +38,7 @@ function route1Pins(routeId: string) {
 
 type AuditPin = { route: number; pin: number; lat: number; lng: number; instruction: string }
 
-/** Same coordinates, order, and texts as the audited exam. Stale remote coordinates are corrected by applyRelocatedPin. */
+/** Same coordinates, order, and texts as the live exam. Remote Supabase pins still replace these when loaded. */
 function pinsFromAudit(routeNumber: number, routeId: string, idPrefix: string) {
   const rows = (auditedPins as AuditPin[])
     .filter((item) => item.route === routeNumber)

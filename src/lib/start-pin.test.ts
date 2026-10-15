@@ -224,6 +224,133 @@ describe('starting pin for a new exam', () => {
     expect(ambiguous).toBeLessThan(checked)
   })
 
+  function cuePinsOf(pins: StartPinInput[]) {
+    return pins.map((p) => ({
+      id: String(p.sort_order),
+      lat: p.lat,
+      lng: p.lng,
+      trigger_distance_m: p.trigger_distance_m,
+    }))
+  }
+
+  /** Moving restart while the full drive's next voice is `order` must still play every pin. */
+  function expectMovingRestartReaches(order: number) {
+    const pins = routePins(1)
+    const line = road(1, pins)!
+    const cues = cuePinsOf(pins)
+    const fixes = driveTrace(line, 6)
+    const spoken = new Set<string>(['1'])
+    let checked = 0
+    const speak = (i: number, handled: Set<string>) => {
+      const step = evaluateNextPin({
+        pins: cues,
+        handledIds: handled,
+        inFlightId: null,
+        user: fixes[i].position,
+        heading: fixes[i].heading,
+        speedMps: 8,
+        accuracyM: 8,
+        approach: null,
+      })
+      if (step.action === 'play' && step.pinId) handled.add(step.pinId)
+    }
+    for (let i = 0; i < fixes.length; i++) {
+      const next = pins.find((pin) => !spoken.has(String(pin.sort_order)))
+      if (!next) break
+      if (next.sort_order === order && i % 3 === 0) {
+        const behind = new Set(pins.filter((pin) => pin.sort_order < order - 1).map((pin) => String(pin.sort_order)))
+        for (let j = i; j < fixes.length; j++) speak(j, behind)
+        const earlierPinBlocks = behind.size < pins.length
+        if (earlierPinBlocks) {
+          checked++
+          const decision = chooseStartPin(
+            pins,
+            fixAt(fixes[i].position, { speedMps: 8, headingDeg: fixes[i].heading }),
+            line,
+          )
+          const where = `fix ${i}, next voice ${order}`
+          if (decision.kind === 'start') {
+            expect(decision.sortOrder, where).not.toBe(order - 1)
+            const handled = new Set(
+              pins.filter((pin) => pin.sort_order < decision.sortOrder).map((pin) => String(pin.sort_order)),
+            )
+            for (let j = i; j < fixes.length; j++) speak(j, handled)
+            expect(handled.size, where).toBe(pins.length)
+          } else {
+            expect(decision.kind, where).toBe('ambiguous')
+            const completable = decision.candidates.some((start) => {
+              const handled = new Set(pins.filter((pin) => pin.sort_order < start).map((pin) => String(pin.sort_order)))
+              for (let j = i; j < fixes.length; j++) speak(j, handled)
+              return handled.size === pins.length
+            })
+            expect(completable, where).toBe(true)
+          }
+        }
+      }
+      speak(i, spoken)
+    }
+    expect(checked).toBeGreaterThan(0)
+  }
+
+  it('a moving start does not stay on PIN 9 once PIN 10 is the next voice', () => {
+    expectMovingRestartReaches(10)
+  })
+
+  it('a moving start inside both PIN 30 and PIN 31 takes PIN 31, not the later revisit of PIN 30', () => {
+    const pins = routePins(1)
+    const line = road(1, pins)!
+    const cues = cuePinsOf(pins)
+    const fixes = driveTrace(line, 6)
+    const spoken = new Set<string>(['1'])
+    const chosen: number[] = []
+    for (let i = 0; i < fixes.length; i++) {
+      const next = pins.find((pin) => !spoken.has(String(pin.sort_order)))
+      if (!next) break
+      if ((next.sort_order === 31 || next.sort_order === 32) && i % 6 === 0) {
+        const decision = chooseStartPin(
+          pins,
+          fixAt(fixes[i].position, { speedMps: 8, headingDeg: fixes[i].heading }),
+          line,
+        )
+        if (decision.kind === 'start') {
+          chosen.push(decision.sortOrder)
+          expect(decision.sortOrder, `fix ${i}`).toBeLessThanOrEqual(next.sort_order)
+          const handled = new Set(pins.filter((pin) => pin.sort_order < decision.sortOrder).map((pin) => String(pin.sort_order)))
+          const played = new Set<string>()
+          for (let j = i; j < fixes.length; j++) {
+            const step = evaluateNextPin({
+              pins: cues,
+              handledIds: handled,
+              inFlightId: null,
+              user: fixes[j].position,
+              heading: fixes[j].heading,
+              speedMps: 8,
+              accuracyM: 8,
+              approach: null,
+            })
+            if (step.action === 'play' && step.pinId) {
+              handled.add(step.pinId)
+              played.add(step.pinId)
+            }
+          }
+          expect(played.has(String(next.sort_order)), `fix ${i} started at ${decision.sortOrder}`).toBe(true)
+        }
+      }
+      const step = evaluateNextPin({
+        pins: cues,
+        handledIds: spoken,
+        inFlightId: null,
+        user: fixes[i].position,
+        heading: fixes[i].heading,
+        speedMps: 8,
+        accuracyM: 8,
+        approach: null,
+      })
+      if (step.action === 'play' && step.pinId) spoken.add(step.pinId)
+    }
+    expect(chosen).toContain(31)
+  })
+
   it('does not guess between route 1 PINs 19 and 24, which are about 5 m apart', () => {
     const pins = routePins(1)
     const line = road(1, pins)!
