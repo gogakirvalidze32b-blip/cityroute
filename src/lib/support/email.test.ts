@@ -12,27 +12,23 @@ describe('admin notification', () => {
   it('goes to the team Gmail with a link to the admin panel conversation', () => {
     const m = buildEmail(row(), cfg)!
     expect(m.to).toBe('cityroute.ge@gmail.com')
+    expect(m.text).toContain('ჩატში ახალი შეტყობინებაა')
     expect(m.text).toContain('https://cityroute.ge/support-admin?c=22222222-2222-4222-8222-222222222222')
-    expect(m.subject).toContain('33333333')
+    expect(m.html).toContain('მხარდაჭერის ჩატის გახსნა')
   })
-  it("does not expose the customer's e-mail address", () => {
-    const m = buildEmail(row(), cfg)!
-    expect(m.html + m.text + m.subject).not.toContain('g@example.com')
+  it("does not expose the customer's e-mail address or the message text", () => {
+    const secret = 'password hunter2 გადახდა ვერ გავიდა'
+    const m = buildEmail(row({ body: secret, full_name: '<b>გიორგი</b>' }), cfg)!
+    const all = m.html + m.text + m.subject
+    expect(all).not.toContain('g@example.com')
+    expect(all).not.toContain(secret)
+    expect(all).not.toContain('გადახდა')
+    expect(m.html).not.toContain('<b>')
+    expect(m.html).toContain('&lt;b&gt;')
   })
-  it('mentions image count but never contains a storage / image URL', () => {
-    const m = buildEmail(row({ attachment_count: 2 }), cfg)!
-    expect(m.text).toContain('2 სურათი')
-    expect(m.html + m.text).not.toMatch(/supabase\.co|storage|signed|\.(png|jpe?g|webp)/i)
-  })
-  it('escapes HTML in user text (no injection into the admin mailbox)', () => {
-    const m = buildEmail(row({ body: '<script>alert(1)</script><img src=x onerror=1>' }), cfg)!
-    expect(m.html).not.toContain('<script>')
-    expect(m.html).not.toContain('<img')
-    expect(m.html).toContain('&lt;script&gt;')
-  })
-  it('truncates long messages', () => {
-    const m = buildEmail(row({ body: 'x'.repeat(5000) }), cfg)!
-    expect(m.text.length).toBeLessThan(900)
+  it('never contains a storage / image URL or the attachment contents', () => {
+    const m = buildEmail(row({ attachment_count: 2, body: 'სურათის აღწერა' }), cfg)!
+    expect(m.html + m.text).not.toMatch(/supabase\.co|storage|signed|\.(png|jpe?g|webp)|სურათის აღწერა/i)
   })
 })
 
@@ -40,7 +36,9 @@ describe('user reply notification', () => {
   it("goes to the user's own address and links to /support", () => {
     const m = buildEmail(row({ kind: 'user_reply', body: 'პასუხი' }), cfg)!
     expect(m.to).toBe('g@example.com')
+    expect(m.text).toContain('ჩატში ახალი შეტყობინებაა')
     expect(m.text).toContain('https://cityroute.ge/support')
+    expect(m.text).not.toContain('პასუხი')
     expect(m.text).toContain('support@cityroute.ge')
   })
   it('returns null when the user has no e-mail (job is skipped, not failed)', () => {
