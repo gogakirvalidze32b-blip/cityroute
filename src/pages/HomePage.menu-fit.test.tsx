@@ -72,7 +72,9 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     [1024, 600],
     [800, 480],
     [1280, 720],
-  ])('renders every route button for %i×%i car landscape', (width, height) => {
+    [390, 844],
+    [1440, 900],
+  ])('renders every route button for %i×%i', (width, height) => {
     setViewport(width, height)
     renderHome()
 
@@ -99,11 +101,12 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(document.querySelector('.home-page--laptop')).toBeNull()
   })
 
-  it('ships short-landscape CSS that wraps route cards into the viewport', () => {
+  it('ships vertical adaptive home CSS that fits the screenshot stack in dvh', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
-    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 720px\)/)
-    expect(css).toMatch(/\.home-page \.route-list[\s\S]*flex-wrap:\s*wrap/)
-    expect(css).toMatch(/\.home-page \.route-card[\s\S]*flex:\s*1 1 calc\(50%/)
     expect(css).toMatch(/max-height:\s*100dvh/)
+    expect(css).toMatch(/\.home-page \.route-list[\s\S]*flex-direction:\s*column/)
+    expect(css).toMatch(/\.home-page \.route-list[\s\S]*flex-wrap:\s*nowrap/)
+    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 560px\)/)
+    expect(css).not.toMatch(/\.home-page \.route-card[\s\S]*flex:\s*1 1 calc\(50%/)
   })
 })

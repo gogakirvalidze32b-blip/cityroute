@@ -2680,52 +2680,122 @@ button:disabled {
   display: none !important;
 }
 
-/* Screen fit: phone, tablet, and Android car monitors. Layout only. */
+/*
+ * Outer home menu — same vertical stack as the desktop screenshot on every
+ * device. Sizes scale with dvh so short Android landscape / fullscreen still
+ * shows logo, all route cards, Support and გასვლა without clipping.
+ * Tall laptop/desktop keep the comfortable clamp ceilings (screenshot look).
+ */
 .page.home-page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  max-width: 100%;
   height: 100svh;
   height: 100dvh;
   max-height: 100dvh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: hidden;
   padding-top: max(0.35rem, env(safe-area-inset-top));
-  padding-right: max(0.65rem, env(safe-area-inset-right));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
   padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
-  padding-left: max(0.65rem, env(safe-area-inset-left));
+  padding-left: max(0.75rem, env(safe-area-inset-left));
 }
 
 .home-page .home-header {
-  flex-shrink: 0;
-  padding: clamp(0.35rem, 1.6vh, 1.1rem) 0 0.15rem;
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: clamp(0.2rem, 1.4vh, 1.1rem) 0 clamp(0.1rem, 0.6vh, 0.35rem);
+}
+
+.home-page .app-brand__logo,
+.home-page .home-logo {
+  width: clamp(2.2rem, 5.5vh, 3.5rem);
+  height: clamp(2.2rem, 5.5vh, 3.5rem);
+}
+
+.home-page .app-brand__text,
+.home-page .home-brand-text {
+  min-height: clamp(2.2rem, 5.5vh, 3.5rem);
+}
+
+.home-page .app-brand__city,
+.home-page .home-city {
+  font-size: clamp(1.05rem, 3.2vh, 1.65rem);
 }
 
 .home-page .route-list {
   flex: 1 1 auto;
   min-height: 0;
-  margin-top: clamp(0.35rem, 1.4vh, 1.2rem);
+  width: min(100%, 42rem);
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: clamp(0.25rem, 1.5vh, 1.2rem);
   display: flex;
   flex-direction: column;
-  gap: clamp(0.3rem, 1vh, 0.7rem);
+  flex-wrap: nowrap;
+  gap: clamp(0.28rem, 1.1vh, 0.75rem);
   overflow: hidden;
 }
 
 .home-page .route-card {
   flex: 1 1 0;
-  min-height: 44px;
-  padding: clamp(0.4rem, 1.5vh, 1.15rem) clamp(0.7rem, 2vw, 1.25rem);
+  min-width: 0;
+  min-height: clamp(44px, 7.5vh, 5.5rem);
+  max-height: none;
+  padding: clamp(0.4rem, 1.4vh, 1.25rem) clamp(0.7rem, 2vw, 1.35rem);
+  border-radius: clamp(10px, 1.8vh, 16px);
 }
 
 .home-page .route-card__name {
-  font-size: clamp(0.95rem, 2.4vh, 1.1rem);
+  font-size: clamp(0.92rem, 2.5vh, 1.1rem);
+  line-height: 1.2;
+}
+
+.home-page .route-card__tags {
+  margin-top: clamp(0.1rem, 0.5vh, 0.35rem);
+  gap: 0.3rem;
+}
+
+.home-page .route-card__tags .tag {
+  font-size: clamp(0.58rem, 1.5vh, 0.7rem);
+  padding: clamp(0.12rem, 0.4vh, 0.25rem) clamp(0.4rem, 1vw, 0.6rem);
+}
+
+.home-page .chevron {
+  font-size: clamp(1.1rem, 2.8vh, 1.5rem);
 }
 
 .home-page .home-footer {
-  flex-shrink: 0;
-  padding-top: clamp(0.3rem, 1vh, 0.8rem);
-  gap: clamp(0.25rem, 0.8vh, 0.55rem);
+  flex: 0 0 auto;
+  width: min(100%, 42rem);
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-top: clamp(0.25rem, 1vh, 0.8rem);
+  gap: clamp(0.2rem, 0.8vh, 0.65rem);
+}
+
+.home-page .home-meta,
+.home-page .home-trial {
+  font-size: clamp(0.7rem, 1.8vh, 0.92rem);
+  line-height: 1.25;
 }
 
 .home-page .home-signout {
-  min-height: 40px;
-  padding: clamp(0.4rem, 1.2vh, 0.7rem) 1.1rem;
+  min-height: clamp(36px, 6vh, 44px);
+  min-width: min(9rem, 100%);
+  padding: clamp(0.35rem, 1.1vh, 0.7rem) clamp(0.9rem, 2.5vw, 1.5rem);
+  font-size: clamp(0.82rem, 2vh, 0.95rem);
+}
+
+.home-page .support-button,
+.home-page .support-fab {
+  max-width: 100%;
 }
 
 .route-page--exam {
@@ -2836,14 +2906,25 @@ button:disabled {
   height: 40px;
 }
 
+/* Very short landscape: keep the vertical stack, trim secondary chrome. */
 @media (orientation: landscape) and (max-height: 560px) {
   .home-page .route-list {
-    flex-direction: row;
-    align-items: stretch;
+    flex-direction: column;
+    flex-wrap: nowrap;
   }
 
   .home-page .route-card {
+    flex: 1 1 0;
     min-width: 0;
+    min-height: 40px;
+  }
+
+  .home-page .route-card__tags {
+    display: none;
+  }
+
+  .home-page .home-meta {
+    display: none;
   }
 
   .home-page .home-header {
@@ -2895,97 +2976,7 @@ button:disabled {
   }
 }
 
-/*
- * Outer home menu on short Android / car landscape viewports (incl. fullscreen).
- * max-height 720px covers 800×480 / 1024×600 / 1280×720 car panels while leaving
- * normal laptop heights (e.g. 864+) on the default home layout.
- */
 @media (orientation: landscape) and (max-height: 720px) {
-  .page.home-page {
-    box-sizing: border-box;
-    height: 100dvh;
-    max-height: 100dvh;
-    overflow: hidden;
-    padding-top: max(0.2rem, env(safe-area-inset-top));
-    padding-bottom: max(0.2rem, env(safe-area-inset-bottom));
-  }
-
-  .home-page .home-header {
-    padding: 0.15rem 0 0.1rem;
-  }
-
-  .home-page .app-brand__logo,
-  .home-page .home-logo {
-    width: 2.4rem;
-    height: 2.4rem;
-  }
-
-  .home-page .app-brand__text,
-  .home-page .home-brand-text {
-    min-height: 2.4rem;
-  }
-
-  .home-page .app-brand__city,
-  .home-page .home-city {
-    font-size: clamp(1rem, 3.8vh, 1.25rem);
-  }
-
-  .home-page .route-list {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-content: stretch;
-    align-items: stretch;
-    gap: 0.35rem;
-    margin-top: 0.25rem;
-    overflow: hidden;
-  }
-
-  .home-page .route-card {
-    flex: 1 1 calc(50% - 0.25rem);
-    min-width: 0;
-    min-height: 0;
-    max-height: none;
-    padding: 0.45rem 0.7rem;
-    border-radius: 12px;
-  }
-
-  .home-page .route-card__name {
-    font-size: clamp(0.88rem, 2.6vh, 1.02rem);
-    line-height: 1.2;
-  }
-
-  .home-page .route-card__tags {
-    margin-top: 0.15rem;
-    gap: 0.25rem;
-  }
-
-  .home-page .route-card__tags .tag {
-    font-size: 0.62rem;
-    padding: 0.15rem 0.45rem;
-  }
-
-  .home-page .chevron {
-    font-size: 1.15rem;
-  }
-
-  .home-page .home-footer {
-    padding-top: 0.25rem;
-    gap: 0.25rem;
-  }
-
-  .home-page .home-meta,
-  .home-page .home-trial {
-    font-size: 0.72rem;
-    line-height: 1.2;
-  }
-
-  .home-page .home-signout {
-    min-height: 36px;
-    min-width: 7.5rem;
-    padding: 0.35rem 0.9rem;
-    font-size: 0.85rem;
-  }
-
   .route-page--exam:not(.route-page--driving) .route-toolbar {
     flex-wrap: wrap;
     row-gap: 0.25rem;
@@ -2998,12 +2989,5 @@ button:disabled {
     min-height: 36px;
     padding: 0.3rem 0.55rem;
     font-size: 0.8rem;
-  }
-}
-
-@media (orientation: landscape) and (max-height: 520px) {
-  .home-page .route-card__tags,
-  .home-page .home-meta {
-    display: none;
   }
 }
