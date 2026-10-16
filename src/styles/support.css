@@ -96,6 +96,20 @@
 .sc-card h1 { margin: 0; font-size: 1.2rem; }
 .sc-card p { margin: 0; }
 .sc-card__buttons { display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap; }
+.sc-setup-sql {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  color: #cbd5e1;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  word-break: break-word;
+}
 
 .sc-state {
   flex: 1;

@@ -55,10 +55,12 @@ describe('Admin page — access control', () => {
   })
 
   it('a normal signed-in user (DB says not admin) sees "forbidden" and never loads the list', async () => {
-    auth.value = { user: { id: 'u1' }, loading: false }
+    auth.value = { user: { id: 'u1', email: 'owner@cityroute.ge' }, loading: false }
     api.checkIsSupportAdmin.mockResolvedValue(false)
     renderAt(<SupportAdminPage />)
     expect(await screen.findByText('წვდომა შეზღუდულია')).toBeInTheDocument()
+    expect(screen.getByText(/ახლა შესული ხარ როგორც/)).toHaveTextContent('owner@cityroute.ge')
+    expect(screen.getByText(/insert into public\.support_admins/i)).toHaveTextContent("email = 'owner@cityroute.ge'")
     expect(api.adminListConversations).not.toHaveBeenCalled()
     expect(api.subscribeToAdminFeed).not.toHaveBeenCalled()
   })

@@ -66,6 +66,9 @@ export const S = {
   adminTitle: 'მხარდაჭერის პანელი',
   adminForbiddenTitle: 'წვდომა შეზღუდულია',
   adminForbiddenText: 'ეს გვერდი მხოლოდ მხარდაჭერის ადმინისტრატორებისთვისაა.',
+  adminForbiddenHint:
+    'თუ შენ ხარ ადმინისტრატორი, Supabase SQL Editor-ში გაუშვი ქვემოთ მოცემული ბრძანება იმ ელფოსტით, რომლითაც ახლა ხარ შესული. შემდეგ გვერდი განაახლე.',
+  adminForbiddenSignedInAs: 'ახლა შესული ხარ როგორც',
   adminChecking: 'წვდომის შემოწმება...',
   adminLogin: 'ადმინისტრატორის გვერდზე შესასვლელად ჯერ შედი ანგარიშში.',
   adminNoConversations: 'საუბრები არ არის',

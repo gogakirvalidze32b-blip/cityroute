@@ -76,11 +76,28 @@ export function SupportAdminPage() {
     )
   }
   if (access === 'denied' || access === 'error') {
+    const email = user.email?.trim() ?? ''
+    const setupSql = email
+      ? `insert into public.support_admins (user_id, note)\nselect id, 'owner' from auth.users where email = '${email.replace(/'/g, "''")}'\non conflict do nothing;`
+      : `insert into public.support_admins (user_id, note)\nselect id, 'owner' from auth.users where email = 'შენი-ელფოსტა@example.com'\non conflict do nothing;`
     return (
       <div className="page center support-page--center">
         <div className="sc-card" role="alert">
           <h1>{S.adminForbiddenTitle}</h1>
           <p className="muted">{access === 'error' ? S.errGeneric : S.adminForbiddenText}</p>
+          {access === 'denied' && (
+            <>
+              {email && (
+                <p className="muted">
+                  {S.adminForbiddenSignedInAs}: <strong>{email}</strong>
+                </p>
+              )}
+              <p className="muted">{S.adminForbiddenHint}</p>
+              <pre className="sc-setup-sql" tabIndex={0}>
+                {setupSql}
+              </pre>
+            </>
+          )}
           <Link to="/" className="support-button">
             {S.back}
           </Link>
