@@ -16,15 +16,18 @@ export const VOICE_PITCH: VoicePitch = 'normal'
 /** @deprecated გამოიყენე VOICE_PITCH */
 export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
 
-/** ხმის სიმაღლე (volume): 0 = ჩუმი · 1 = სრული. HTML media volume 1-ზე მეტს არ იღებს. */
+/**
+ * HTMLAudioElement.volume: 0 = silent · 1 = full.
+ * The HTML media API only accepts 0.0–1.0; values above 1 are clamped to 1.
+ * Do not set 1.3 here — it cannot produce 130% loudness.
+ */
 export const VOICE_VOLUME = 1
 
 /**
- * Voice signal gain. 1.3 is 130% of the file.
- * Applied with a GainNode, not audio.volume, and only because every bundled WAV
- * peaks low enough that this gain stays below full scale.
+ * Web Audio GainNode multiplier (timbre / pitch / speed unchanged).
+ * 1.0 = file level. Use this (not HTML volume) if loudness above 100% is needed.
  */
-export const VOICE_GAIN = 1.3
+export const VOICE_GAIN = 1
 
 /** Shared Web Audio graph (one AudioContext for all voice files — mobile browsers cap contexts). */
 type WarmGraph = {

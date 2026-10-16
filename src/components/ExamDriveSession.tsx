@@ -354,18 +354,24 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
   }, [])
 
+  // Preload may re-run when remote pins replace local ones. Never stopAll() here —
+  // that cleanup used to cut mid-PIN voice whenever sortedPins got a new array.
   useEffect(() => {
     const preload = () => audioEngine.preloadAll(collectPreloadAudioUrls(route.slug, sortedPins))
     const t = window.setTimeout(preload, 800)
+    return () => window.clearTimeout(t)
+  }, [route.id, route.slug, sortedPins])
+
+  // Wake lock + stop voices only when this session unmounts (or finishSession).
+  useEffect(() => {
     void requestWakeLock().then((release) => {
       releaseWake.current = release
     })
     return () => {
-      window.clearTimeout(t)
       releaseWake.current?.()
       audioEngine.stopAll()
     }
-  }, [route.id, route.slug, sortedPins])
+  }, [])
 
   useEffect(() => {
     if (phase !== 'active') return

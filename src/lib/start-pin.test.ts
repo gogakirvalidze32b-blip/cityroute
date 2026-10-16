@@ -276,14 +276,15 @@ describe('starting pin for a new exam', () => {
             )
             for (let j = i; j < fixes.length; j++) speak(j, handled)
             expect(handled.size, where).toBe(pins.length)
-          } else {
-            expect(decision.kind, where).toBe('ambiguous')
+          } else if (decision.kind === 'ambiguous') {
             const completable = decision.candidates.some((start) => {
               const handled = new Set(pins.filter((pin) => pin.sort_order < start).map((pin) => String(pin.sort_order)))
               for (let j = i; j < fixes.length; j++) speak(j, handled)
               return handled.size === pins.length
             })
             expect(completable, where).toBe(true)
+          } else {
+            expect.fail(`${where}: expected start or ambiguous, got ${decision.kind}`)
           }
         }
       }

@@ -42,14 +42,23 @@ function peakSample(file: string): number {
 }
 
 describe('voice gain headroom', () => {
-  it('keeps media volume, pitch and speed, and boosts the signal to 130%', () => {
+  it('keeps media volume at 1, gain at 1.0, pitch and speed unchanged', () => {
     expect(VOICE_VOLUME).toBe(1)
-    expect(VOICE_GAIN).toBe(1.3)
+    expect(VOICE_GAIN).toBe(1)
     expect(VOICE_PITCH).toBe('normal')
     expect(VOICE_PLAYBACK_RATE).toBe(1)
   })
 
-  it('every bundled voice WAV stays below full scale at 130% gain', () => {
+  it('HTML media volume rejects values above 1 (so volume=1.3 is not usable)', () => {
+    const audio = new Audio()
+    expect(() => {
+      audio.volume = 1.3
+    }).toThrow()
+    audio.volume = 1
+    expect(audio.volume).toBe(1)
+  })
+
+  it('every bundled voice WAV stays at or below full scale at current gain', () => {
     const files = wavFiles(join(process.cwd(), 'public', 'audio'))
     expect(files.length).toBeGreaterThan(0)
     const clipped = files

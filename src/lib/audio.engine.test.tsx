@@ -109,7 +109,7 @@ describe('AudioEngine', () => {
     vi.restoreAllMocks()
   })
 
-  it('plays the MP3 at 1.0x with pitch preserved, media volume 1, and a 1.3 gain', async () => {
+  it('plays the MP3 at 1.0x with pitch preserved, media volume 1, and gain 1.0', async () => {
     const f = installFakes()
     const engine = await freshEngine()
     expect(await engine.playDetailed('/audio/a.mp3', 'p1', 'text')).toBe('played')
@@ -118,7 +118,7 @@ describe('AudioEngine', () => {
     expect(f.created[0].playbackRate).toBe(1)
     expect(f.created[0].preservesPitch).toBe(true)
     expect(f.gains).toHaveLength(1)
-    expect(f.gains[0].gain.value).toBe(1.3)
+    expect(f.gains[0].gain.value).toBe(1)
     expect(f.filters).toHaveLength(0)
     expect(f.sources).toHaveLength(1)
   })
@@ -137,7 +137,7 @@ describe('AudioEngine', () => {
     expect(f.sources).toHaveLength(0) // suspended context stays unwired so playback is audible
   })
 
-  it('uses one 1.3 gain for every voice and does not open the EQ graph', async () => {
+  it('uses one unity gain for every voice and does not open the EQ graph', async () => {
     const f = installFakes()
     const ctorSpy = vi.fn()
     const Base = (globalThis as unknown as { AudioContext: new () => object }).AudioContext
@@ -153,7 +153,7 @@ describe('AudioEngine', () => {
     }
     expect(ctorSpy).toHaveBeenCalledTimes(1)
     expect(f.gains).toHaveLength(1)
-    expect(f.gains[0].gain.value).toBe(1.3)
+    expect(f.gains[0].gain.value).toBe(1)
     expect(f.filters).toHaveLength(0)
     expect(f.sources).toHaveLength(4)
     expect(f.created.every((audio) => audio.volume === 1 && audio.playbackRate === 1 && audio.preservesPitch)).toBe(true)
@@ -207,13 +207,57 @@ describe('AudioEngine', () => {
     expect(engine.isBusy()).toBe(false)
   })
 
+  it('after a voice ends, the next PIN instruction can play', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 't1')).toBe('played')
+    f.created[0].onended?.()
+    expect(engine.isBusy()).toBe(false)
+    expect(await engine.playDetailed('/audio/b.mp3', 'p2', 't2')).toBe('played')
+    expect(f.created[1].play).toHaveBeenCalledTimes(1)
+  })
+
+  it('stopAll() pauses active voices and clears busy so a later PIN can play', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 't')).toBe('played')
+    expect(engine.isBusy()).toBe(true)
+    engine.stopAll()
+    expect(f.created[0].pause).toHaveBeenCalled()
+    expect(f.created[0].currentTime).toBe(0)
+    expect(engine.isBusy()).toBe(false)
+    expect(await engine.playDetailed('/audio/b.mp3', 'p2', 't')).toBe('played')
+  })
+
+  it('after a play rejection the engine is not stuck and the next PIN can play', async () => {
+    const f = installFakes({ playRejects: 'NotAllowedError' })
+    const engine = await freshEngine()
+    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 'fallback')).toBe('tts')
+    expect(engine.isBusy()).toBe(true)
+    // TTS ends → engine must accept a later media play
+    const utter = f.speak.mock.calls[0]?.[0] as { onend?: (() => void) | null } | undefined
+    utter?.onend?.()
+    expect(engine.isBusy()).toBe(false)
+
+    const f2 = installFakes()
+    const engine2 = await freshEngine()
+    expect(await engine2.playDetailed('/audio/ok.mp3', 'p2', 't')).toBe('played')
+    expect(f2.created[0].play).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps VOICE_GAIN and VOICE_VOLUME at 1.0', async () => {
+    const mod = await import('./audio')
+    expect(mod.VOICE_GAIN).toBe(1)
+    expect(mod.VOICE_VOLUME).toBe(1)
+  })
+
   it('unlock() warms TTS and the gain context, without the EQ graph', async () => {
     const f = installFakes({}, 'suspended-hang')
     const engine = await freshEngine()
     engine.unlock()
     expect(f.resume).toHaveBeenCalledTimes(1)
     expect(f.gains).toHaveLength(1)
-    expect(f.gains[0].gain.value).toBe(1.3)
+    expect(f.gains[0].gain.value).toBe(1)
     expect(f.filters).toHaveLength(0)
     expect(f.speak).toHaveBeenCalledTimes(1)
   })

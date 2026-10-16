@@ -265,3 +265,42 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(played()).toEqual(['pin-1', 'pin-1', 'pin-1'])
   })
 })
+
+describe('ExamDriveSession – pin list refresh must not cut voice', () => {
+  afterEach(() => {
+    cleanup()
+    localStorage.clear()
+  })
+
+  it('does not call stopAll when only the pins array identity changes', async () => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam: createExamSession(route.id, route.name_ka),
+      userPos: [BASE_LAT, 45.4],
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 1000,
+      triggeredPins: [],
+      savedAt: Date.now(),
+    })
+    const { rerender } = render(<ExamDriveSession route={route} />)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    vi.mocked(audioEngine.stopAll).mockClear()
+    const refreshed = {
+      ...route,
+      pins: route.pins.map((pin) => ({ ...pin })),
+    } as RouteWithPins
+    rerender(<ExamDriveSession route={refreshed} />)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    expect(audioEngine.stopAll).not.toHaveBeenCalled()
+  })
+})

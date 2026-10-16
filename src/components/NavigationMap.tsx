@@ -339,17 +339,21 @@ export function NavigationMap({ route, practiceMode = false, onPhaseChange }: Pr
     } else {
       idleHandle = window.setTimeout(preload, 1200)
     }
+    return () => {
+      if (usedIdleCallback) window.cancelIdleCallback(idleHandle as number)
+      else clearTimeout(idleHandle)
+    }
+  }, [route.id, sortedPins])
 
+  useEffect(() => {
     void requestWakeLock().then((release) => {
       releaseWake.current = release
     })
     return () => {
-      if (usedIdleCallback) window.cancelIdleCallback(idleHandle as number)
-      else clearTimeout(idleHandle)
       releaseWake.current?.()
       audioEngine.stopAll()
     }
-  }, [route.id, sortedPins])
+  }, [])
 
   useEffect(() => {
     setLastSessions(loadSessionHistory(route.id))
