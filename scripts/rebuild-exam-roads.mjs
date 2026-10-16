@@ -97,23 +97,13 @@ function pinsForRoute(routeNumber) {
     .map((p) => /** @type {[number, number]} */ ([p.lat, p.lng]))
 }
 
-/** Forced vias: screenshot red corridors (Rustaveli main road). */
+/**
+ * Forced vias only when direct OSRM leaves the intended corridor.
+ * Do NOT use the old 41.91735/45.479 vias — they push the line south onto
+ * Chabua Amirejibi (U-turn / backtrack). Direct OSRM already stays on Rustaveli.
+ */
 const VIA = {
-  '1:20-21': [
-    [41.91735, 45.4772],
-    [41.91745, 45.479],
-    [41.9177, 45.4805],
-  ],
-  '1:24-25': [
-    [41.9177, 45.4805],
-    [41.91745, 45.479],
-    [41.91735, 45.4772],
-  ],
-  '2:18-19': [
-    [41.9177, 45.4805],
-    [41.91745, 45.479],
-    [41.91735, 45.4772],
-  ],
+  // Route 2 left unchanged for this Preview fix (only Route 1 second segment).
 }
 
 async function legWithOptionalVias(routeNumber, fromPin, toPin, a, b) {

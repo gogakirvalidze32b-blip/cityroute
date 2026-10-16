@@ -49,6 +49,43 @@ describe('production street line for Telavi routes 1–4', () => {
     expect(Math.max(...segment.map((p) => p[0]))).toBeLessThan(41.9185)
   })
 
+  it('does not backtrack south onto Amirejibi between route 1 #24 and #25', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
+    const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+    const line = examRouteLine('route-1', pins)
+    const near = (pin: { lat: number; lng: number }) => {
+      let best = 0
+      let bestD = Infinity
+      for (let i = 0; i < line.length; i++) {
+        const d = Math.hypot((line[i][0] - pin.lat) * 110540, (line[i][1] - pin.lng) * 82000)
+        if (d < bestD) {
+          bestD = d
+          best = i
+        }
+      }
+      return best
+    }
+    const p24 = pins.find((p) => p.sort_order === 24)!
+    const p25 = pins.find((p) => p.sort_order === 25)!
+    const lo = Math.min(near(p24), near(p25))
+    const hi = Math.max(near(p24), near(p25))
+    const segment = line.slice(lo, hi + 1)
+    expect(segment.length).toBeGreaterThan(2)
+    // Chabua Amirejibi south spur was ~41.9166; keep the westbound corridor north of that.
+    expect(Math.min(...segment.map((p) => p[0]))).toBeGreaterThanOrEqual(41.9170)
+    // First-fix Alazani corridor must still skip the #17 U-turn spur.
+    const p16 = pins.find((p) => p.sort_order === 16)!
+    const p18 = pins.find((p) => p.sort_order === 18)!
+    const aLo = Math.min(near(p16), near(p18))
+    const aHi = Math.max(near(p16), near(p18))
+    const alazani = line.slice(aLo, aHi + 1)
+    let maxWestRetreat = 0
+    for (let i = 1; i < alazani.length; i++) {
+      maxWestRetreat = Math.max(maxWestRetreat, alazani[0][1] - alazani[i][1])
+    }
+    expect(maxWestRetreat).toBeLessThan(0.0004)
+  })
+
   it('does not U-turn past route 1 #17 on the Alazani approach (#16→#18 corridor)', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
     const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
