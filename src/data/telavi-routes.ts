@@ -38,7 +38,7 @@ function route1Pins(routeId: string) {
 
 type AuditPin = { route: number; pin: number; lat: number; lng: number; instruction: string }
 
-/** Same coordinates, order, and texts as the live exam. Remote Supabase pins still replace these when loaded. */
+/** Same coordinates, order, and texts as the live exam. Bundled pins are preferred over stale Supabase rows. */
 function pinsFromAudit(routeNumber: number, routeId: string, idPrefix: string) {
   const rows = (auditedPins as AuditPin[])
     .filter((item) => item.route === routeNumber)

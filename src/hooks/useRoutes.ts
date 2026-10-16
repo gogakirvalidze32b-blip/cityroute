@@ -34,9 +34,16 @@ export function applyRelocatedPin<T extends { pins: Array<{ lat: number; lng: nu
 }
 
 /**
- * Merge Supabase metadata (id, pins) but NEVER remote polyline coordinates.
- * route-polylines.ts / TELAVI_ROUTES_FALLBACK is the source of truth for map geometry —
- * Supabase routes.polyline is legacy and must not override bundled OSRM paths.
+ * Bundled local pins win when present. Supabase pins often lag (old count/coords) and
+ * would hide new Route 1 PINs such as 41.917305,45.474576. Remote is fallback only.
+ */
+export function selectRoutePins<T>(localPins: readonly T[], remotePins: readonly T[]): T[] {
+  return localPins.length >= 2 ? [...localPins] : [...remotePins]
+}
+
+/**
+ * Merge Supabase metadata (id, city_id) but NEVER remote polyline or stale remote pins.
+ * route-polylines.ts / TELAVI_ROUTES_FALLBACK is the source of truth for map geometry and PIN coords.
  */
 function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): RouteWithPins[] {
   if (!remoteRows?.length) {
@@ -50,19 +57,20 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
       console.log(`[DEBUG] mergeRoutes: ${local.slug} - no remote match, using local (${local.pins.length} pins)`)
       return local
     }
-    
+
     const remotePins = (pinRows ?? []).filter((p) => p.route_id === remote.id)
+    const pins = selectRoutePins(local.pins, remotePins)
     console.log(`[DEBUG] mergeRoutes: ${local.slug}:`)
     console.log(`  - local pins: ${local.pins.length}`)
     console.log(`  - remote pins: ${remotePins.length}`)
-    console.log(`  - will use: ${remotePins.length >= 2 ? 'remote' : local.pins.length > 0 ? 'local' : 'none'}`)
-    
+    console.log(`  - will use: ${local.pins.length >= 2 ? 'local' : remotePins.length >= 2 ? 'remote' : 'none'}`)
+
     return {
       ...local,
       id: remote.id,
       city_id: remote.city_id,
       polyline: local.polyline,
-      pins: remotePins.length >= 2 ? remotePins : local.pins,
+      pins,
     }
   })
 }

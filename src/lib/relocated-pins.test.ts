@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { matchInstructionAudio } from '@/data/route-1-voice'
-import { applyRelocatedPin } from '@/hooks/useRoutes'
+import { applyRelocatedPin, selectRoutePins } from '@/hooks/useRoutes'
 
 const MOVED = [
   [[41.926909, 45.461327], [41.92676, 45.461276]],
@@ -76,5 +76,20 @@ describe('nine corrected Telavi pin coordinates', () => {
       { pins: [{ lat: 41.924423, lng: 45.46041, instruction_ka: 'უცვლელი', sort_order: 10 }] },
     ])[0].pins
     expect(pin).toEqual({ lat: 41.924423, lng: 45.46041, instruction_ka: 'უცვლელი', sort_order: 10 })
+  })
+
+  it('prefers bundled local pins over stale Supabase pins so new Route 1 PINs stay on the map', () => {
+    const local = applyRelocatedPin(TELAVI_ROUTES_FALLBACK).find((route) => route.slug === 'route-1')!
+    expect(local.pins).toHaveLength(35)
+    expect(local.pins[16]).toMatchObject({ lat: 41.919129, lng: 45.471847, sort_order: 17 })
+    expect(local.pins[18]).toMatchObject({ lat: 41.917305, lng: 45.474576, sort_order: 19 })
+    expect(local.pins[25]).toMatchObject({ lat: 41.918717, lng: 45.472368, sort_order: 26 })
+
+    const staleRemote = local.pins.slice(0, 34).map((pin) => ({ ...pin, lat: 0, lng: 0 }))
+    const chosen = selectRoutePins(local.pins, staleRemote)
+    expect(chosen).toHaveLength(35)
+    expect(chosen[18]).toMatchObject({ lat: 41.917305, lng: 45.474576 })
+    expect(chosen[25]).toMatchObject({ lat: 41.918717, lng: 45.472368 })
+    expect(chosen.every((pin) => pin.lat !== 0)).toBe(true)
   })
 })
