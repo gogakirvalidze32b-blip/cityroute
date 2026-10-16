@@ -46,10 +46,7 @@ import {
 import {
   collectPreloadAudioUrls,
   enrichPinsWithLocalAudio,
-  EXAM_START_AUDIO,
   EXAM_START_TEXT,
-  EXAM_SUCCESS_AUDIO,
-  EXAM_SUCCESS_TEXT,
   isStartPinAlreadyAnnounced,
 } from '@/data/route-audio'
 import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } from '@/lib/route-nav'
@@ -695,7 +692,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setDriveView(features.mapNav ? 'map' : 'panel')
     setPhase('active')
     resumedSlugRef.current = route.slug
-    void audioEngine.play(EXAM_START_AUDIO, 'session-start', EXAM_START_TEXT)
+    // Session-start voice disabled: PIN navigation voices still play via GPS.
   }
 
   async function handleStartSession() {
@@ -744,11 +741,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     releaseWake.current?.()
     audioEngine.stopAll()
     resumedSlugRef.current = null
-    // Play success audio only if passed (not failed)
-    const passed = !summary.failedMinor && summary.severeTotal === 0
-    if (passed) {
-      void audioEngine.play(EXAM_SUCCESS_AUDIO, 'session-success', EXAM_SUCCESS_TEXT)
-    }
+    // Session-success voice disabled: do not play EXAM_SUCCESS_AUDIO.
   }
 
   function restartPreview() {

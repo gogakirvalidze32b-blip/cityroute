@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { collectPreloadAudioUrls, resolvePinAudioUrl } from './route-audio'
+import { collectPreloadAudioUrls, isStartPinAlreadyAnnounced, resolvePinAudioUrl } from './route-audio'
 import type { PinRow } from '@/types/database'
 
 const pin = (instruction_ka: string, audio_url: string | null = null): PinRow =>
@@ -32,5 +32,10 @@ describe('resolvePinAudioUrl (MP3 path for every route)', () => {
   it('preload list contains the resolved MP3s of routes 2–4', () => {
     const urls = collectPreloadAudioUrls('route-2', [pin('მალე, გთხოვთ მოუხვიოთ მარჯვნივ')])
     expect(urls.map(decodeURI)).toContain('/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav')
+  })
+
+  it('does not skip the first PIN as already announced (session-start voice is off)', () => {
+    expect(isStartPinAlreadyAnnounced('route-1', 'p1-1')).toBe(false)
+    expect(isStartPinAlreadyAnnounced('route-2', 'any')).toBe(false)
   })
 })

@@ -47,7 +47,10 @@ export function collectPreloadAudioUrls(routeSlug: string, pins: PinRow[]): stri
   return [...urls]
 }
 
-/** First start pin — audio already plays on ▶ გამოცდის დაწყება. */
-export function isStartPinAlreadyAnnounced(routeSlug: string, pinId: string): boolean {
-  return routeSlug === 'route-1' && pinId === 'p1-1'
+/**
+ * First start pin used to be skipped because EXAM_START_AUDIO covered it.
+ * Session-start voice is off, so the first PIN must speak via GPS like the rest.
+ */
+export function isStartPinAlreadyAnnounced(_routeSlug: string, _pinId: string): boolean {
+  return false
 }
