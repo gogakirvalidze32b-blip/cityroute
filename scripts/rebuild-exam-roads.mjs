@@ -98,12 +98,13 @@ function pinsForRoute(routeNumber) {
 }
 
 /**
- * Forced vias only when direct OSRM leaves the intended corridor.
- * Do NOT use the old 41.91735/45.479 vias — they push the line south onto
- * Chabua Amirejibi (U-turn / backtrack). Direct OSRM already stays on Rustaveli.
+ * Forced vias only when direct OSRM misses the intended corridor.
+ * - Roundabout east of #22/#23: direct 23→24 reverses before the circle;
+ *   via the ring so the blue line enters, turns, and comes back west.
+ * Do NOT revive the old 41.91735/45.479 vias (Amirejibi south U-turn).
  */
 const VIA = {
-  // Route 2 left unchanged for this Preview fix (only Route 1 second segment).
+  '1:23-24': [[41.91902, 45.48565]],
 }
 
 async function legWithOptionalVias(routeNumber, fromPin, toPin, a, b) {

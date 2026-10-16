@@ -49,6 +49,32 @@ describe('production street line for Telavi routes 1–4', () => {
     expect(Math.max(...segment.map((p) => p[0]))).toBeLessThan(41.9185)
   })
 
+  it('turns through the eastern roundabout between route 1 #23 and #24 before coming back west', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
+    const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+    const line = examRouteLine('route-1', pins)
+    const near = (pin: { lat: number; lng: number }) => {
+      let best = 0
+      let bestD = Infinity
+      for (let i = 0; i < line.length; i++) {
+        const d = Math.hypot((line[i][0] - pin.lat) * 110540, (line[i][1] - pin.lng) * 82000)
+        if (d < bestD) {
+          bestD = d
+          best = i
+        }
+      }
+      return best
+    }
+    const p23 = pins.find((p) => p.sort_order === 23)!
+    const p24 = pins.find((p) => p.sort_order === 24)!
+    const lo = Math.min(near(p23), near(p24))
+    const hi = Math.max(near(p23), near(p24))
+    const segment = line.slice(lo, hi + 1)
+    expect(segment.length).toBeGreaterThan(8)
+    // Must enter the roundabout ring (east of the approach pins), not reverse early.
+    expect(Math.max(...segment.map((p) => p[1]))).toBeGreaterThan(45.4855)
+  })
+
   it('does not backtrack south onto Amirejibi between route 1 #24 and #25', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
     const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
