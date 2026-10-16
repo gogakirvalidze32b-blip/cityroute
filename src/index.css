@@ -2877,26 +2877,20 @@ button:disabled {
 }
 
 /*
- * Android / car-monitor landscape only.
- * .exam-session--laptop is deliberately excluded so desktop layout stays unchanged.
- * Mode comes from useExamLayoutMode (laptop = min 1200×680).
+ * Android / car-monitor landscape: give the topbar the same height as the
+ * laptop bar (screenshot proportions) and nudge it down from the bezel.
+ * Overrides the short-landscape shrinks above for tablet / mobile-landscape
+ * only. Does not touch --exam-pad / --exam-gap (PIN grid) or laptop mode.
  */
 @media (orientation: landscape) {
-  .exam-session--tablet.exam-session--active,
-  .exam-session--mobile-landscape.exam-session--active {
-    --exam-hud-h: clamp(58px, 14dvh, 82px);
-    --exam-pad: clamp(8px, 2.1vmin, 18px);
-    --exam-gap: clamp(6px, 1.15vmin, 12px);
+  .exam-session--tablet,
+  .exam-session--mobile-landscape {
+    --exam-hud-h: clamp(56px, 12vh, 76px);
   }
 
   .exam-session--tablet .exam-topbar,
   .exam-session--mobile-landscape .exam-topbar {
-    /* nudge finish + speed-limit row slightly downward */
-    padding-top: calc(env(safe-area-inset-top, 0px) + 8px);
-    padding-bottom: 4px;
-    min-height: calc(var(--exam-hud-h) + env(safe-area-inset-top, 0px) + 8px);
-    /* a bit more horizontal room for the white bar chrome */
-    padding-left: calc(var(--exam-pad) + 4px);
-    padding-right: calc(var(--exam-pad) + 4px);
+    padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+    min-height: calc(var(--exam-hud-h) + env(safe-area-inset-top, 0px) + 10px);
   }
 }
