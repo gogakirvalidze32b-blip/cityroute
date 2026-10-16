@@ -2877,13 +2877,20 @@ button:disabled {
 }
 
 /*
- * Android / car-monitor landscape only: nudge the topbar down so finish /
- * speed-limit are not clipped by the bezel. No size / width / pad / gap changes.
- * .exam-session--laptop is excluded (laptop = min 1200×680).
+ * Android / car-monitor landscape: give the topbar the same height as the
+ * laptop bar (screenshot proportions) and nudge it down from the bezel.
+ * Overrides the short-landscape shrinks above for tablet / mobile-landscape
+ * only. Does not touch --exam-pad / --exam-gap (PIN grid) or laptop mode.
  */
 @media (orientation: landscape) {
+  .exam-session--tablet,
+  .exam-session--mobile-landscape {
+    --exam-hud-h: clamp(56px, 12vh, 76px);
+  }
+
   .exam-session--tablet .exam-topbar,
   .exam-session--mobile-landscape .exam-topbar {
     padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+    min-height: calc(var(--exam-hud-h) + env(safe-area-inset-top, 0px) + 10px);
   }
 }
