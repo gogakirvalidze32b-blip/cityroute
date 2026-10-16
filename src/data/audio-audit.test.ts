@@ -20,6 +20,7 @@ const USER_DIRECTED: Record<string, string> = {
 }
 const EXPECTED_OVERRIDES = new Map<string, string>([
   ['1:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
+  ['1:19', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['3:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:14', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
@@ -37,18 +38,18 @@ void USER_DIRECTED
 
 const norm = (s: string) => normalizeInstruction(s.replace(/\.wav$/, ''))
 
-describe('FINAL audio audit: 126 PINs', () => {
+describe('FINAL audio audit: 127 PINs', () => {
   const files = readdirSync(POINTS_DIR).filter((f) => f.endsWith('.wav'))
   const byNorm = new Map(files.map((f) => [norm(f), f]))
 
-  it('has 126 PINs (R1 34, R2 29, R3 31, R4 32)', () => {
-    expect(pins.length).toBe(126)
-    for (const [r, n] of [[1, 34], [2, 29], [3, 31], [4, 32]]) {
+  it('has 127 PINs (R1 35, R2 29, R3 31, R4 32)', () => {
+    expect(pins.length).toBe(127)
+    for (const [r, n] of [[1, 35], [2, 29], [3, 31], [4, 32]]) {
       expect(pins.filter((p) => p.route === r).length).toBe(n)
     }
   })
 
-  it('every PIN maps to the expected, existing WAV (126/126 MAPPED, 0 MISSING, 0 AMBIGUOUS)', () => {
+  it('every PIN maps to the expected, existing WAV (127/127 MAPPED, 0 MISSING, 0 AMBIGUOUS)', () => {
     let mapped = 0
     const problems: string[] = []
     for (const p of pins) {
@@ -69,15 +70,24 @@ describe('FINAL audio audit: 126 PINs', () => {
       else mapped++
     }
     expect(problems).toEqual([])
-    expect(mapped).toBe(126)
+    expect(mapped).toBe(127)
   })
 
   it('R1 #18 uses the exact "left then right" WAV (never the reversed order)', () => {
     const p = pins.find((x) => x.route === 1 && x.pin === 18)!
-    expect(p.lat).toBe(41.918205)
-    expect(p.lng).toBe(45.473217)
+    expect(p.lat).toBe(41.918009)
+    expect(p.lng).toBe(45.473452)
     const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
     expect(decodeURI(url)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ.wav')
+  })
+
+  it('R1 #19 is the new right-turn PIN after #18 with intentional მალე WAV', () => {
+    const p = pins.find((x) => x.route === 1 && x.pin === 19)!
+    expect(p.lat).toBe(41.917305)
+    expect(p.lng).toBe(45.474576)
+    expect(p.instruction).toBe('გთხოვთ, მოუხვიოთ მარჯვნივ')
+    const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
+    expect(decodeURI(url)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav')
   })
 
   it('preload list covers every mapped WAV and all files exist', () => {

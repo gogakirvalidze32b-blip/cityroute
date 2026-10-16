@@ -352,30 +352,30 @@ describe('starting pin for a new exam', () => {
     expect(chosen).toContain(31)
   })
 
-  it('does not guess between route 1 PINs 19 and 24, which are about 5 m apart', () => {
+  it('does not guess between route 1 PINs 18 and 26 on opposite passes of the same street', () => {
     const pins = routePins(1)
     const line = road(1, pins)!
-    const p19 = pinOf(pins, 19)
-    const standing = chooseStartPin(pins, fixAt([p19.lat, p19.lng]), line)
+    const p18 = pinOf(pins, 18)
+    const standing = chooseStartPin(pins, fixAt([p18.lat, p18.lng]), line)
     expect(standing.kind).toBe('ambiguous')
     if (standing.kind === 'ambiguous') {
-      expect(standing.candidates).toEqual(expect.arrayContaining([19, 24]))
+      expect(standing.candidates).toEqual(expect.arrayContaining([18, 26]))
       expect(standing.moving).toBe(false)
     }
-    const towards20 = chooseStartPin(
+    const towards19 = chooseStartPin(
       pins,
-      fixAt([p19.lat, p19.lng], { speedMps: 8, headingDeg: bearingDeg([p19.lat, p19.lng], [pinOf(pins, 20).lat, pinOf(pins, 20).lng]) }),
+      fixAt([p18.lat, p18.lng], { speedMps: 8, headingDeg: bearingDeg([p18.lat, p18.lng], [pinOf(pins, 19).lat, pinOf(pins, 19).lng]) }),
       line,
     )
-    const towards25 = chooseStartPin(
+    const towards27 = chooseStartPin(
       pins,
-      fixAt([p19.lat, p19.lng], { speedMps: 8, headingDeg: bearingDeg([p19.lat, p19.lng], [pinOf(pins, 25).lat, pinOf(pins, 25).lng]) }),
+      fixAt([p18.lat, p18.lng], { speedMps: 8, headingDeg: bearingDeg([p18.lat, p18.lng], [pinOf(pins, 27).lat, pinOf(pins, 27).lng]) }),
       line,
     )
     // On the pin and moving away: that pin or the one after it, never the other pass.
-    if (towards20.kind === 'start') expect([19, 20]).toContain(towards20.sortOrder)
-    else expect(towards20.kind).toBe('ambiguous')
-    if (towards25.kind === 'start') expect([24, 25]).toContain(towards25.sortOrder)
-    else expect(towards25.kind).toBe('ambiguous')
+    if (towards19.kind === 'start') expect([18, 19]).toContain(towards19.sortOrder)
+    else expect(towards19.kind).toBe('ambiguous')
+    if (towards27.kind === 'start') expect([26, 27]).toContain(towards27.sortOrder)
+    else expect(towards27.kind).toBe('ambiguous')
   })
 })

@@ -9,7 +9,7 @@ describe('production street line for Telavi routes 1–4', () => {
   })
 
   it.each([
-    ['route-1', 34],
+    ['route-1', 35],
     ['route-2', 29],
     ['route-3', 31],
     ['route-4', 32],

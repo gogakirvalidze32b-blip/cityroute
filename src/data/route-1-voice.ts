@@ -11,7 +11,7 @@ export const ROUTE_1_SESSION_AUDIO = {
 /**
  * Instruction text -> real WAV file (public/audio/points).
  * Keys are normalized (see normalizeInstruction): commas removed, whitespace collapsed.
- * Source of truth: the final PIN audio audit (126/126 PINs mapped). Do not add fuzzy matching:
+ * Source of truth: the final PIN audio audit (instruction→WAV). Do not add fuzzy matching:
  * a wrong maneuver/order must never fall back to a "similar" file.
  */
 const INSTRUCTION_TO_FILE: Record<string, string> = {

@@ -159,9 +159,12 @@ describe('routes 2 and 3 field-test resume on production', () => {
     }
   })
 
-  it('route 1 resumes by sort order; the start announcement already counts pin 1', async () => {
+  it('route 1 resumes by sort order; pin 1 is counted by GPS (session-start voice is muted)', async () => {
     const route = routeBySlug('route-1')
     const first = await startAtPin1(route)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(nextOrder()).toBe(1)
+    await driveTo(route, 1)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
     expect(nextOrder()).toBe(2)
     await driveTo(route, 2)
