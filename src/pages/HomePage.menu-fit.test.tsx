@@ -73,8 +73,9 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     [800, 480],
     [1280, 720],
     [390, 844],
+    [390, 700],
     [1440, 900],
-  ])('renders every route button for %i×%i', (width, height) => {
+  ])('renders every route button and footer actions for %i×%i', (width, height) => {
     setViewport(width, height)
     renderHome()
 
@@ -84,6 +85,7 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(screen.getByTestId('home-route-card-route-3')).toBeTruthy()
     expect(screen.getByTestId('home-route-card-route-4')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'გასვლა' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'მხარდაჭერა' })).toBeTruthy()
   })
 
   it('keeps laptop detection for tall wide desktops', () => {
@@ -106,7 +108,8 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(css).toMatch(/max-height:\s*100dvh/)
     expect(css).toMatch(/\.home-page \.route-list[\s\S]*flex-direction:\s*column/)
     expect(css).toMatch(/\.home-page \.route-list[\s\S]*flex-wrap:\s*nowrap/)
-    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 560px\)/)
+    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 620px\)/)
+    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 500px\)/)
     expect(css).not.toMatch(/\.home-page \.route-card[\s\S]*flex:\s*1 1 calc\(50%/)
   })
 })

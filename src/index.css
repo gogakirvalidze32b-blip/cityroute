@@ -284,20 +284,22 @@ button:disabled {
 .home-page .route-list {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: clamp(0.28rem, 1.1vh, 0.75rem);
   width: 100%;
-  margin-top: clamp(2.5rem, 10vh, 3.7rem);
+  /* Adaptive stack owns spacing; do not reserve a large fixed top gap. */
+  margin-top: clamp(0.25rem, 1.5vh, 1.2rem);
   flex: 1;
+  min-height: 0;
 }
 
 .home-footer {
   margin-top: auto;
-  padding-top: 1rem;
+  padding-top: clamp(0.25rem, 1vh, 0.8rem);
   padding-bottom: 0.25rem;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.65rem;
+  gap: clamp(0.2rem, 0.8vh, 0.65rem);
   flex-shrink: 0;
 }
 
@@ -2796,6 +2798,16 @@ button:disabled {
 .home-page .support-button,
 .home-page .support-fab {
   max-width: 100%;
+  box-sizing: border-box;
+  min-height: clamp(36px, 5.5vh, 44px);
+  padding: clamp(0.35rem, 1vh, 0.7rem) clamp(0.85rem, 2.5vw, 1.25rem);
+  font-size: clamp(0.78rem, 2vh, 0.95rem);
+}
+
+.home-page .support-footer {
+  font-size: clamp(0.65rem, 1.6vh, 0.8rem);
+  line-height: 1.25;
+  max-width: 100%;
 }
 
 .route-page--exam {
@@ -2906,34 +2918,59 @@ button:disabled {
   height: 40px;
 }
 
-/* Very short landscape: keep the vertical stack, trim secondary chrome. */
-@media (orientation: landscape) and (max-height: 560px) {
+/* Short landscape / car monitors: keep the vertical stack, trim secondary chrome. */
+@media (orientation: landscape) and (max-height: 620px) {
   .home-page .route-list {
     flex-direction: column;
     flex-wrap: nowrap;
+    gap: clamp(0.2rem, 0.9vh, 0.45rem);
+    margin-top: clamp(0.15rem, 0.8vh, 0.45rem);
   }
 
   .home-page .route-card {
     flex: 1 1 0;
     min-width: 0;
-    min-height: 40px;
+    min-height: clamp(40px, 7vh, 52px);
+    padding: clamp(0.28rem, 1vh, 0.55rem) clamp(0.55rem, 1.8vw, 1rem);
   }
 
   .home-page .route-card__tags {
     display: none;
   }
 
-  .home-page .home-meta {
+  .home-page .home-meta,
+  .home-page .home-trial {
     display: none;
   }
 
   .home-page .home-header {
-    padding-top: 0.2rem;
+    padding: 0.15rem 0 0.1rem;
+  }
+
+  .home-page .app-brand__logo,
+  .home-page .home-logo {
+    width: clamp(1.9rem, 5vh, 2.75rem);
+    height: clamp(1.9rem, 5vh, 2.75rem);
+  }
+
+  .home-page .app-brand__text,
+  .home-page .home-brand-text {
+    min-height: clamp(1.9rem, 5vh, 2.75rem);
   }
 
   .home-page .app-brand__city,
   .home-page .home-city {
-    font-size: clamp(1.05rem, 4vh, 1.35rem);
+    font-size: clamp(1rem, 3.6vh, 1.3rem);
+  }
+
+  .home-page .home-footer {
+    padding-top: clamp(0.15rem, 0.7vh, 0.4rem);
+    gap: clamp(0.15rem, 0.7vh, 0.4rem);
+  }
+
+  .home-page .support-button,
+  .home-page .home-signout {
+    min-height: clamp(36px, 6.5vh, 42px);
   }
 
   .exam-session {
@@ -2942,6 +2979,25 @@ button:disabled {
 
   .exam-topbar {
     flex-wrap: nowrap;
+  }
+}
+
+/* Very short landscape (800×480 class panels / browser chrome). */
+@media (orientation: landscape) and (max-height: 500px) {
+  .home-page .route-card {
+    min-height: 40px;
+  }
+
+  .home-page .route-card__name {
+    font-size: clamp(0.85rem, 3.2vh, 0.98rem);
+  }
+
+  .home-page .support-footer {
+    font-size: 0.65rem;
+  }
+
+  .home-page .chevron {
+    font-size: 1.05rem;
   }
 }
 
