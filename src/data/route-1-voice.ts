@@ -22,7 +22,7 @@ export const ROUTE_1_SESSION_AUDIO = {
 const INSTRUCTION_TO_FILE: Record<string, string> = {
   // Turn now
   'გთხოვთ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ.wav',
-  // Tracked file only: untracked twin `გთხოვთ, მოუხვიოთ მარჯვნივ.wav` is byte-identical; do not require it.
+  // Default for other routes; Route 1 PIN 1/19 use plain file via ROUTE_OVERRIDES.
   'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
   'გთხოვთ იმოძრაოთ პირდაპირ': 'გთხოვთ, იმოძრაოთ პირდაპირ.wav',
   'გთხოვთ შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ': 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
@@ -62,10 +62,14 @@ const INSTRUCTION_TO_FILE: Record<string, string> = {
 const TYPO_FIXES: ReadonlyArray<[RegExp, string]> = [[/გთხვოვთ/g, 'გთხოვთ']]
 
 /**
- * Per-route override for the one instruction whose final audit mapping differs between routes:
+ * Per-route overrides when the final audit mapping differs between routes.
+ * Route 1 PIN 1/19: plain right-turn uses `გთხოვთ, მოუხვიოთ მარჯვნივ.wav` (not მალე).
  * Route 4 PIN #20 uses the no-comma roundabout file.
  */
 const ROUTE_OVERRIDES: Record<string, Record<string, string>> = {
+  'route-1': {
+    'გთხოვთ მოუხვიოთ მარჯვნივ': 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav',
+  },
   'route-4': {
     'წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav',
   },

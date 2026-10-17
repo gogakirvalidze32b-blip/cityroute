@@ -14,12 +14,12 @@ const mk = (instruction_ka: string): PinRow =>
 
 /**
  * Expected WAV when instruction text ≠ filename (tracked file only).
- * Includes: (a) instruction without „მალე“ → tracked `მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav`
- * (byte-identical untracked twin not required); (b) 7 pending PINs awaiting text approval.
+ * Route 1 PIN 1/19 use plain `გთხოვთ, მოუხვიოთ მარჯვნივ.wav` via route-1 override.
+ * Other routes keep prior overrides (incl. plain text → მალე WAV where applicable).
  */
 const EXPECTED_OVERRIDES = new Map<string, string>([
-  ['1:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
-  ['1:19', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
+  ['1:1', 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav'],
+  ['1:19', 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav'],
   ['3:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:14', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
@@ -79,13 +79,19 @@ describe('FINAL audio audit: 127 PINs', () => {
     expect(decodeAudioPath(url)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ.wav')
   })
 
-  it('R1 #19 keeps instruction text; plays tracked მალე twin WAV (byte-identical)', () => {
-    const p = pins.find((x) => x.route === 1 && x.pin === 19)!
-    expect(p.lat).toBe(41.917305)
-    expect(p.lng).toBe(45.474576)
-    expect(p.instruction).toBe('გთხოვთ, მოუხვიოთ მარჯვნივ')
-    const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
-    expect(decodeAudioPath(url)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav')
+  it('R1 #1 and #19 keep plain text; use plain right-turn WAV (not მალე)', () => {
+    for (const [pin, lat, lng] of [
+      [1, 41.931434, 45.475383],
+      [19, 41.917305, 45.474576],
+    ] as const) {
+      const p = pins.find((x) => x.route === 1 && x.pin === pin)!
+      expect(p.lat).toBe(lat)
+      expect(p.lng).toBe(lng)
+      expect(p.instruction).toBe('გთხოვთ, მოუხვიოთ მარჯვნივ')
+      const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
+      expect(decodeAudioPath(url)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav')
+      expect(existsSync(join(POINTS_DIR, 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav'))).toBe(true)
+    }
   })
 
   it('preload list covers every mapped WAV and all files exist', () => {
