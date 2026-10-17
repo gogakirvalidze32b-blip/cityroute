@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+import { applyLocalTbilisiTestPin } from '@/data/local-tbilisi-test-pin'
 import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
 
 const MOVED_PINS: Array<[[number, number], [number, number]]> = [
@@ -48,10 +49,10 @@ export function selectRoutePins<T>(localPins: readonly T[], remotePins: readonly
 function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): RouteWithPins[] {
   if (!remoteRows?.length) {
     console.log('[DEBUG] mergeRoutes: No remote rows, returning TELAVI_ROUTES_FALLBACK')
-    return applyRelocatedPin(TELAVI_ROUTES_FALLBACK)
+    return applyLocalTbilisiTestPin(applyRelocatedPin(TELAVI_ROUTES_FALLBACK))
   }
 
-  return applyRelocatedPin(TELAVI_ROUTES_FALLBACK).map((local) => {
+  return applyLocalTbilisiTestPin(applyRelocatedPin(TELAVI_ROUTES_FALLBACK)).map((local) => {
     const remote = remoteRows.find((r) => r.slug === local.slug)
     if (!remote) {
       console.log(`[DEBUG] mergeRoutes: ${local.slug} - no remote match, using local (${local.pins.length} pins)`)
@@ -76,7 +77,9 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
 }
 
 export function useRoutes() {
-  const [routes, setRoutes] = useState<RouteWithPins[]>(() => applyRelocatedPin(TELAVI_ROUTES_FALLBACK))
+  const [routes, setRoutes] = useState<RouteWithPins[]>(() =>
+    applyLocalTbilisiTestPin(applyRelocatedPin(TELAVI_ROUTES_FALLBACK)),
+  )
   const [source, setSource] = useState<'local' | 'merged'>('local')
 
   useEffect(() => {
@@ -111,13 +114,13 @@ export function useRoutes() {
           console.log('  route-1 pins from Supabase:', route1Pins.length)
         }
 
-        const merged = applyRelocatedPin(mergeRoutes(routeRows as RouteRow[] | null, pinRows as PinRow[] | null))
-        
+        const merged = mergeRoutes(routeRows as RouteRow[] | null, pinRows as PinRow[] | null)
+
         console.log('[DEBUG] Merged routes:')
         merged.forEach(r => {
           console.log(`  ${r.slug}: ${r.pins.length} pins`)
         })
-        
+
         if (!cancelled) {
           setRoutes(merged)
           setSource(routeRows?.length ? 'merged' : 'local')

@@ -72,8 +72,8 @@ import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
 type Phase = 'preview' | 'active' | 'summary'
 
-/** Sort-order resume for the four Telavi exam routes. Tbilisi test data is not included. */
-const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
+/** Sort-order resume for Telavi exam routes and the local Tbilisi GPS test city. */
+const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4', 'test-route-tbilisi'])
 
 function initialHandledOrders(
   saved: SavedExamState,
