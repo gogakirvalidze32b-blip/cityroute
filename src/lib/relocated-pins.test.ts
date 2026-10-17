@@ -43,7 +43,7 @@ describe('nine corrected Telavi pin coordinates', () => {
       expect(pin.sort_order).toBe(index + 9)
       expect(pin.instruction_ka).toBe('მალე, გთხოვთ მოუხვიოთ მარცხნივ')
       const url = matchInstructionAudio(pin.instruction_ka, 'route-1')
-      expect(decodeURI(url!)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარცხნივ.wav')
+      expect(decodeURIComponent(url!)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარცხნივ.wav')
     })
   })
 
@@ -58,7 +58,7 @@ describe('nine corrected Telavi pin coordinates', () => {
         const pin = route.pins.find((item) => close(item.lat, next[0]) && close(item.lng, next[1]))!
         const url = matchInstructionAudio(pin.instruction_ka, route.slug)
         expect(url).toBeTruthy()
-        expect(existsSync(resolve('public', decodeURI(url!).slice(1)))).toBe(true)
+        expect(existsSync(resolve('public', decodeURIComponent(url!).slice(1)))).toBe(true)
       }
     }
 

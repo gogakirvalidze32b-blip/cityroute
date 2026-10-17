@@ -1,5 +1,10 @@
-function audioPublicUrl(relativePath: string): string {
-  return encodeURI(`/audio/${relativePath}`)
+/**
+ * Build a public /audio/... URL. Each path segment is encodeURIComponent'd so commas
+ * and spaces in Georgian filenames are valid on static hosts (encodeURI leaves commas).
+ */
+export function audioPublicUrl(relativePath: string): string {
+  const trimmed = relativePath.replace(/^\/+/, '').replace(/^audio\//, '')
+  return `/audio/${trimmed.split('/').map(encodeURIComponent).join('/')}`
 }
 
 export const ROUTE_1_SESSION_AUDIO = {
@@ -17,7 +22,8 @@ export const ROUTE_1_SESSION_AUDIO = {
 const INSTRUCTION_TO_FILE: Record<string, string> = {
   // Turn now
   'გთხოვთ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ.wav',
-  'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav', // user-directed
+  // Tracked file only: untracked twin `გთხოვთ, მოუხვიოთ მარჯვნივ.wav` is byte-identical; do not require it.
+  'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
   'გთხოვთ იმოძრაოთ პირდაპირ': 'გთხოვთ, იმოძრაოთ პირდაპირ.wav',
   'გთხოვთ შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ': 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
   // Two maneuvers

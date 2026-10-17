@@ -196,16 +196,17 @@ describe('standalone test city „ტესტი — თბილისი“',
   })
 
   it('each pin uses the exact instruction→WAV map (or null); never a wrong/similar file', () => {
-    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(1))!)).toBe(
+    const decodeAudioPath = (url: string) => decodeURIComponent(url)
+    expect(decodeAudioPath(resolvePinAudioUrl(route.slug, pin(1))!)).toBe(
       '/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
     )
-    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(2))!)).toBe(
+    expect(decodeAudioPath(resolvePinAudioUrl(route.slug, pin(2))!)).toBe(
       '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav',
     )
-    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(4))!)).toBe(
+    expect(decodeAudioPath(resolvePinAudioUrl(route.slug, pin(4))!)).toBe(
       '/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
     )
-    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(5))!)).toBe(
+    expect(decodeAudioPath(resolvePinAudioUrl(route.slug, pin(5))!)).toBe(
       '/audio/points/გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
     )
     for (const order of WITHOUT_WAV) {

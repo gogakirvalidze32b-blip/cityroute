@@ -12,12 +12,11 @@ const POINTS_DIR = join(AUDIO_DIR, 'points')
 const mk = (instruction_ka: string): PinRow =>
   ({ id: 'x', route_id: 'r', lat: 0, lng: 0, radius_m: 25, trigger_distance_m: 50, instruction_ka, audio_url: null, sort_order: 1, active: true }) as PinRow
 
-/** Decisions made by the user (instruction text is unchanged, audio set explicitly). */
-const USER_DIRECTED: Record<string, string> = {
-  'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav': [
-    '1:1', '3:1', '4:1', '4:14', '2:8',
-  ].join('|'),
-}
+/**
+ * Expected WAV when instruction text ≠ filename (tracked file only).
+ * Includes: (a) instruction without „მალე“ → tracked `მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav`
+ * (byte-identical untracked twin not required); (b) 7 pending PINs awaiting text approval.
+ */
 const EXPECTED_OVERRIDES = new Map<string, string>([
   ['1:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['1:19', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
@@ -31,10 +30,9 @@ const EXPECTED_OVERRIDES = new Map<string, string>([
   ['4:9', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
   ['2:18', 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
   ['4:20', 'მალე, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
-  ['3:5', 'მალე, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
-  ['3:11', 'გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ.wav'],
 ])
-void USER_DIRECTED
+
+const decodeAudioPath = (url: string) => decodeURIComponent(url)
 
 const norm = (s: string) => normalizeInstruction(s.replace(/\.wav$/, ''))
 
@@ -57,7 +55,7 @@ describe('FINAL audio audit: 127 PINs', () => {
       const url = resolvePinAudioUrl(slug, mk(p.instruction))
       const key = `${p.route}:${p.pin}`
       if (!url) { problems.push(`MISSING R${p.route} #${p.pin} ${p.instruction}`); continue }
-      const rel = decodeURI(url).replace(/^\/audio\//, '')
+      const rel = decodeAudioPath(url).replace(/^\/audio\//, '')
       const file = rel.replace(/^points\//, '')
       const abs = join(AUDIO_DIR, rel)
       if (!existsSync(abs)) { problems.push(`FILE NOT FOUND R${p.route} #${p.pin} ${rel}`); continue }
@@ -78,21 +76,21 @@ describe('FINAL audio audit: 127 PINs', () => {
     expect(p.lat).toBe(41.918009)
     expect(p.lng).toBe(45.473452)
     const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
-    expect(decodeURI(url)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ.wav')
+    expect(decodeAudioPath(url)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ.wav')
   })
 
-  it('R1 #19 is the new right-turn PIN after #18 with intentional მალე WAV', () => {
+  it('R1 #19 keeps instruction text; plays tracked მალე twin WAV (byte-identical)', () => {
     const p = pins.find((x) => x.route === 1 && x.pin === 19)!
     expect(p.lat).toBe(41.917305)
     expect(p.lng).toBe(45.474576)
     expect(p.instruction).toBe('გთხოვთ, მოუხვიოთ მარჯვნივ')
     const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
-    expect(decodeURI(url)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav')
+    expect(decodeAudioPath(url)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav')
   })
 
   it('preload list covers every mapped WAV and all files exist', () => {
     for (const path of route1VoicePreloadPaths()) {
-      expect(existsSync(join(AUDIO_DIR, decodeURI(path).replace(/^\/audio\//, '')))).toBe(true)
+      expect(existsSync(join(AUDIO_DIR, decodeAudioPath(path).replace(/^\/audio\//, '')))).toBe(true)
     }
     const urls = new Set(collectPreloadAudioUrls('route-4', pins.filter((p) => p.route === 4).map((p) => mk(p.instruction))))
     expect([...urls].every((u) => u.endsWith('.wav'))).toBe(true)

@@ -1,14 +1,12 @@
 import type { PinRow } from '@/types/database'
 import {
+  audioPublicUrl,
   matchRoute1InstructionAudio,
   ROUTE_1_SESSION_AUDIO,
   route1VoicePreloadPaths,
 } from '@/data/route-1-voice'
 
-/** Encode Georgian filenames for browser audio URLs. */
-export function audioPublicUrl(relativePath: string): string {
-  return encodeURI(`/audio/${relativePath}`)
-}
+export { audioPublicUrl }
 
 export const EXAM_START_TEXT = 'გთხოვთ დაიწყოთ'
 export const EXAM_FINISH_TEXT = 'ფინიში'
