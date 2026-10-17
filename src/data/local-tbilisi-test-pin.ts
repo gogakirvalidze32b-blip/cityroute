@@ -23,7 +23,8 @@ const pins: PinRow[] = TEST_PINS.map((pin, index) => ({
   radius_m: 25,
   trigger_distance_m: 50,
   instruction_ka: pin.instruction,
-  audio_url: encodeURI(`/audio/points/${pin.instruction}.wav`),
+  // Resolved via exact instruction→WAV map in enrichPinsWithLocalAudio (no hardcoded path / TTS).
+  audio_url: null,
   sort_order: index + 1,
   active: true,
 }))

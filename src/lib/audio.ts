@@ -41,8 +41,8 @@ type LoudGraph = {
   gain: GainNode
 }
 
-/** Result of a playback attempt. 'failed' = neither the MP3 nor the TTS fallback could start. */
-export type PlayStatus = 'played' | 'tts' | 'duplicate' | 'failed'
+/** Result of a playback attempt. Only original WAV/media URLs are used — never TTS. */
+export type PlayStatus = 'played' | 'duplicate' | 'failed'
 
 export type AudioDiagnostic = {
   at: number
@@ -55,7 +55,6 @@ export type AudioDiagnostic = {
     | 'media-error'
     | 'play-rejected'
     | 'audio-context-not-running'
-    | 'tts-unavailable'
   detail?: string
 }
 
@@ -98,16 +97,16 @@ export class AudioEngine {
 
   private applyRate(audio: HTMLAudioElement) {
     audio.volume = this.volume
+    // Exam voices must always play at the original recorded tempo (1.0x).
+    audio.playbackRate = 1
 
     switch (this.pitch) {
       case 'low':
-        audio.playbackRate = this.playbackRate
         audio.preservesPitch = false
         break
       case 'mid':
       case 'normal':
       default:
-        audio.playbackRate = this.playbackRate
         audio.preservesPitch = true
         break
     }
@@ -274,8 +273,8 @@ export class AudioEngine {
 
   /**
    * Call synchronously from a user gesture (tap on "start", first touch/click).
-   * Starts the AudioContext inside the gesture, wires already-preloaded voices to it
-   * and unlocks speech synthesis, so later PIN voices can play from GPS callbacks.
+   * Starts the AudioContext inside the gesture and wires already-preloaded WAV voices,
+   * so later PIN voices can play from GPS callbacks. Never enables browser TTS.
    */
   unlock(): void {
     if (typeof window === 'undefined') return
@@ -294,16 +293,6 @@ export class AudioEngine {
             if (graph.ctx.state === 'running') this.cache.forEach((a) => void this.ensureLoudChain(a))
           })
         }
-      }
-    } catch {
-      /* best effort */
-    }
-    try {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.getVoices()
-        const warm = new SpeechSynthesisUtterance('')
-        warm.volume = 0
-        window.speechSynthesis.speak(warm)
       }
     } catch {
       /* best effort */
@@ -339,80 +328,75 @@ export class AudioEngine {
     urls.filter(Boolean).forEach((u) => this.preload(u))
   }
 
-  speakText(text: string, pinId: string): boolean {
-    if (this.speaking.has(pinId)) return false
-    if (!text || !('speechSynthesis' in window)) return false
-    const utter = new SpeechSynthesisUtterance(text)
-    utter.lang = 'ka-GE'
-    utter.rate = 1
-    utter.pitch = 1
-    const voice = pickGeorgianVoice()
-    if (voice) utter.voice = voice
-    this.speaking.add(pinId)
-    this.busySince = Date.now()
-    utter.onend = () => this.speaking.delete(pinId)
-    utter.onerror = () => this.speaking.delete(pinId)
-    window.speechSynthesis.speak(utter)
-    return true
+  async play(url: string | null | undefined, pinId: string, _instructionText = ''): Promise<boolean> {
+    const status = await this.playDetailed(url, pinId, _instructionText)
+    return status === 'played'
   }
 
-  async play(url: string | null | undefined, pinId: string, fallbackText: string): Promise<boolean> {
-    const status = await this.playDetailed(url, pinId, fallbackText)
-    return status === 'played' || status === 'tts'
-  }
-
-  /** Same as play() but tells the caller what happened, so a failed PIN voice can be retried. */
-  async playDetailed(url: string | null | undefined, pinId: string, fallbackText: string): Promise<PlayStatus> {
+  /**
+   * Plays only the given media URL (original WAV). Never synthesizes speech from text.
+   * On missing URL or playback failure: logs a clear console warning and returns 'failed'.
+   */
+  async playDetailed(
+    url: string | null | undefined,
+    pinId: string,
+    _instructionText = '',
+  ): Promise<PlayStatus> {
     if (this.speaking.has(pinId)) return 'duplicate'
 
-    if (url) {
-      let audio = this.cache.get(url)
-      if (!audio) {
-        audio = new Audio(url)
-        this.cache.set(url, audio)
-      }
-      let fellBackToTts = false
-      try {
-        audio.currentTime = 0
-        this.applyRate(audio)
-        if (this.pitch === 'mid') await this.ensureWarmChain(audio)
-        else await this.ensureLoudChain(audio)
-
-        this.speaking.add(pinId)
-        this.busySince = Date.now()
-        audio.onended = () => this.speaking.delete(pinId)
-        audio.onerror = () => {
-          this.speaking.delete(pinId)
-          this.report(pinId, url, 'media-error', 'code=' + (audio?.error?.code ?? '?'))
-          fellBackToTts = this.speakText(fallbackText, pinId)
-        }
-        await audio.play()
-        return 'played'
-      } catch (err) {
-        if (fellBackToTts) return 'tts'
-        this.speaking.delete(pinId)
-        const name = err instanceof DOMException ? err.name : ''
-        this.report(
-          pinId,
-          url,
-          name === 'NotAllowedError'
-            ? 'autoplay-blocked'
-            : name === 'NotSupportedError'
-              ? 'media-not-supported'
-              : 'play-rejected',
-          err instanceof Error ? err.name + ': ' + err.message : String(err),
-        )
-      }
-    } else {
-      this.report(pinId, null, 'no-audio-url')
+    if (!url) {
+      this.report(pinId, null, 'no-audio-url', 'No original WAV mapped for this PIN; not using TTS')
+      console.error('[AUDIO] Missing original WAV for PIN', pinId, '— instruction was not spoken')
+      return 'failed'
     }
 
-    if (this.speakText(fallbackText, pinId)) {
+    let audio = this.cache.get(url)
+    if (!audio) {
+      audio = new Audio(url)
+      this.cache.set(url, audio)
+    }
+    try {
+      audio.currentTime = 0
+      this.applyRate(audio)
+      if (this.pitch === 'mid') await this.ensureWarmChain(audio)
+      else await this.ensureLoudChain(audio)
+
+      this.speaking.add(pinId)
       this.busySince = Date.now()
-      return 'tts'
+      audio.onended = () => this.speaking.delete(pinId)
+      audio.onerror = () => {
+        this.speaking.delete(pinId)
+        this.report(pinId, url, 'media-error', 'code=' + (audio?.error?.code ?? '?'))
+        console.error('[AUDIO] Original WAV failed for PIN', pinId, '| url:', url)
+      }
+      await audio.play()
+      if (audio.playbackRate !== 1) {
+        audio.playbackRate = 1
+      }
+      return 'played'
+    } catch (err) {
+      this.speaking.delete(pinId)
+      const name = err instanceof DOMException ? err.name : ''
+      this.report(
+        pinId,
+        url,
+        name === 'NotAllowedError'
+          ? 'autoplay-blocked'
+          : name === 'NotSupportedError'
+            ? 'media-not-supported'
+            : 'play-rejected',
+        err instanceof Error ? err.name + ': ' + err.message : String(err),
+      )
+      console.error(
+        '[AUDIO] Could not play original WAV for PIN',
+        pinId,
+        '| url:',
+        url,
+        '|',
+        err instanceof Error ? err.message : String(err),
+      )
+      return 'failed'
     }
-    this.report(pinId, url ?? null, 'tts-unavailable')
-    return 'failed'
   }
 
   stopAll() {
@@ -421,21 +405,7 @@ export class AudioEngine {
       a.pause()
       a.currentTime = 0
     })
-    window.speechSynthesis?.cancel()
   }
 }
 
 export const audioEngine = new AudioEngine()
-
-function pickGeorgianVoice(): SpeechSynthesisVoice | null {
-  const voices = window.speechSynthesis.getVoices()
-  return (
-    voices.find((v) => v.lang.toLowerCase().startsWith('ka')) ??
-    voices.find((v) => v.lang.toLowerCase().startsWith('ru')) ??
-    null
-  )
-}
-
-if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-  window.speechSynthesis.addEventListener('voiceschanged', () => pickGeorgianVoice(), { passive: true })
-}

@@ -611,7 +611,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         saveNowRef.current?.()
         void audioEngine.playDetailed(target.audio_url, target.id, target.instruction_ka).then((status) => {
           if (status !== 'failed' || phaseRef.current !== 'active') return
-          // Playback itself failed (MP3 + TTS): allow a few retries instead of losing this PIN's voice.
+          // Original WAV failed: allow a few retries. Never fall back to browser TTS.
           const key = route.slug + ':' + target.id
           const attempts = (audioAttemptsRef.current.get(key) ?? 0) + 1
           audioAttemptsRef.current.set(key, attempts)

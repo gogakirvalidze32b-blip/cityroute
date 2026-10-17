@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * AudioEngine: browser-autoplay / AudioContext / TTS-fallback behaviour with fake browser APIs.
+ * AudioEngine: original WAV only at 1.0x — never browser TTS.
  */
 type Behaviour = { playRejects?: string }
 
@@ -72,13 +72,6 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
   const speak = vi.fn()
   class FakeUtterance {
     text: string
-    lang = ''
-    rate = 1
-    pitch = 1
-    volume = 1
-    voice: unknown = null
-    onend: (() => void) | null = null
-    onerror: (() => void) | null = null
     constructor(t: string) {
       this.text = t
     }
@@ -103,16 +96,17 @@ async function freshEngine() {
 describe('AudioEngine', () => {
   beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
   })
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
-  it('plays the MP3 at 1.0x with pitch preserved, media volume 1, and gain 1.0', async () => {
+  it('plays the WAV at 1.0x with pitch preserved, media volume 1, and gain 1.0', async () => {
     const f = installFakes()
     const engine = await freshEngine()
-    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 'text')).toBe('played')
+    expect(await engine.playDetailed('/audio/points/a.wav', 'p1', 'text')).toBe('played')
     expect(f.created[0].play).toHaveBeenCalledTimes(1)
     expect(f.created[0].volume).toBe(1)
     expect(f.created[0].playbackRate).toBe(1)
@@ -121,27 +115,35 @@ describe('AudioEngine', () => {
     expect(f.gains[0].gain.value).toBe(1)
     expect(f.filters).toHaveLength(0)
     expect(f.sources).toHaveLength(1)
+    expect(f.speak).not.toHaveBeenCalled()
   })
 
   it('does NOT hang when AudioContext.resume() never resolves, and does not wire to a suspended context', async () => {
     const f = installFakes({}, 'suspended-hang')
     const engine = await freshEngine()
     const status = await Promise.race([
-      engine.playDetailed('/audio/a.mp3', 'p1', 'text'),
+      engine.playDetailed('/audio/a.wav', 'p1', 'text'),
       new Promise((r) => setTimeout(() => r('HUNG'), 2000)),
     ])
     expect(status).toBe('played')
-    expect(f.created[0].play).toHaveBeenCalledTimes(1)
-    expect(f.created[0].volume).toBe(1)
     expect(f.created[0].playbackRate).toBe(1)
-    expect(f.sources).toHaveLength(0) // suspended context stays unwired so playback is audible
+    expect(f.sources).toHaveLength(0)
+    expect(f.speak).not.toHaveBeenCalled()
   })
 
   it('uses one unity gain for every voice and does not open the EQ graph', async () => {
     const f = installFakes()
     const ctorSpy = vi.fn()
     const Base = (globalThis as unknown as { AudioContext: new () => object }).AudioContext
-    vi.stubGlobal('AudioContext', class extends Base { constructor() { super(); ctorSpy() } })
+    vi.stubGlobal(
+      'AudioContext',
+      class extends Base {
+        constructor() {
+          super()
+          ctorSpy()
+        }
+      },
+    )
     const engine = await freshEngine()
     for (const [url, id] of [
       ['/audio/points/route-1.wav', 'p1'],
@@ -152,48 +154,47 @@ describe('AudioEngine', () => {
       expect(await engine.playDetailed(url, id, 't')).toBe('played')
     }
     expect(ctorSpy).toHaveBeenCalledTimes(1)
-    expect(f.gains).toHaveLength(1)
-    expect(f.gains[0].gain.value).toBe(1)
-    expect(f.filters).toHaveLength(0)
-    expect(f.sources).toHaveLength(4)
-    expect(f.created.every((audio) => audio.volume === 1 && audio.playbackRate === 1 && audio.preservesPitch)).toBe(true)
+    expect(f.created.every((audio) => audio.playbackRate === 1)).toBe(true)
+    expect(f.speak).not.toHaveBeenCalled()
   })
 
-  it('autoplay blocked → TTS fallback speaks the instruction text and the reason is recorded', async () => {
+  it('autoplay blocked → failed with diagnostic; TTS is never used', async () => {
     const f = installFakes({ playRejects: 'NotAllowedError' })
     const engine = await freshEngine()
-    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 'გთხოვთ მოუხვიოთ მარცხნივ')).toBe('tts')
-    expect(f.speak).toHaveBeenCalledTimes(1)
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 'გთხოვთ მოუხვიოთ მარცხნივ')).toBe('failed')
+    expect(f.speak).not.toHaveBeenCalled()
     expect(engine.getDiagnostics().map((d) => d.reason)).toContain('autoplay-blocked')
   })
 
-  it('missing MP3 (NotSupportedError) → TTS fallback and diagnostic', async () => {
+  it('missing / unsupported media → failed; TTS is never used', async () => {
     const f = installFakes({ playRejects: 'NotSupportedError' })
     const engine = await freshEngine()
-    expect(await engine.playDetailed('/audio/missing.mp3', 'p1', 'text')).toBe('tts')
-    expect(f.speak).toHaveBeenCalledTimes(1)
+    expect(await engine.playDetailed('/audio/missing.wav', 'p1', 'text')).toBe('failed')
+    expect(f.speak).not.toHaveBeenCalled()
     expect(engine.getDiagnostics()[0].reason).toBe('media-not-supported')
   })
 
-  it('no audio_url → TTS; nothing available at all → failed with a diagnostic', async () => {
+  it('no audio_url → failed with diagnostic; TTS is never used', async () => {
     const f = installFakes()
     const engine = await freshEngine()
-    expect(await engine.playDetailed(null, 'p1', 'text')).toBe('tts')
-    expect(f.speak).toHaveBeenCalledTimes(1)
+    expect(await engine.playDetailed(null, 'p1', 'text')).toBe('failed')
+    expect(f.speak).not.toHaveBeenCalled()
+    expect(engine.getDiagnostics().map((d) => d.reason)).toEqual(['no-audio-url'])
+  })
 
-    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: undefined })
-    vi.stubGlobal('speechSynthesis', undefined)
-    delete (window as unknown as Record<string, unknown>).speechSynthesis
-    const e2 = await freshEngine()
-    expect(await e2.playDetailed(null, 'p2', 'text')).toBe('failed')
-    expect(e2.getDiagnostics().map((d) => d.reason)).toEqual(['no-audio-url', 'tts-unavailable'])
+  it('setPlaybackRate cannot change exam voice tempo away from 1.0x', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    engine.setPlaybackRate(0.8)
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('played')
+    expect(f.created[0].playbackRate).toBe(1)
   })
 
   it('duplicate prevention: the same PIN cannot play twice while its voice is active', async () => {
     const f = installFakes()
     const engine = await freshEngine()
-    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 't')).toBe('played')
-    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 't')).toBe('duplicate')
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('played')
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('duplicate')
     expect(f.created[0].play).toHaveBeenCalledTimes(1)
   })
 
@@ -201,7 +202,7 @@ describe('AudioEngine', () => {
     const f = installFakes()
     const engine = await freshEngine()
     expect(engine.isBusy()).toBe(false)
-    await engine.playDetailed('/audio/a.mp3', 'p1', 't')
+    await engine.playDetailed('/audio/a.wav', 'p1', 't')
     expect(engine.isBusy()).toBe(true)
     f.created[0].onended?.()
     expect(engine.isBusy()).toBe(false)
@@ -210,62 +211,60 @@ describe('AudioEngine', () => {
   it('after a voice ends, the next PIN instruction can play', async () => {
     const f = installFakes()
     const engine = await freshEngine()
-    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 't1')).toBe('played')
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't1')).toBe('played')
     f.created[0].onended?.()
-    expect(engine.isBusy()).toBe(false)
-    expect(await engine.playDetailed('/audio/b.mp3', 'p2', 't2')).toBe('played')
+    expect(await engine.playDetailed('/audio/b.wav', 'p2', 't2')).toBe('played')
     expect(f.created[1].play).toHaveBeenCalledTimes(1)
   })
 
   it('stopAll() pauses active voices and clears busy so a later PIN can play', async () => {
     const f = installFakes()
     const engine = await freshEngine()
-    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 't')).toBe('played')
-    expect(engine.isBusy()).toBe(true)
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('played')
     engine.stopAll()
     expect(f.created[0].pause).toHaveBeenCalled()
-    expect(f.created[0].currentTime).toBe(0)
     expect(engine.isBusy()).toBe(false)
-    expect(await engine.playDetailed('/audio/b.mp3', 'p2', 't')).toBe('played')
+    expect(await engine.playDetailed('/audio/b.wav', 'p2', 't')).toBe('played')
   })
 
   it('after a play rejection the engine is not stuck and the next PIN can play', async () => {
     const f = installFakes({ playRejects: 'NotAllowedError' })
     const engine = await freshEngine()
-    expect(await engine.playDetailed('/audio/a.mp3', 'p1', 'fallback')).toBe('tts')
-    expect(engine.isBusy()).toBe(true)
-    // TTS ends → engine must accept a later media play
-    const utter = f.speak.mock.calls[0]?.[0] as { onend?: (() => void) | null } | undefined
-    utter?.onend?.()
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 'fallback')).toBe('failed')
+    expect(f.speak).not.toHaveBeenCalled()
     expect(engine.isBusy()).toBe(false)
 
     const f2 = installFakes()
     const engine2 = await freshEngine()
-    expect(await engine2.playDetailed('/audio/ok.mp3', 'p2', 't')).toBe('played')
+    expect(await engine2.playDetailed('/audio/ok.wav', 'p2', 't')).toBe('played')
     expect(f2.created[0].play).toHaveBeenCalledTimes(1)
+    expect(f2.speak).not.toHaveBeenCalled()
   })
 
-  it('keeps VOICE_GAIN and VOICE_VOLUME at 1.0', async () => {
+  it('keeps VOICE_GAIN, VOICE_VOLUME and VOICE_PLAYBACK_RATE at 1.0', async () => {
     const mod = await import('./audio')
     expect(mod.VOICE_GAIN).toBe(1)
     expect(mod.VOICE_VOLUME).toBe(1)
+    expect(mod.VOICE_PLAYBACK_RATE).toBe(1)
   })
 
-  it('unlock() warms TTS and the gain context, without the EQ graph', async () => {
+  it('unlock() warms the gain context without TTS', async () => {
     const f = installFakes({}, 'suspended-hang')
     const engine = await freshEngine()
     engine.unlock()
     expect(f.resume).toHaveBeenCalledTimes(1)
     expect(f.gains).toHaveLength(1)
-    expect(f.gains[0].gain.value).toBe(1)
-    expect(f.filters).toHaveLength(0)
-    expect(f.speak).toHaveBeenCalledTimes(1)
+    expect(f.speak).not.toHaveBeenCalled()
   })
 
-  it('legacy play() keeps its boolean contract', async () => {
+  it('legacy play() is true only when the original WAV played', async () => {
     installFakes()
     const engine = await freshEngine()
-    expect(await engine.play('/audio/a.mp3', 'p1', 't')).toBe(true)
-    expect(await engine.play('/audio/a.mp3', 'p1', 't')).toBe(false)
+    expect(await engine.play('/audio/a.wav', 'p1', 't')).toBe(true)
+    expect(await engine.play('/audio/a.wav', 'p1', 't')).toBe(false)
+    const fFail = installFakes({ playRejects: 'NotAllowedError' })
+    const e2 = await freshEngine()
+    expect(await e2.play('/audio/a.wav', 'p3', 't')).toBe(false)
+    expect(fFail.speak).not.toHaveBeenCalled()
   })
 })

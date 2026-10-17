@@ -18,6 +18,7 @@ const INSTRUCTION_TO_FILE: Record<string, string> = {
   // Turn now
   'გთხოვთ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ.wav',
   'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav', // user-directed
+  'გთხოვთ იმოძრაოთ პირდაპირ': 'გთხოვთ, იმოძრაოთ პირდაპირ.wav',
   'გთხოვთ შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ': 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
   // Two maneuvers
   'გთხოვთ მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ.wav',
@@ -86,7 +87,7 @@ export function route1VoiceFiles(): string[] {
 
 /**
  * Exact instruction text -> WAV URL. Returns null when no exact mapping exists
- * (caller falls back to TTS; no fuzzy/"similar" file is ever used).
+ * (caller must not synthesize speech; no fuzzy/"similar" file is ever used).
  */
 export function matchInstructionAudio(instruction: string, routeSlug?: string): string | null {
   const key = normalizeInstruction(instruction)

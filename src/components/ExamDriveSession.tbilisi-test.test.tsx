@@ -4,6 +4,7 @@ import { userEvent } from '@testing-library/user-event'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ExamDriveSession } from './ExamDriveSession'
+// fs/path: assert original WAV files exist on disk for mapped instructions
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { applyLocalTbilisiTestPin, LOCAL_TBILISI_TEST_ROUTE as route } from '@/data/local-tbilisi-test-pin'
 import { resolvePinAudioUrl } from '@/data/route-audio'
@@ -96,8 +97,8 @@ const EXPECTED = [
   { lat: 41.6811569, lng: 44.9808128, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
 ]
 const ORDERS = [1, 2, 3, 4, 5]
-/** Pins whose instruction has no recording in public/audio/points (engine speaks the text instead). */
-const WITHOUT_WAV = [1, 3, 4]
+/** Pins with no exact instruction→WAV map entry (engine must stay silent — no TTS). */
+const WITHOUT_WAV = [3]
 
 const playDetailed = vi.mocked(audioEngine.playDetailed)
 const pin = (order: number) => route.pins.find((p) => p.sort_order === order)!
@@ -194,17 +195,25 @@ describe('standalone test city „ტესტი — თბილისი“',
     expect(routes.filter((r) => r.slug === route.slug)).toEqual([route])
   })
 
-  it('each pin asks only for the WAV named after its own instruction', () => {
-    for (const p of route.pins) {
-      const url = resolvePinAudioUrl(route.slug, p)
-      expect(decodeURI(String(url))).toBe(`/audio/points/${p.instruction_ka}.wav`)
-      const exists = fs.existsSync(path.resolve('public/audio/points', `${p.instruction_ka}.wav`))
-      expect(exists).toBe(!WITHOUT_WAV.includes(p.sort_order))
+  it('each pin uses the exact instruction→WAV map (or null); never a wrong/similar file', () => {
+    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(1))!)).toBe(
+      '/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+    )
+    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(2))!)).toBe(
+      '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav',
+    )
+    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(4))!)).toBe(
+      '/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+    )
+    expect(decodeURI(resolvePinAudioUrl(route.slug, pin(5))!)).toBe(
+      '/audio/points/გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
+    )
+    for (const order of WITHOUT_WAV) {
+      expect(resolvePinAudioUrl(route.slug, pin(order))).toBeNull()
     }
-    expect(fs.existsSync(path.resolve('public/audio/points', '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ.wav'))).toBe(
+    expect(fs.existsSync(path.resolve('public/audio/points', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'))).toBe(
       true,
     )
-    expect(decodeURI(String(resolvePinAudioUrl(route.slug, pin(3))))).not.toContain('300 მეტრში გთხოვთ')
   })
 
   it('a new session starts at pin 1 without session-start voice', async () => {

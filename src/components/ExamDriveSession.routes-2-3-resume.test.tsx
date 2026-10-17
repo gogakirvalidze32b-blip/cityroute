@@ -9,6 +9,7 @@ import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
 import { examRoadTrace, examRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
 import { distanceToPinMeters, type GpsPosition, type LatLng } from '@/lib/gps'
 import { chooseStartPin } from '@/lib/start-pin'
+import { resolvePinAudioUrl } from '@/data/route-audio'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 vi.mock('@/context/AuthContext', () => ({
@@ -233,6 +234,12 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(playDetailed).not.toHaveBeenCalled()
     await driveTo(route, 3)
     expect(playedOrders(route)).toEqual([3])
+    // Same original WAV as a normal visit to PIN 3 — never TTS / wrong path.
+    const pin3 = route.pins.find((p) => p.sort_order === 3)!
+    const expectedWav = resolvePinAudioUrl(route.slug, pin3)
+    expect(expectedWav).toBeTruthy()
+    expect(playDetailed.mock.calls[0][0]).toBe(expectedWav)
+    expect(playDetailed.mock.calls[0][1]).toBe(pin3.id)
     expect(nextOrder()).toBe(4)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
   })
