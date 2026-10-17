@@ -10,6 +10,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "release:gate": "node scripts/release-gate.mjs",
     "build-routes": "node scripts/build-osrm-routes.mjs",
     "update-route-1": "node scripts/update-r1-polyline.mjs",
     "import-route-2-kmz": "node scripts/import-kmz-route2.mjs",
