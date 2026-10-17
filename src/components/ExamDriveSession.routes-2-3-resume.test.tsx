@@ -60,6 +60,7 @@ vi.mock('@/lib/route-nav', () => ({
   gpsToLatLng: (pos: GpsPosition) => [pos.lat, pos.lng] as [number, number],
   resolveHeading: () => 0,
   resolveExamSpeedKmh: () => 5,
+  formatDuration: (ms: number) => `${Math.floor(ms / 1000)}s`,
 }))
 
 vi.mock('@/components/ExamLiveMap', () => ({
@@ -193,27 +194,32 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(playDetailed).not.toHaveBeenCalled()
   })
 
-  it('route 1: mid-route დასრულება keeps progress; გაგრძელება resumes next PIN (not agency #1)', async () => {
+  it('route 1: mid-route დასრულება → გაგრძელება resumes at PIN 3; agency GPS cannot rewind', async () => {
     const route = routeBySlug('route-1')
     await startAtPin1(route)
     await driveTo(route, 1)
     await driveTo(route, 2)
+    expect(playedOrders(route)).toEqual([1, 2])
     expect(nextOrder()).toBe(3)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
 
+    // Mid-route finish must keep progress (keepForResume / persistActiveExamNow).
     await act(async () => {
       await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
     })
     await settle()
 
     const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    expect(saved).not.toBeNull()
     expect(saved?.triggeredSortOrders).toEqual([1, 2])
+    expect(saved?.lastPassedSortOrder).toBe(2)
     expect(saved?.nextSortOrder).toBe(3)
     expect(screen.getByTestId('exam-summary')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'გაგრძელება' })).toBeTruthy()
 
+    // continueFromSummary with agency / PIN 1 GPS must not reset to PIN 1.
     playDetailed.mockClear()
-    gps.once = fix(route, 1) // agency / pin 1 GPS must not reset progress
+    gps.once = fix(route, 1)
     await act(async () => {
       await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
     })
@@ -223,14 +229,17 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(screen.queryByTestId('exam-summary')).toBeNull()
     await driveTo(route, 1)
     expect(playDetailed).not.toHaveBeenCalled()
+    await driveTo(route, 2)
+    expect(playDetailed).not.toHaveBeenCalled()
     await driveTo(route, 3)
     expect(playedOrders(route)).toEqual([3])
+    expect(nextOrder()).toBe(4)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
   })
 
-  it('route 1: თავიდან after mid-route stop clears progress and starts a new exam', async () => {
+  it('route 1: თავიდან after mid-route stop clears progress and a new start begins at PIN 1', async () => {
     const route = routeBySlug('route-1')
-    await startAtPin1(route)
+    const first = await startAtPin1(route)
     await driveTo(route, 1)
     await driveTo(route, 2)
     await act(async () => {
@@ -238,6 +247,7 @@ describe('routes 2 and 3 field-test resume on production', () => {
     })
     await settle()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(screen.getByRole('button', { name: 'გაგრძელება' })).toBeTruthy()
 
     await act(async () => {
       await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
@@ -245,6 +255,19 @@ describe('routes 2 and 3 field-test resume on production', () => {
     await settle()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
     expect(screen.getByRole('button', { name: /გამოცდის დაწყება/ })).toBeTruthy()
+
+    // Fresh mount after clear: new exam must start at PIN 1 (not leftover GPS watch state).
+    first.unmount()
+    playDetailed.mockClear()
+    gps.onFix = null
+    gps.once = fix(route, 1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    expect(nextOrder()).toBe(1)
+    await driveTo(route, 1)
+    expect(playedOrders(route)).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
   })
 
   it.each(cases)('%s uses its street trace', (slug, count) => {
