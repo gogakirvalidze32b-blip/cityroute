@@ -11,6 +11,7 @@ import {
   checkWorkingTree,
   isSignificantUntracked,
   parseArgs,
+  resolveShellForCommand,
   runReleaseGate,
   GateError,
 } from './release-gate.mjs'
@@ -107,6 +108,12 @@ describe('release-gate helpers', () => {
   it('parses --sha', () => {
     expect(parseArgs(['--sha', HEAD]).sha).toBe(HEAD)
   })
+
+  it('runs git without a shell so ^{commit} is not eaten on Windows', () => {
+    expect(resolveShellForCommand('git')).toBe(false)
+    // npm/npx may still need shell:true on win32 for .cmd shims
+    expect(resolveShellForCommand('npm')).toBe(process.platform === 'win32')
+  })
 })
 
 describe('runReleaseGate', () => {
@@ -152,6 +159,33 @@ describe('runReleaseGate', () => {
     expect(result.ok).toBe(false)
     expect(result.error.code).toBe('GIT_SHA')
     expect(error.mock.calls[0][0]).toMatch(/GIT_SHA/)
+  })
+
+  it('passes ^{commit} to git as a single argv element (no shell mangling)', async () => {
+    const gitCalls = []
+    const base = mockRun()
+    const run = (cmd, args, opts) => {
+      if (cmd === 'git') gitCalls.push([...args])
+      return base(cmd, args, opts)
+    }
+    const result = await runReleaseGate(
+      {
+        cwd: EXPECTED_ROOT,
+        readVercelProject: () => VALID_PROJECT,
+        run,
+        fetchProduction: async () => ({ identifier: 'dpl_x', detail: '' }),
+        log: vi.fn(),
+        error: vi.fn(),
+      },
+      ['--sha', HEAD],
+    )
+    expect(result.ok).toBe(true)
+    const peel = gitCalls.find(
+      (args) => args[0] === 'rev-parse' && String(args[1]).includes('{commit}'),
+    )
+    expect(peel).toBeTruthy()
+    expect(peel[1]).toBe(`${HEAD}^{commit}`)
+    expect(peel[1].includes('^')).toBe(true)
   })
 
   it('fails for wrong directory or Vercel project id', async () => {

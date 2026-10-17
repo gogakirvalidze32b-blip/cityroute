@@ -224,12 +224,22 @@ export function formatReport({
   return lines.join('\n')
 }
 
-function defaultRun(cmd, args, opts = {}) {
+/**
+ * Git must run without a shell so Windows cmd.exe does not eat `^` in
+ * args like `<sha>^{commit}`. npm/npx still need a shell on Windows (.cmd).
+ */
+export function resolveShellForCommand(cmd) {
+  if (cmd === 'git') return false
+  return process.platform === 'win32'
+}
+
+export function defaultRun(cmd, args, opts = {}) {
   const result = spawnSync(cmd, args, {
     cwd: opts.cwd,
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: opts.shell ?? resolveShellForCommand(cmd),
     env: { ...process.env, ...(opts.env || {}) },
+    windowsHide: true,
   })
   return {
     status: result.status ?? 1,
