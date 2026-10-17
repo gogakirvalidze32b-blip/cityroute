@@ -8,13 +8,15 @@ import {
 type Props = {
   summary: ExamSessionSummary
   onRestart: () => void
+  /** Mid-route stop kept progress — continue from the next unhandled PIN. */
+  onContinue?: () => void
 }
 
-export function ExamSummary({ summary, onRestart }: Props) {
+export function ExamSummary({ summary, onRestart, onContinue }: Props) {
   const lines = examSummaryLines(summary)
 
   return (
-    <div className="exam-summary-overlay">
+    <div className="exam-summary-overlay" data-testid="exam-summary">
       <div className="exam-summary">
         <p className="exam-summary__route">{summary.routeName}</p>
         <h2>სესია დასრულდა</h2>
@@ -54,6 +56,11 @@ export function ExamSummary({ summary, onRestart }: Props) {
           <p className="exam-summary__clean">შეცდომა არ ჩაწერილა</p>
         )}
 
+        {onContinue && (
+          <button type="button" className="nav-start-btn" onClick={onContinue}>
+            გაგრძელება
+          </button>
+        )}
         <button type="button" className="nav-start-btn" onClick={onRestart}>
           თავიდან
         </button>

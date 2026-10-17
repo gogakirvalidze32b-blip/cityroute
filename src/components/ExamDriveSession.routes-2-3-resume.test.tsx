@@ -75,10 +75,23 @@ vi.mock('@/components/ExamViewSwitcher', () => ({ ExamViewSwitcher: () => null }
 vi.mock('@/components/GpsAccuracyBadge', () => ({ GpsAccuracyBadge: () => null }))
 vi.mock('@/components/RoutePreviewMap', () => ({ RoutePreviewMap: () => <div data-testid="preview" /> }))
 vi.mock('@/components/ExamSummary', () => ({
-  ExamSummary: ({ onRestart }: { onRestart: () => void }) => (
-    <button type="button" onClick={onRestart}>
-      თავიდან
-    </button>
+  ExamSummary: ({
+    onRestart,
+    onContinue,
+  }: {
+    onRestart: () => void
+    onContinue?: () => void
+  }) => (
+    <div data-testid="exam-summary">
+      {onContinue && (
+        <button type="button" onClick={onContinue}>
+          გაგრძელება
+        </button>
+      )}
+      <button type="button" onClick={onRestart}>
+        თავიდან
+      </button>
+    </div>
   ),
 }))
 
@@ -178,6 +191,60 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(nextOrder()).toBe(3)
     await driveTo(route, 1)
     expect(playDetailed).not.toHaveBeenCalled()
+  })
+
+  it('route 1: mid-route დასრულება keeps progress; გაგრძელება resumes next PIN (not agency #1)', async () => {
+    const route = routeBySlug('route-1')
+    await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    expect(nextOrder()).toBe(3)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    expect(saved?.triggeredSortOrders).toEqual([1, 2])
+    expect(saved?.nextSortOrder).toBe(3)
+    expect(screen.getByTestId('exam-summary')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'გაგრძელება' })).toBeTruthy()
+
+    playDetailed.mockClear()
+    gps.once = fix(route, 1) // agency / pin 1 GPS must not reset progress
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+    })
+    await settle()
+
+    expect(nextOrder()).toBe(3)
+    expect(screen.queryByTestId('exam-summary')).toBeNull()
+    await driveTo(route, 1)
+    expect(playDetailed).not.toHaveBeenCalled()
+    await driveTo(route, 3)
+    expect(playedOrders(route)).toEqual([3])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+  })
+
+  it('route 1: თავიდან after mid-route stop clears progress and starts a new exam', async () => {
+    const route = routeBySlug('route-1')
+    await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
+    })
+    await settle()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
+    expect(screen.getByRole('button', { name: /გამოცდის დაწყება/ })).toBeTruthy()
   })
 
   it.each(cases)('%s uses its street trace', (slug, count) => {

@@ -129,6 +129,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
   const [routeComplete, setRouteComplete] = useState(false)
+  /** After mid-route დასრულება, summary offers გაგრძელება using kept localStorage progress. */
+  const [summaryCanContinue, setSummaryCanContinue] = useState(false)
   const resumePendingRef = useRef(false)
   
   // DEBUG: Session diagnostic panel state
@@ -729,25 +731,127 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     startSession(gpsResult.fix)
   }
 
+  function fieldTestProgressFields() {
+    const pins = pinsRef.current
+    const orders = handledOrdersRef.current
+    if (orders === null) return {}
+    const sorted = [...orders].sort((a, b) => a - b)
+    if (pins.length === 0) {
+      const previous = loadActiveExam(route.id, route.slug, route.name_ka)
+      return {
+        triggeredSortOrders: sorted,
+        lastPassedSortOrder:
+          previous?.lastPassedSortOrder ?? (sorted.length ? sorted[sorted.length - 1]! : null),
+        nextSortOrder: previous?.nextSortOrder ?? null,
+      }
+    }
+    const progress = nextSortOrder(pins, orders)
+    return {
+      triggeredSortOrders: sorted,
+      lastPassedSortOrder: progress.lastPassedSortOrder,
+      nextSortOrder: progress.nextSortOrder,
+    }
+  }
+
+  function persistActiveExamNow() {
+    const liveElapsed = sessionStartRef.current
+      ? Math.max(0, Date.now() - sessionStartRef.current)
+      : elapsedMs
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam,
+      userPos,
+      heading,
+      speedKmh,
+      elapsedMs: liveElapsed,
+      triggeredPins: Array.from(triggeredRef.current),
+      ...(FIELD_TEST_SLUGS.has(route.slug) ? fieldTestProgressFields() : {}),
+      savedAt: Date.now(),
+    })
+  }
+
+  /** True when Telavi field-test routes still have an unhandled PIN (mid-route stop). */
+  function routeHasRemainingPins(): boolean {
+    if (!FIELD_TEST_SLUGS.has(route.slug)) return false
+    const pins = pinsRef.current
+    if (pins.length === 0) return false
+    const orders = handledOrdersRef.current ?? new Set<number>()
+    return nextSortOrder(pins, orders).nextSortOrder !== null
+  }
+
+  function applySavedProgress(saved: SavedExamState) {
+    triggeredRef.current = new Set(saved.triggeredPins)
+    sessionStartRef.current = examSessionOriginMs(saved)
+    setExam(saved.exam)
+    setUserPos(saved.userPos)
+    setHeading(saved.heading)
+    setSpeedKmh(saved.speedKmh)
+    setElapsedMs(examElapsedMsNow(saved))
+    setGpsStarted(true)
+    if (FIELD_TEST_SLUGS.has(route.slug)) {
+      const resolution = resolveExamResume(saved, pinsRef.current, route.slug)
+      if (resolution.status === 'resume' && resolution.handledOrders) {
+        handledOrdersRef.current = new Set(resolution.handledOrders)
+        triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrdersRef.current)
+        setNextPin(pinsRef.current.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
+        setRouteComplete(pinsRef.current.length > 0 && resolution.nextSortOrder === null)
+        resumePendingRef.current = false
+      } else {
+        handledOrdersRef.current = initialHandledOrders(saved, pinsRef.current, route.slug)
+        resumePendingRef.current = resolution.status === 'pending' || resolution.status === 'resume'
+      }
+    }
+    resumedSlugRef.current = route.slug
+  }
+
   function finishSession() {
     finishInProgressRef.current = true
     setRouteComplete(false)
-    clearActiveExam() // Clear saved state IMMEDIATELY before any state updates
-    setSavedEpoch((v) => v + 1) // drop the stale savedState memo in the same batch as phase='summary'
+    // Mid-route stop must keep progress so a later start resumes (even from the agency GPS).
+    // Only a fully handled route (or non-field-test) clears — same as explicit თავიდან.
+    const keepForResume = routeHasRemainingPins()
+    if (keepForResume) {
+      persistActiveExamNow()
+      setSummaryCanContinue(true)
+    } else {
+      clearActiveExam()
+      setSummaryCanContinue(false)
+    }
+    setSavedEpoch((v) => v + 1)
     const summary = finishExamSession(exam)
     saveExamSummary(summary)
     setExamSummary(summary)
     setPhase('summary')
     releaseWake.current?.()
     audioEngine.stopAll()
-    resumedSlugRef.current = null
+    if (!keepForResume) resumedSlugRef.current = null
     // Session-success voice disabled: do not play EXAM_SUCCESS_AUDIO.
+  }
+
+  function continueFromSummary() {
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    if (!saved) {
+      restartPreview()
+      return
+    }
+    finishInProgressRef.current = false
+    setSummaryCanContinue(false)
+    setExamSummary(null)
+    applySavedProgress(saved)
+    setDriveView(features.mapNav ? 'map' : 'panel')
+    setPhase('active')
+    setSavedEpoch((v) => v + 1)
+    if (!gpsStarted) void enableGps(true)
   }
 
   function restartPreview() {
     finishInProgressRef.current = false
     setPhase('preview')
     setExamSummary(null)
+    setSummaryCanContinue(false)
     setExam(createExamSession(route.id, route.name_ka))
     triggeredRef.current = new Set()
     pinApproachRef.current = new Map()
@@ -910,7 +1014,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       )}
 
       {phase === 'summary' && examSummary && (
-        <ExamSummary summary={examSummary} onRestart={restartPreview} />
+        <ExamSummary
+          summary={examSummary}
+          onRestart={restartPreview}
+          onContinue={summaryCanContinue ? continueFromSummary : undefined}
+        />
       )}
       
       {/* DEBUG PANEL - Session diagnostic */}
