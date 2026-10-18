@@ -69,6 +69,10 @@ describe('HomePage outer menu fit (Android landscape)', () => {
   })
 
   it.each([
+    [320, 568],
+    [360, 640],
+    [393, 851],
+    [412, 915],
     [1024, 600],
     [800, 480],
     [1280, 720],

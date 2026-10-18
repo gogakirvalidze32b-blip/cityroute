@@ -20,18 +20,16 @@ describe('resolvePinAudioUrl (original WAV path for every route)', () => {
   const decodeAudioPath = (url: string) => decodeURIComponent(url)
 
   it('exact instruction→WAV map wins over a stale/wrong pin.audio_url', () => {
-    const url1 = resolvePinAudioUrl(
-      'route-1',
-      pin('გთხოვთ, მოუხვიოთ მარჯვნივ', '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav'),
-    )
-    // Route 1 PIN 1/19: plain filename (not მალე).
-    expect(decodeAudioPath(url1!)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav')
-    for (const slug of ['route-2', 'route-3', 'route-4', 'test-route-tbilisi']) {
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4', 'test-route-tbilisi']) {
       const url = resolvePinAudioUrl(
         slug,
         pin('გთხოვთ, მოუხვიოთ მარჯვნივ', '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav'),
       )
+      // Plain right-turn text maps to the existing tracked მალე-named WAV.
       expect(decodeAudioPath(url!)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav')
+      // Commas must stay literal so static hosts find the WAV (not SPA HTML fallback).
+      expect(url!).not.toContain('%2C')
+      expect(url!).toMatch(/%E1%83%9B%E1%83%90%E1%83%9A%E1%83%94,/)
     }
   })
 

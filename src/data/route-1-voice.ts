@@ -1,10 +1,14 @@
 /**
- * Build a public /audio/... URL. Each path segment is encodeURIComponent'd so commas
- * and spaces in Georgian filenames are valid on static hosts (encodeURI leaves commas).
+ * Build a public /audio/... URL.
+ * Encode each path segment for spaces/Unicode, but keep commas literal (%2C breaks
+ * static file lookup on Vite preview and some hosts — filenames contain ", ").
  */
 export function audioPublicUrl(relativePath: string): string {
   const trimmed = relativePath.replace(/^\/+/, '').replace(/^audio\//, '')
-  return `/audio/${trimmed.split('/').map(encodeURIComponent).join('/')}`
+  return `/audio/${trimmed
+    .split('/')
+    .map((seg) => encodeURIComponent(seg).replace(/%2C/gi, ','))
+    .join('/')}`
 }
 
 export const ROUTE_1_SESSION_AUDIO = {
@@ -22,7 +26,7 @@ export const ROUTE_1_SESSION_AUDIO = {
 const INSTRUCTION_TO_FILE: Record<string, string> = {
   // Turn now
   'გთხოვთ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ.wav',
-  // Default for other routes; Route 1 PIN 1/19 use plain file via ROUTE_OVERRIDES.
+  // Plain right-turn text uses the existing tracked მალე-named WAV (no separate recording).
   'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
   'გთხოვთ იმოძრაოთ პირდაპირ': 'გთხოვთ, იმოძრაოთ პირდაპირ.wav',
   'გთხოვთ შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ': 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
@@ -62,14 +66,10 @@ const INSTRUCTION_TO_FILE: Record<string, string> = {
 const TYPO_FIXES: ReadonlyArray<[RegExp, string]> = [[/გთხვოვთ/g, 'გთხოვთ']]
 
 /**
- * Per-route overrides when the final audit mapping differs between routes.
- * Route 1 PIN 1/19: plain right-turn uses `გთხოვთ, მოუხვიოთ მარჯვნივ.wav` (not მალე).
+ * Per-route override for the one instruction whose final audit mapping differs between routes:
  * Route 4 PIN #20 uses the no-comma roundabout file.
  */
 const ROUTE_OVERRIDES: Record<string, Record<string, string>> = {
-  'route-1': {
-    'გთხოვთ მოუხვიოთ მარჯვნივ': 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav',
-  },
   'route-4': {
     'წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav',
   },

@@ -14,12 +14,11 @@ const mk = (instruction_ka: string): PinRow =>
 
 /**
  * Expected WAV when instruction text ≠ filename (tracked file only).
- * Route 1 PIN 1/19 use plain `გთხოვთ, მოუხვიოთ მარჯვნივ.wav` via route-1 override.
- * Other routes keep prior overrides (incl. plain text → მალე WAV where applicable).
+ * Plain „გთხოვთ, მოუხვიოთ მარჯვნივ“ (incl. R1 #1/#19) → existing `მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav`.
  */
 const EXPECTED_OVERRIDES = new Map<string, string>([
-  ['1:1', 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav'],
-  ['1:19', 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav'],
+  ['1:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
+  ['1:19', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['3:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:14', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
@@ -79,7 +78,8 @@ describe('FINAL audio audit: 127 PINs', () => {
     expect(decodeAudioPath(url)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ.wav')
   })
 
-  it('R1 #1 and #19 keep plain text; use plain right-turn WAV (not მალე)', () => {
+  it('R1 #1 and #19 keep plain text; play existing მალე right-turn WAV (never null)', () => {
+    const malePath = '/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'
     for (const [pin, lat, lng] of [
       [1, 41.931434, 45.475383],
       [19, 41.917305, 45.474576],
@@ -88,9 +88,10 @@ describe('FINAL audio audit: 127 PINs', () => {
       expect(p.lat).toBe(lat)
       expect(p.lng).toBe(lng)
       expect(p.instruction).toBe('გთხოვთ, მოუხვიოთ მარჯვნივ')
-      const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
-      expect(decodeAudioPath(url)).toBe('/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav')
-      expect(existsSync(join(POINTS_DIR, 'გთხოვთ, მოუხვიოთ მარჯვნივ.wav'))).toBe(true)
+      const url = resolvePinAudioUrl('route-1', mk(p.instruction))
+      expect(url).not.toBeNull()
+      expect(decodeAudioPath(url!)).toBe(malePath)
+      expect(existsSync(join(POINTS_DIR, 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'))).toBe(true)
     }
   })
 

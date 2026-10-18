@@ -2706,6 +2706,29 @@ button:disabled {
   padding-left: max(0.75rem, env(safe-area-inset-left));
 }
 
+/* Narrow Android phones (320–412 CSS px): keep controls fully in-bounds. */
+@media (max-width: 412px) {
+  .page {
+    padding-left: max(0.65rem, env(safe-area-inset-left));
+    padding-right: max(0.65rem, env(safe-area-inset-right));
+  }
+
+  .page.home-page {
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+  }
+
+  .auth-page .auth-card {
+    padding: 1.1rem;
+  }
+
+  .primary,
+  .home-page .home-signout,
+  .home-page .support-button {
+    max-width: 100%;
+  }
+}
+
 .home-page .home-header {
   flex: 0 0 auto;
   display: flex;
