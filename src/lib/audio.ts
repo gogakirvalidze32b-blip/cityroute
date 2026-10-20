@@ -25,9 +25,9 @@ export const VOICE_VOLUME = 1
 
 /**
  * Web Audio GainNode multiplier (timbre / pitch / speed unchanged).
- * 1.0 = file level. Use this (not HTML volume) if loudness above 100% is needed.
+ * HTML media volume stays at 1.0; this gain adds approximately 3.5 dB.
  */
-export const VOICE_GAIN = 1
+export const VOICE_GAIN = 1.5
 
 /** Shared Web Audio graph (one AudioContext for all voice files — mobile browsers cap contexts). */
 type WarmGraph = {
@@ -41,8 +41,15 @@ type LoudGraph = {
   gain: GainNode
 }
 
-/** Result of a playback attempt. Only original WAV/media URLs are used — never TTS. */
-export type PlayStatus = 'played' | 'duplicate' | 'failed'
+/** Result of a playback start request. Only original WAV/media URLs are used — never TTS. */
+export type PlayStatus = 'played' | 'duplicate' | 'busy' | 'cancelled' | 'failed'
+
+export type PlaybackFailureReason = 'media-error' | 'play-rejected' | 'playback-timeout'
+
+export type PlayOptions = {
+  /** Called once if a started playback later fails. */
+  onFailure?: (reason: PlaybackFailureReason) => void
+}
 
 export type AudioDiagnostic = {
   at: number
@@ -55,6 +62,8 @@ export type AudioDiagnostic = {
     | 'media-error'
     | 'play-rejected'
     | 'audio-context-not-running'
+    | 'gain-unavailable'
+    | 'playback-timeout'
   detail?: string
 }
 
@@ -65,14 +74,25 @@ const RESUME_TIMEOUT_MS = 400
 
 export class AudioEngine {
   private cache = new Map<string, HTMLAudioElement>()
-  private speaking = new Set<string>()
   private playbackRate = VOICE_PLAYBACK_RATE
   private pitch: VoicePitch = VOICE_PITCH
   private volume = VOICE_VOLUME
   private graph: WarmGraph | null = null
   private loud: LoudGraph | null = null
   private wired = new WeakMap<HTMLAudioElement, Promise<boolean>>()
-  private busySince = 0
+  private playbackSequence = 0
+  private activePlayback: {
+    sequence: number
+    pinId: string
+    url: string
+    audio: HTMLAudioElement
+    options: PlayOptions
+    started: boolean
+    failureReason: PlaybackFailureReason | null
+    failureReported: boolean
+    rejectStart: ((reason: Error) => void) | null
+    timeout: ReturnType<typeof setTimeout> | null
+  } | null = null
   private diagnostics: AudioDiagnostic[] = []
 
   setPlaybackRate(rate: number) {
@@ -128,11 +148,17 @@ export class AudioEngine {
       return null
     }
 
-    const gain = ctx.createGain()
-    gain.gain.value = VOICE_GAIN
-    gain.connect(ctx.destination)
-    this.loud = { ctx, gain }
-    return this.loud
+    try {
+      const gain = ctx.createGain()
+      gain.gain.value = VOICE_GAIN
+      gain.connect(ctx.destination)
+      this.loud = { ctx, gain }
+      return this.loud
+    } catch (err) {
+      void Promise.resolve(ctx.close()).catch(() => {})
+      this.report('engine', null, 'audio-context-not-running', err instanceof Error ? err.message : String(err))
+      return null
+    }
   }
 
   /** Builds the shared "mid" EQ graph once. Returns null if Web Audio is unavailable. */
@@ -229,10 +255,19 @@ export class AudioEngine {
       if (!graph) return false
       await this.resumeContext(graph.ctx)
       if (graph.ctx.state !== 'running') return false
+      let source: MediaElementAudioSourceNode | null = null
       try {
-        graph.ctx.createMediaElementSource(audio).connect(graph.gain)
+        source = graph.ctx.createMediaElementSource(audio)
+        source.connect(graph.gain)
         return true
       } catch {
+        if (source) {
+          try {
+            source.connect(graph.ctx.destination)
+          } catch (err) {
+            this.report('engine', null, 'audio-context-not-running', err instanceof Error ? err.message : String(err))
+          }
+        }
         return false
       }
     })()
@@ -299,9 +334,9 @@ export class AudioEngine {
     }
   }
 
-  /** True while a voice is playing (with a safety timeout so a stuck state can never block PIN audio). */
+  /** True while the single active voice is playing or being prepared. */
   isBusy(): boolean {
-    return this.speaking.size > 0 && Date.now() - this.busySince < MAX_BUSY_MS
+    return this.activePlayback !== null
   }
 
   getDiagnostics(): readonly AudioDiagnostic[] {
@@ -328,21 +363,30 @@ export class AudioEngine {
     urls.filter(Boolean).forEach((u) => this.preload(u))
   }
 
-  async play(url: string | null | undefined, pinId: string, _instructionText = ''): Promise<boolean> {
-    const status = await this.playDetailed(url, pinId, _instructionText)
+  async play(
+    url: string | null | undefined,
+    pinId: string,
+    _instructionText = '',
+    options?: PlayOptions,
+  ): Promise<boolean> {
+    const status = await this.playDetailed(url, pinId, _instructionText, options)
     return status === 'played'
   }
 
   /**
    * Plays only the given media URL (original WAV). Never synthesizes speech from text.
-   * On missing URL or playback failure: logs a clear console warning and returns 'failed'.
+   * Resolves 'played' once playback starts. A failure after start is delivered once
+   * through options.onFailure; stopAll() invalidates the active request.
    */
   async playDetailed(
     url: string | null | undefined,
     pinId: string,
     _instructionText = '',
+    options: PlayOptions = {},
   ): Promise<PlayStatus> {
-    if (this.speaking.has(pinId)) return 'duplicate'
+    if (this.activePlayback) {
+      return this.activePlayback.pinId === pinId ? 'duplicate' : 'busy'
+    }
 
     if (!url) {
       this.report(pinId, null, 'no-audio-url', 'No original WAV mapped for this PIN; not using TTS')
@@ -355,27 +399,95 @@ export class AudioEngine {
       audio = new Audio(url)
       this.cache.set(url, audio)
     }
+    const playback = {
+      sequence: ++this.playbackSequence,
+      pinId,
+      url,
+      audio,
+      options,
+      started: false,
+      failureReason: null as PlaybackFailureReason | null,
+      failureReported: false,
+      rejectStart: null as ((reason: Error) => void) | null,
+      timeout: null as ReturnType<typeof setTimeout> | null,
+    }
+    this.activePlayback = playback
+
+    const isCurrent = () =>
+      this.activePlayback === playback && this.activePlayback.sequence === playback.sequence
+
+    const clearPlayback = () => {
+      if (playback.timeout !== null) {
+        clearTimeout(playback.timeout)
+        playback.timeout = null
+      }
+      if (isCurrent()) this.activePlayback = null
+    }
+
+    const retireAudio = () => {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      if (this.cache.get(url) === audio) this.cache.delete(url)
+    }
+
+    const finishFailure = (reason: PlaybackFailureReason) => {
+      if (!isCurrent() || playback.failureReported) return
+      playback.failureReason = reason
+      playback.failureReported = true
+      clearPlayback()
+      retireAudio()
+      this.report(
+        pinId,
+        url,
+        reason === 'media-error' ? 'media-error' : 'playback-timeout',
+        reason,
+      )
+      if (playback.started) {
+        options.onFailure?.(reason)
+      } else {
+        playback.rejectStart?.(new Error(reason))
+      }
+    }
+
     try {
       audio.currentTime = 0
       this.applyRate(audio)
-      if (this.pitch === 'mid') await this.ensureWarmChain(audio)
-      else await this.ensureLoudChain(audio)
-
-      this.speaking.add(pinId)
-      this.busySince = Date.now()
-      audio.onended = () => this.speaking.delete(pinId)
-      audio.onerror = () => {
-        this.speaking.delete(pinId)
-        this.report(pinId, url, 'media-error', 'code=' + (audio?.error?.code ?? '?'))
-        console.error('[AUDIO] Original WAV failed for PIN', pinId, '| url:', url)
+      const gainApplied =
+        this.pitch === 'mid' ? await this.ensureWarmChain(audio) : await this.ensureLoudChain(audio)
+      if (!isCurrent()) return 'cancelled'
+      if (!gainApplied) {
+        this.report(pinId, url, 'gain-unavailable', 'Playing at original media level')
       }
-      await audio.play()
+
+      audio.onended = () => {
+        if (isCurrent()) clearPlayback()
+      }
+      audio.onerror = () => {
+        if (!isCurrent()) return
+        console.error('[AUDIO] Original WAV failed for PIN', pinId, '| url:', url)
+        finishFailure('media-error')
+      }
+      playback.timeout = setTimeout(() => finishFailure('playback-timeout'), MAX_BUSY_MS)
+      const startTimeout = new Promise<never>((_resolve, reject) => {
+        playback.rejectStart = reject
+      })
+      await Promise.race([audio.play(), startTimeout])
+      if (!isCurrent()) return 'cancelled'
+      if (playback.failureReason) {
+        clearPlayback()
+        return 'failed'
+      }
+      playback.rejectStart = null
       if (audio.playbackRate !== 1) {
         audio.playbackRate = 1
       }
+      playback.started = true
       return 'played'
     } catch (err) {
-      this.speaking.delete(pinId)
+      if (!isCurrent()) return playback.failureReported ? 'failed' : 'cancelled'
+      clearPlayback()
+      retireAudio()
       const name = err instanceof DOMException ? err.name : ''
       this.report(
         pinId,
@@ -400,7 +512,22 @@ export class AudioEngine {
   }
 
   stopAll() {
-    this.speaking.clear()
+    const playback = this.activePlayback
+    this.playbackSequence++
+    this.activePlayback = null
+    if (playback?.timeout !== null && playback?.timeout !== undefined) {
+      clearTimeout(playback.timeout)
+      playback.timeout = null
+    }
+    playback?.rejectStart?.(new Error('cancelled'))
+    if (playback) playback.rejectStart = null
+    if (playback) {
+      playback.audio.onended = null
+      playback.audio.onerror = null
+      playback.audio.pause()
+      playback.audio.currentTime = 0
+      if (this.cache.get(playback.url) === playback.audio) this.cache.delete(playback.url)
+    }
     this.cache.forEach((a) => {
       a.pause()
       a.currentTime = 0

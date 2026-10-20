@@ -24,7 +24,7 @@ const EXPECTED_OVERRIDES = new Map<string, string>([
   ['4:14', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['2:8', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['3:9', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
-  ['3:13', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
+  ['3:13', 'წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav'],
   ['3:18', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
   ['4:9', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
   ['2:18', 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
@@ -93,6 +93,34 @@ describe('FINAL audio audit: 127 PINs', () => {
       expect(decodeAudioPath(url!)).toBe(malePath)
       expect(existsSync(join(POINTS_DIR, 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'))).toBe(true)
     }
+  })
+
+  it('keeps the requested Route 3 coordinate edits and maps PIN #13 to its exact existing WAV', () => {
+    const expectedCoordinates: Record<string, readonly [number, number]> = {
+      '3:9': [41.92025, 45.484497],
+      '3:13': [41.918749, 45.484602],
+      '3:14': [41.91946, 45.485263],
+      '3:21': [41.923473, 45.464528],
+      '4:9': [41.92025, 45.484497],
+    }
+
+    for (const [key, [lat, lng]] of Object.entries(expectedCoordinates)) {
+      const [route, pin] = key.split(':').map(Number)
+      const p = pins.find((x) => x.route === route && x.pin === pin)!
+      expect([p.lat, p.lng]).toEqual([lat, lng])
+    }
+
+    const route3Pin9 = pins.find((x) => x.route === 3 && x.pin === 9)!
+    const route4Pin9 = pins.find((x) => x.route === 4 && x.pin === 9)!
+    expect(route3Pin9.instruction).toBe('წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ')
+    expect(route4Pin9.instruction).toBe('წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ')
+
+    const pin13 = pins.find((x) => x.route === 3 && x.pin === 13)!
+    expect(pin13.instruction).toBe('წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ')
+    const wav = 'წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav'
+    expect(decodeAudioPath(resolvePinAudioUrl('route-3', mk(pin13.instruction))!))
+      .toBe(`/audio/points/${wav}`)
+    expect(existsSync(join(POINTS_DIR, wav))).toBe(true)
   })
 
   it('preload list covers every mapped WAV and all files exist', () => {

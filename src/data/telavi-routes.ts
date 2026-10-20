@@ -75,8 +75,8 @@ function pinsFromOfficial(
 /** Set true when ready to enable voice/turn pins from official JSON manoeuvres */
 export const ROUTE1_PINS_ENABLED = true
 
-/** Street zoom — readable labels, not too close (Yandex-like mid range) */
-export const YANDEX_STREET_ZOOM = 16
+/** Street zoom — one level closer while keeping enough road ahead in view. */
+export const YANDEX_STREET_ZOOM = 17
 
 function line(slug: string, fallback: [number, number][]): [number, number][] {
   const osrm = ROUTE_POLYLINES[slug]

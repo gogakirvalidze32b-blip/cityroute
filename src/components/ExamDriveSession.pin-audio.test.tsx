@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, act, cleanup } from '@testing-library/react'
+import { render, act, cleanup, fireEvent, screen } from '@testing-library/react'
 import { ExamDriveSession } from './ExamDriveSession'
-import { saveActiveExam } from '@/lib/exam-persistence'
+import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
 import { createExamSession } from '@/lib/exam-session'
 import { audioEngine } from '@/lib/audio'
 import { headingMatches } from '@/lib/gps'
@@ -29,18 +29,25 @@ vi.mock('@/hooks/useExamLayoutMode', () => ({
 
 const h = vi.hoisted(() => ({
   gpsCb: null as null | ((pos: Record<string, number | null>) => void),
-  playStatus: 'played' as 'played' | 'failed',
+  playStatus: 'played' as 'played' | 'failed' | 'busy' | 'cancelled' | 'duplicate',
+  playOptions: [] as Array<{
+    onFailure?: (reason: 'media-error' | 'play-rejected' | 'playback-timeout') => void
+  }>,
   busy: false,
 }))
 
 vi.mock('@/lib/audio', () => ({
   audioEngine: {
     play: vi.fn(),
-    playDetailed: vi.fn(() => Promise.resolve(h.playStatus)),
+    playDetailed: vi.fn((_url, _pinId, _instruction, options) => {
+      h.playOptions.push(options ?? {})
+      return Promise.resolve(h.playStatus)
+    }),
     unlock: vi.fn(),
     isBusy: vi.fn(() => h.busy),
     stopAll: vi.fn(),
     preloadAll: vi.fn(),
+    setVolume: vi.fn(),
   },
 }))
 
@@ -161,6 +168,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     vi.mocked(headingMatches).mockImplementation(() => true)
     h.gpsCb = null
     h.playStatus = 'played'
+    h.playOptions = []
     h.busy = false
     saveActiveExam({
       routeId: route.id,
@@ -200,6 +208,18 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     const calls = vi.mocked(headingMatches).mock.calls
     expect(calls.length).toBeGreaterThan(0)
     expect(calls.every((c) => c[3] === 90)).toBe(true)
+  })
+
+  it('shows elapsed time without labeling it as ETA and connects the volume slider to AudioEngine', () => {
+    expect(screen.getByText('გავლილი დრო')).toBeTruthy()
+    expect(screen.queryByText(/ETA|დარჩენილი დრო/)).toBeNull()
+
+    fireEvent.change(screen.getByRole('slider', { name: 'ხმის დონე' }), {
+      target: { value: '0.4' },
+    })
+
+    expect(audioEngine.setVolume).toHaveBeenCalledWith(0.4)
+    expect(screen.getByText('40%')).toBeTruthy()
   })
 
   it('wrong heading while moving does not lose the voice: it is played right after passing the PIN', async () => {
@@ -263,6 +283,61 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       })
     }
     expect(played()).toEqual(['pin-1', 'pin-1', 'pin-1'])
+  })
+
+  it('rolls back and immediately persists a PIN after a delayed playback error', async () => {
+    await emit(182)
+    expect(played()).toEqual(['pin-1'])
+
+    const onFailure = h.playOptions[0]?.onFailure
+    expect(onFailure).toBeTypeOf('function')
+    await act(async () => {
+      onFailure?.('media-error')
+    })
+
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    expect(saved?.triggeredSortOrders).toEqual([])
+    expect(saved?.nextSortOrder).toBe(1)
+
+    await emit(183)
+    expect(played()).toEqual(['pin-1', 'pin-1'])
+  })
+
+  it('limits delayed-error retries to three total playback attempts', async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await emit(182 + attempt)
+      const onFailure = h.playOptions[attempt]?.onFailure
+      expect(onFailure).toBeTypeOf('function')
+      await act(async () => {
+        onFailure?.('media-error')
+      })
+    }
+
+    await emit(186)
+    expect(played()).toEqual(['pin-1', 'pin-1', 'pin-1'])
+  })
+
+  it('ignores a delayed failure callback after the session unmounts', async () => {
+    await emit(182)
+    const onFailure = h.playOptions[0]?.onFailure
+    expect(onFailure).toBeTypeOf('function')
+
+    cleanup()
+    await act(async () => {
+      onFailure?.('media-error')
+    })
+
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+  })
+
+  it('restores the PIN when the audio engine rejects it as busy without using a retry', async () => {
+    h.playStatus = 'busy'
+    await emit(182)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(1)
+
+    h.playStatus = 'played'
+    await emit(183)
+    expect(played()).toEqual(['pin-1', 'pin-1'])
   })
 })
 

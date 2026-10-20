@@ -18,9 +18,30 @@ type Props = {
 function MapSizeFix() {
   const map = useMap()
   useEffect(() => {
-    map.invalidateSize()
-    const id = window.setTimeout(() => map.invalidateSize(), 80)
-    return () => window.clearTimeout(id)
+    let frame = 0
+    const invalidate = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        map.invalidateSize({ pan: false, debounceMoveend: true })
+      })
+    }
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(invalidate)
+      : null
+
+    observer?.observe(map.getContainer())
+    window.addEventListener('resize', invalidate, { passive: true })
+    window.visualViewport?.addEventListener('resize', invalidate, { passive: true })
+    document.addEventListener('fullscreenchange', invalidate)
+    invalidate()
+
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', invalidate)
+      window.visualViewport?.removeEventListener('resize', invalidate)
+      document.removeEventListener('fullscreenchange', invalidate)
+    }
   }, [map])
   return null
 }

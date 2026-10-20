@@ -9,12 +9,12 @@ const MOVED = [
   [[41.926909, 45.461327], [41.92676, 45.461276]],
   [[41.926626, 45.461236], [41.924423, 45.46041]],
   [[41.926429, 45.461338], [41.923787, 45.460435]],
-  [[41.922093, 45.469893], [41.921929, 45.469923]],
+  [[41.922093, 45.469893], [41.921785, 45.469907]],
   [[41.917228, 45.475799], [41.91729, 45.475646]],
   [[41.917267, 45.475761], [41.91745, 45.475199]],
   [[41.920189, 45.470198], [41.920288, 45.470219]],
   [[41.929098, 45.475144], [41.92918, 45.475192]],
-  [[41.933977, 45.478151], [41.933672, 45.477947]],
+  [[41.933977, 45.478151], [41.933177, 45.477598]],
 ] as const
 
 function close(left: number, right: number) {
@@ -83,13 +83,41 @@ describe('nine corrected Telavi pin coordinates', () => {
     expect(local.pins).toHaveLength(35)
     expect(local.pins[16]).toMatchObject({ lat: 41.919129, lng: 45.471847, sort_order: 17 })
     expect(local.pins[18]).toMatchObject({ lat: 41.917305, lng: 45.474576, sort_order: 19 })
-    expect(local.pins[25]).toMatchObject({ lat: 41.918717, lng: 45.472368, sort_order: 26 })
+    expect(local.pins[25]).toMatchObject({ lat: 41.918461, lng: 45.472799, sort_order: 26 })
+    expect(local.pins[31]).toMatchObject({ lat: 41.933177, lng: 45.477598, sort_order: 32 })
 
     const staleRemote = local.pins.slice(0, 34).map((pin) => ({ ...pin, lat: 0, lng: 0 }))
     const chosen = selectRoutePins(local.pins, staleRemote)
     expect(chosen).toHaveLength(35)
     expect(chosen[18]).toMatchObject({ lat: 41.917305, lng: 45.474576 })
-    expect(chosen[25]).toMatchObject({ lat: 41.918717, lng: 45.472368 })
+    expect(chosen[25]).toMatchObject({ lat: 41.918461, lng: 45.472799 })
     expect(chosen.every((pin) => pin.lat !== 0)).toBe(true)
+  })
+
+  it('applies the requested active coordinates without changing route PIN order or text', () => {
+    const routes = applyRelocatedPin(TELAVI_ROUTES_FALLBACK)
+    const expected = [
+      { slug: 'route-1', order: 5, lat: 41.925694, lng: 45.472556, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-1', order: 13, lat: 41.922777, lng: 45.468705, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-1', order: 14, lat: 41.921785, lng: 45.469907, instruction: '300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ' },
+      { slug: 'route-1', order: 16, lat: 41.919549, lng: 45.470136, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+      { slug: 'route-1', order: 17, lat: 41.919129, lng: 45.471847, instruction: '300 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ' },
+      { slug: 'route-1', order: 22, lat: 41.91874, lng: 45.484602, instruction: 'მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ' },
+      { slug: 'route-1', order: 23, lat: 41.918762, lng: 45.484674, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+      { slug: 'route-1', order: 26, lat: 41.918461, lng: 45.472799, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-1', order: 32, lat: 41.933177, lng: 45.477598, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-2', order: 17, lat: 41.918762, lng: 45.484674, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+      { slug: 'route-2', order: 26, lat: 41.933177, lng: 45.477598, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-3', order: 28, lat: 41.933177, lng: 45.477598, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-4', order: 29, lat: 41.933177, lng: 45.477598, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+    ] as const
+
+    for (const { slug, order, lat, lng, instruction } of expected) {
+      const route = routes.find((item) => item.slug === slug)!
+      expect(route.pins).toHaveLength({ 'route-1': 35, 'route-2': 29, 'route-3': 31, 'route-4': 32 }[slug])
+      const pin = route.pins.find((item) => item.sort_order === order)!
+      expect([pin.lat, pin.lng]).toEqual([lat, lng])
+      expect(pin.instruction_ka).toBe(instruction)
+    }
   })
 })

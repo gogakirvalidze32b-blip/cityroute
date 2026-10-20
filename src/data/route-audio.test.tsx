@@ -44,6 +44,14 @@ describe('resolvePinAudioUrl (original WAV path for every route)', () => {
     expect(resolvePinAudioUrl('route-1', pin('რაღაც უცნობი'))).toBeNull()
   })
 
+  it('maps Route 3 roundabout instruction to its exact WAV', () => {
+    expect(
+      decodeAudioPath(
+        resolvePinAudioUrl('route-3', pin('წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ'))!,
+      ),
+    ).toBe('/audio/points/წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav')
+  })
+
   it('routes 2–4 with audio_url = null now get the same local WAV as route 1', () => {
     for (const slug of ['route-2', 'route-3', 'route-4']) {
       expect(decodeAudioPath(resolvePinAudioUrl(slug, pin('300 მეტრში, გთხოვთ მოუხვიოთ მარცხნივ'))!)).toBe(

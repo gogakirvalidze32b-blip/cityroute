@@ -25,6 +25,9 @@ vi.mock('react-leaflet', () => {
         data-fill={pathOptions?.fillColor}
       />
     ),
+    Marker: ({ position }: { position: [number, number] }) => (
+      <div data-testid="vehicle-marker" data-position={position.join(',')} />
+    ),
     useMap: () => map,
     useMapEvents: () => map,
   }
@@ -48,7 +51,7 @@ const NEXT_FILL = '#5eead4'
 const routes = applyLocalTbilisiTestPin(applyRelocatedPin(TELAVI_ROUTES_FALLBACK))
 const route = routes.find((r) => r.slug === 'test-route-tbilisi')!
 const fills = () => screen.getAllByTestId('pin-marker').map((m) => m.dataset.fill)
-const hudText = () => document.querySelector('.exam-live-map__hud strong')?.textContent ?? null
+const maneuverText = () => document.querySelector('.exam-live-map__maneuver strong')?.textContent ?? null
 
 describe('Tbilisi test route on the live exam map', () => {
   afterEach(cleanup)
@@ -71,7 +74,7 @@ describe('Tbilisi test route on the live exam map', () => {
     expect(maxPinOffsetFromLineM(EXPECTED, line)).toBeLessThanOrEqual(40)
   })
 
-  it('only the next pin is blue and the HUD shows that pin’s instruction', () => {
+  it('only the next pin is blue and the maneuver card shows that pin’s instruction', () => {
     const view = render(
       <ExamLiveMapLeaflet route={route} userPos={EXPECTED[0]} heading={0} nextPin={route.pins[0]} />,
     )
@@ -80,11 +83,11 @@ describe('Tbilisi test route on the live exam map', () => {
         <ExamLiveMapLeaflet route={route} userPos={EXPECTED[0]} heading={0} nextPin={next} />,
       )
       expect(fills().map((fill) => fill === NEXT_FILL)).toEqual(route.pins.map((_, i) => i === index))
-      expect(hudText()).toBe(next.instruction_ka)
+      expect(maneuverText()).toBe(next.instruction_ka)
     }
 
     view.rerender(<ExamLiveMapLeaflet route={route} userPos={EXPECTED[0]} heading={0} nextPin={null} />)
     expect(fills().some((fill) => fill === NEXT_FILL)).toBe(false)
-    expect(hudText()).toBeNull()
+    expect(maneuverText()).toBeNull()
   })
 })

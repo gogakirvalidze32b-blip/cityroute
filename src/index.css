@@ -21,6 +21,7 @@ body,
   position: fixed;
   width: 100%;
   height: 100vh;
+  height: 100svh;
   height: 100dvh;
   touch-action: pan-x pan-y;
 }
@@ -58,8 +59,10 @@ button:disabled {
 
 .page {
   min-height: 100vh;
+  min-height: 100svh;
   min-height: 100dvh;
   height: 100vh;
+  height: 100svh;
   height: 100dvh;
   padding: 1rem;
   max-width: 720px;
@@ -1040,6 +1043,20 @@ button:disabled {
   will-change: transform;
 }
 
+.exam-live-map__vehicle-marker {
+  background: transparent;
+  border: 0;
+}
+
+.exam-live-map__vehicle-marker-inner {
+  position: absolute;
+  left: 14px;
+  top: 24px;
+  width: 0;
+  height: 0;
+  transform-origin: center;
+}
+
 .fixed-navigation-arrow-icon {
   position: absolute;
   left: 50%;
@@ -1494,6 +1511,7 @@ button:disabled {
 
 .exam-live-map__recenter {
   z-index: 1001;
+  bottom: calc(clamp(4.5rem, 12dvh, 6rem) + env(safe-area-inset-bottom, 0px));
 }
 
 .exam-live-map__hud {
@@ -1519,6 +1537,131 @@ button:disabled {
   display: block;
   font-size: 0.88rem;
   line-height: 1.25;
+}
+
+.exam-live-map__maneuver {
+  position: absolute;
+  z-index: 1000;
+  top: max(0.5rem, env(safe-area-inset-top, 0px));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: clamp(0.55rem, 2vw, 1rem);
+  box-sizing: border-box;
+  width: min(560px, calc(100% - 1rem));
+  min-height: clamp(76px, 13vh, 108px);
+  padding: clamp(0.5rem, 1.6vh, 0.9rem) clamp(0.75rem, 2vw, 1.2rem);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: clamp(12px, 2vh, 18px);
+  background: rgba(255, 255, 255, 0.97);
+  color: #111827;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.exam-live-map__maneuver-arrow {
+  flex: 0 0 auto;
+  width: clamp(42px, 9vh, 68px);
+  height: clamp(42px, 9vh, 68px);
+  fill: none;
+  stroke: #111827;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 5;
+}
+
+.exam-live-map__maneuver-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.exam-live-map__maneuver-copy small {
+  color: #475569;
+  font-size: clamp(0.72rem, 1.7vh, 0.9rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.exam-live-map__maneuver-copy strong {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #111827;
+  font-size: clamp(0.9rem, 2.1vh, 1.2rem);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.exam-navigation-dock {
+  position: absolute;
+  z-index: 1201;
+  bottom: max(0.35rem, env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: clamp(0.75rem, 2.5vw, 1.5rem);
+  box-sizing: border-box;
+  width: min(680px, calc(100% - 1rem));
+  min-height: 64px;
+  padding: 0.5rem max(4.25rem, calc(env(safe-area-inset-right, 0px) + 3.5rem)) 0.5rem
+    max(0.75rem, env(safe-area-inset-left, 0px));
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  color: #111827;
+  transform: translateX(-50%);
+}
+
+.exam-navigation-dock__metric {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.exam-navigation-dock__metric small,
+.exam-navigation-dock__volume-label {
+  color: #475569;
+  font-size: clamp(0.68rem, 1.5vh, 0.82rem);
+  font-weight: 700;
+}
+
+.exam-navigation-dock__metric strong {
+  font-size: clamp(0.9rem, 2vh, 1.1rem);
+  font-variant-numeric: tabular-nums;
+}
+
+.exam-navigation-dock__volume {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: clamp(0.35rem, 1vw, 0.65rem);
+  min-width: 0;
+  min-height: 44px;
+}
+
+.exam-navigation-dock__volume input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 56px;
+  margin: 0;
+  accent-color: #0f766e;
+  touch-action: pan-x;
+}
+
+.exam-navigation-dock__volume output {
+  flex: 0 0 3.2em;
+  color: #111827;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .exam-pin-pulse {
@@ -2868,7 +3011,8 @@ button:disabled {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  min-height: 40px;
+  min-width: 44px;
+  min-height: 44px;
   padding: 0.4rem 0.7rem;
   border-radius: 10px;
   background: #0f766e;
@@ -3069,4 +3213,134 @@ button:disabled {
     padding: 0.3rem 0.55rem;
     font-size: 0.8rem;
   }
+}
+
+/* Keep the active exam HUD touchable on compact phones and narrow car displays. */
+@media (max-width: 600px) {
+  .exam-session {
+    --exam-hud-h: clamp(44px, 8dvh, 56px);
+    --exam-pad: clamp(5px, 1.5vmin, 9px);
+    --exam-gap: clamp(4px, 1vmin, 7px);
+  }
+
+  .exam-session--active .exam-topbar {
+    flex-wrap: wrap;
+    align-content: center;
+    gap: 4px;
+    min-height: 0;
+    padding: max(4px, env(safe-area-inset-top, 0px)) max(6px, env(safe-area-inset-right, 0px))
+      4px max(6px, env(safe-area-inset-left, 0px));
+  }
+
+  .exam-session--active .exam-hud__limit {
+    width: clamp(36px, 8dvh, 46px);
+    height: clamp(36px, 8dvh, 46px);
+    border-width: 3px;
+    font-size: clamp(14px, 3.5dvh, 20px);
+  }
+
+  .exam-session--active .exam-hud__readout {
+    flex: 1 1 58px;
+    margin-right: 0;
+  }
+
+  .exam-session--active .exam-hud__time {
+    font-size: clamp(15px, 3.4dvh, 21px);
+  }
+
+  .exam-session--active .exam-hud__meta {
+    gap: 0.45em;
+    font-size: clamp(10px, 2dvh, 13px);
+  }
+
+  .exam-session--active .exam-voice-bar--toolbar {
+    order: 8;
+    flex: 1 1 100%;
+    min-height: 0;
+    max-height: 2.6em;
+    padding: 0;
+  }
+
+  .exam-session--active .exam-voice-last {
+    display: none;
+  }
+
+  .exam-session--active .exam-view-switch,
+  .exam-session--active .exam-hud__minor,
+  .exam-session--active .exam-hud__severe,
+  .exam-session--active .exam-finish-fab {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  .exam-session--active .exam-hud__minor {
+    min-width: 40px;
+  }
+
+  .exam-session--active .exam-hud__severe {
+    gap: 0.25em;
+    padding-inline: 6px;
+    font-size: clamp(10px, 2.2vw, 13px);
+  }
+
+  .exam-session--active .exam-finish-fab {
+    margin: 0;
+    padding-inline: clamp(7px, 2vw, 12px);
+    font-size: clamp(11px, 2.5vw, 14px);
+  }
+
+  .exam-live-map__canvas {
+    min-height: 0;
+  }
+
+  .exam-live-map__maneuver {
+    gap: 0.45rem;
+    min-height: clamp(68px, 12dvh, 86px);
+    padding: 0.4rem 0.6rem;
+  }
+
+  .exam-live-map__maneuver-arrow {
+    width: clamp(38px, 10vw, 52px);
+    height: clamp(38px, 10vw, 52px);
+  }
+
+  .exam-navigation-dock {
+    gap: 0.55rem;
+    min-height: 58px;
+    padding-right: max(3.75rem, calc(env(safe-area-inset-right, 0px) + 3rem));
+    padding-left: max(0.55rem, env(safe-area-inset-left, 0px));
+  }
+
+  .exam-navigation-dock__volume {
+    gap: 0.35rem;
+  }
+
+  .exam-navigation-dock__volume input {
+    min-width: 48px;
+  }
+
+  .exam-navigation-dock__volume output {
+    flex-basis: 2.8em;
+  }
+}
+
+/* Use the actual remaining height for map previews, including fullscreen changes. */
+.route-page--exam .exam-preview,
+.route-page--exam .exam-preview__map,
+.route-page--exam .exam-preview__map--official {
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.route-page--exam .exam-preview__map,
+.route-page--exam .exam-preview__map--official {
+  flex: 1 1 0;
+}
+
+.route-page--exam .exam-preview__official-viewport {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  aspect-ratio: auto;
 }
