@@ -59,6 +59,7 @@ import {
   decidePinAudio,
 } from '@/lib/pin-audio'
 import { examRoadTrace } from '@/lib/pin-route-line'
+import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
 import {
   nextSortOrder,
   ordersForIds,
@@ -124,6 +125,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [gpsError, setGpsError] = useState<string | null>(() => getGpsEnvironmentIssue())
   const [rawPos, setRawPos] = useState<GpsPosition | null>(null)
   const [userPos, setUserPos] = useState<LatLng | null>(savedState?.userPos || null)
+  /** Along-road u on examRoadTrace for speed zones (monotonic; optional for resolver). */
+  const [speedRoadU, setSpeedRoadU] = useState<number | null>(null)
+  const speedRoadURef = useRef<number | null>(null)
+  const speedLimitRoadRef = useRef<LatLng[] | null>(null)
   const [heading, setHeading] = useState(savedState?.heading || 0)
   const [speedKmh, setSpeedKmh] = useState(savedState?.speedKmh || 0)
   const [elapsedMs, setElapsedMs] = useState(() => (savedState ? examElapsedMsNow(savedState) : 0))
@@ -190,6 +195,34 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     [route.slug, sortedPins],
   )
   const pinsActive = voicePins.length > 0
+  // Posted limit comes from the vehicle's real position on the route's road line (not from PIN proximity).
+  // null (shown as "—") whenever the position is not inside a known zone.
+  // roadU disambiguates Route 4 (and any route) where the same street is driven more than once.
+  const speedLimitRoad = useMemo(() => examRoadTrace(route.slug, voicePins), [route.slug, voicePins])
+  speedLimitRoadRef.current = speedLimitRoad
+  const speedLimitKmh = useMemo(
+    () => resolveSpeedLimit(route.slug, userPos, speedLimitRoad, speedRoadU),
+    [route.slug, userPos, speedLimitRoad, speedRoadU],
+  )
+
+  useEffect(() => {
+    speedRoadURef.current = null
+    setSpeedRoadU(null)
+  }, [route.slug, speedLimitRoad])
+
+  const updateSpeedRoadProgress = useCallback((pos: LatLng | null, reset = false) => {
+    const road = speedLimitRoadRef.current
+    if (!pos || !road || road.length < 2) {
+      speedRoadURef.current = null
+      setSpeedRoadU(null)
+      return
+    }
+    const prev = reset ? null : speedRoadURef.current
+    const next = advanceRoadProgressU(pos, road, prev)
+    speedRoadURef.current = next
+    setSpeedRoadU(next)
+  }, [])
+
   const active = phase === 'active'
   const layoutMode = useExamLayoutMode()
 
@@ -227,6 +260,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setExam(saved.exam)
         setExamSummary(null)
         setUserPos(saved.userPos)
+        updateSpeedRoadProgress(saved.userPos, true)
         setHeading(saved.heading)
         setSpeedKmh(saved.speedKmh)
         setElapsedMs(examElapsedMsNow(saved))
@@ -311,6 +345,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       const raw = gpsToLatLng(pos)
       setRawPos(pos)
       setUserPos(raw)
+      updateSpeedRoadProgress(raw)
       setHeading(resolveHeading(pos, null, raw, polyline))
       prevGpsRef.current = pos
       setSpeedKmh(0)
@@ -326,7 +361,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     } finally {
       if (!silent) setGpsStarting(false)
     }
-  }, [polyline])
+  }, [polyline, updateSpeedRoadProgress])
 
   useEffect(() => {
     if (gpsStarted || gpsStarting || getGpsEnvironmentIssue()) return
@@ -483,6 +518,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setGpsError(null)
         const raw = filtered.position
         setUserPos(raw)
+        updateSpeedRoadProgress(raw)
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
         setHeading(resolveHeading(pos, prevRaw, raw, polyline))
         if (phase === 'active') {
@@ -660,7 +696,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       },
       (err) => setGpsError(formatGpsError(err)),
     )
-  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline])
+  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline, updateSpeedRoadProgress])
 
   const handleError = useCallback((errorId: string) => {
     setExam((prev) => recordExamError(prev, errorId, false))
@@ -824,6 +860,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     sessionStartRef.current = examSessionOriginMs(saved)
     setExam(saved.exam)
     setUserPos(saved.userPos)
+    updateSpeedRoadProgress(saved.userPos, true)
     setHeading(saved.heading)
     setSpeedKmh(saved.speedKmh)
     setElapsedMs(examElapsedMsNow(saved))
@@ -937,6 +974,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             <ExamScoreboard
               elapsedMs={elapsedMs}
               speedKmh={speedKmh}
+              speedLimitKmh={speedLimitKmh}
               minorTotal={exam.minorTotal}
               severeTotal={exam.severeTotal}
               onRecordSevere={handleSevereQuick}
