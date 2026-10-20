@@ -166,8 +166,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const sessionStartRef = useRef(savedState ? examSessionOriginMs(savedState) : 0)
   const resumedSlugRef = useRef<string | null>(savedState ? route.slug : null)
   const finishInProgressRef = useRef(false)
+  const audioSessionGenerationRef = useRef(0)
   const saveOwnerRef = useRef(0)
-  const saveNowRef = useRef<(() => void) | null>(null)
+  const saveNowRef = useRef<((allowProgressRollback?: boolean) => void) | null>(null)
   const prevGpsRef = useRef<GpsPosition | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
   const gpsFilterRef = useRef(createGpsFilter())
@@ -368,6 +369,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     })
     return () => {
       releaseWake.current?.()
+      audioSessionGenerationRef.current++
       audioEngine.stopAll()
     }
   }, [])
@@ -390,7 +392,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (finishInProgressRef.current) return // Skip saving if finish is in progress
 
     saveOwnerRef.current = ++examSaveOwner
-    const saveState = () => {
+    const saveState = (allowProgressRollback = false) => {
       if (finishInProgressRef.current) return // Guard against saving during finish
       if (saveOwnerRef.current !== examSaveOwner) return // a newer session already owns storage
       const liveElapsed = sessionStartRef.current
@@ -419,20 +421,23 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             }
           })()
         : {}
-      saveActiveExam({
-        routeId: route.id,
-        routeSlug: route.slug,
-        routeName: route.name_ka,
-        phase: 'active',
-        exam,
-        userPos,
-        heading,
-        speedKmh,
-        elapsedMs: liveElapsed,
-        triggeredPins: Array.from(triggeredRef.current),
-        ...fieldTest,
-        savedAt: Date.now(),
-      })
+      saveActiveExam(
+        {
+          routeId: route.id,
+          routeSlug: route.slug,
+          routeName: route.name_ka,
+          phase: 'active',
+          exam,
+          userPos,
+          heading,
+          speedKmh,
+          elapsedMs: liveElapsed,
+          triggeredPins: Array.from(triggeredRef.current),
+          ...fieldTest,
+          savedAt: Date.now(),
+        },
+        { allowProgressRollback },
+      )
     }
 
     saveNowRef.current = saveState
@@ -609,18 +614,46 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         }
         setLastSpoken(target.instruction_ka)
         saveNowRef.current?.()
-        void audioEngine.playDetailed(target.audio_url, target.id, target.instruction_ka).then((status) => {
-          if (status !== 'failed' || phaseRef.current !== 'active') return
+        const audioSessionGeneration = audioSessionGenerationRef.current
+        const restorePendingPin = () => {
+          if (
+            audioSessionGeneration !== audioSessionGenerationRef.current ||
+            phaseRef.current !== 'active' ||
+            finishInProgressRef.current
+          ) return
+          triggeredRef.current.delete(target.id)
+          const currentPin = pinsRef.current.find((pin) => pin.sort_order === target.sort_order)
+          if (currentPin) triggeredRef.current.delete(currentPin.id)
+          if (fieldTest && handledOrdersRef.current) {
+            handledOrdersRef.current.delete(target.sort_order)
+            triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrdersRef.current)
+            const upcoming = nextSortOrder(pinsRef.current, handledOrdersRef.current).nextSortOrder
+            setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
+            setRouteComplete(false)
+          } else {
+            setNextPin(voicePins.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
+          }
+          saveNowRef.current?.(true)
+        }
+        const handleAudioFailure = () => {
+          if (
+            audioSessionGeneration !== audioSessionGenerationRef.current ||
+            phaseRef.current !== 'active' ||
+            finishInProgressRef.current
+          ) return
           // Original WAV failed: allow a few retries. Never fall back to browser TTS.
-          const key = route.slug + ':' + target.id
+          const key = route.slug + ':' + target.sort_order
           const attempts = (audioAttemptsRef.current.get(key) ?? 0) + 1
           audioAttemptsRef.current.set(key, attempts)
           if (attempts < AUDIO_MAX_ATTEMPTS) {
-            triggeredRef.current.delete(target.id)
-            if (fieldTest && handledOrdersRef.current) {
-              handledOrdersRef.current.delete(target.sort_order)
-            }
+            restorePendingPin()
           } else console.warn('[AUDIO] giving up on PIN voice after', attempts, 'attempts:', target.id)
+        }
+        void audioEngine.playDetailed(target.audio_url, target.id, target.instruction_ka, {
+          onFailure: handleAudioFailure,
+        }).then((status) => {
+          if (status === 'failed') handleAudioFailure()
+          else if (status === 'busy') restorePendingPin()
         })
       },
       (err) => setGpsError(formatGpsError(err)),
@@ -636,6 +669,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [])
 
   function startSession(fix: GpsPosition | null) {
+    audioSessionGenerationRef.current++
+    audioEngine.stopAll()
     finishInProgressRef.current = false
     triggeredRef.current = new Set()
     pinApproachRef.current = new Map()
@@ -808,6 +843,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function finishSession() {
+    audioSessionGenerationRef.current++
     finishInProgressRef.current = true
     setRouteComplete(false)
     // Mid-route stop must keep progress so a later start resumes (even from the agency GPS).
@@ -838,6 +874,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       return
     }
     finishInProgressRef.current = false
+    audioSessionGenerationRef.current++
     setSummaryCanContinue(false)
     setExamSummary(null)
     applySavedProgress(saved)

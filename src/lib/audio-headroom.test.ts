@@ -42,9 +42,9 @@ function peakSample(file: string): number {
 }
 
 describe('voice gain headroom', () => {
-  it('keeps media volume at 1, gain at 1.0, pitch and speed unchanged', () => {
+  it('keeps media volume at 1, gain at 1.5, pitch and speed unchanged', () => {
     expect(VOICE_VOLUME).toBe(1)
-    expect(VOICE_GAIN).toBe(1)
+    expect(VOICE_GAIN).toBe(1.5)
     expect(VOICE_PITCH).toBe('normal')
     expect(VOICE_PLAYBACK_RATE).toBe(1)
   })
@@ -58,7 +58,7 @@ describe('voice gain headroom', () => {
     expect(audio.volume).toBe(1)
   })
 
-  it('every bundled voice WAV stays at or below full scale at current gain', () => {
+  it('every bundled voice WAV stays below full scale after 1.5x gain', () => {
     const files = wavFiles(join(process.cwd(), 'public', 'audio'))
     expect(files.length).toBeGreaterThan(0)
     const clipped = files

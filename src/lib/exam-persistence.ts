@@ -94,10 +94,14 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
 /**
  * Save active exam state to localStorage
  */
-export function saveActiveExam(state: SavedExamState): void {
+export function saveActiveExam(
+  state: SavedExamState,
+  options: { allowProgressRollback?: boolean } = {},
+): void {
   try {
     const previous = readSavedExam()
-    const merged = mergeExamSave(previous, { ...state, savedAt: Date.now() })
+    const incoming = { ...state, savedAt: Date.now() }
+    const merged = options.allowProgressRollback ? incoming : mergeExamSave(previous, incoming)
     localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
     console.log('💾 Exam state saved:', merged.routeName, merged.routeSlug ?? merged.routeId)
   } catch (err) {

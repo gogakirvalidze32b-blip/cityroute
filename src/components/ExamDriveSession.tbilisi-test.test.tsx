@@ -18,10 +18,18 @@ vi.mock('@/context/AuthContext', () => ({
   usePlanFeatures: () => ({ mapNav: true, errorPanel: true, canSwitchViews: true, routeAudio: true }),
 }))
 vi.mock('@/hooks/useExamLayoutMode', () => ({ useExamLayoutMode: () => 'desktop' as const }))
+const audioAttempts = vi.hoisted(() => ({
+  failures: [] as Array<() => void>,
+}))
 vi.mock('@/lib/audio', () => ({
   audioEngine: {
     play: vi.fn(() => Promise.resolve(true)),
-    playDetailed: vi.fn(() => Promise.resolve('played')),
+    playDetailed: vi.fn((_url, _pinId, _instruction, options) => {
+      if (options?.onFailure) {
+        audioAttempts.failures.push(() => options.onFailure('media-error'))
+      }
+      return Promise.resolve('played')
+    }),
     unlock: vi.fn(),
     stopAll: vi.fn(),
     preloadAll: vi.fn(),
@@ -165,7 +173,13 @@ describe('standalone test city „ტესტი — თბილისი“',
   beforeEach(() => {
     localStorage.clear()
     playDetailed.mockReset()
-    playDetailed.mockImplementation(() => Promise.resolve('played'))
+    audioAttempts.failures = []
+    playDetailed.mockImplementation((_url, _pinId, _instruction, options) => {
+      if (options?.onFailure) {
+        audioAttempts.failures.push(() => options.onFailure('media-error'))
+      }
+      return Promise.resolve('played')
+    })
     gps.onFix = null
     gps.once = null
     fixesSent = 0
@@ -238,6 +252,42 @@ describe('standalone test city „ტესტი — თბილისი“',
       }
     }
     expectCompleted()
+  })
+
+  it('retries a delayed audio error at most three times and persists rollback for the PIN', async () => {
+    await startAtPin1()
+    await driveTo(1)
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(audioAttempts.failures[attempt]).toBeTypeOf('function')
+      await act(async () => {
+        audioAttempts.failures[attempt]!()
+      })
+      await settle()
+
+      if (attempt < 2) {
+        expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredPins).not.toContain(pin(1).id)
+        expect(nextOrder()).toBe(1)
+        await driveTo(1)
+      }
+    }
+
+    await driveTo(1)
+    expect(playedOrders()).toEqual([1, 1, 1])
+  })
+
+  it('ignores a delayed audio error from a prior mounted session', async () => {
+    const view = await startAtPin1()
+    await driveTo(1)
+    const staleFailure = audioAttempts.failures[0]
+    expect(staleFailure).toBeTypeOf('function')
+    view.unmount()
+
+    await act(async () => {
+      staleFailure!()
+    })
+
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredPins).toContain(pin(1).id)
   })
 
   it('a pin is not skipped: pin 4 or 5 does not play while pin 3 is the target', async () => {

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * AudioEngine: original WAV only at 1.0x — never browser TTS.
+ * AudioEngine: original WAV only at 1.0x speed — never browser TTS.
  */
-type Behaviour = { playRejects?: string }
+type Behaviour = { playRejects?: string; playNeverResolves?: boolean }
 
 function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' = 'running') {
   const created: FakeAudio[] = []
@@ -18,6 +18,7 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
     onerror: (() => void) | null = null
     error: { code: number } | null = null
     play = vi.fn(async () => {
+      if (b.playNeverResolves) return await new Promise<void>(() => {})
       if (b.playRejects) throw new DOMException('blocked', b.playRejects)
     })
     pause = vi.fn()
@@ -103,7 +104,7 @@ describe('AudioEngine', () => {
     vi.restoreAllMocks()
   })
 
-  it('plays the WAV at 1.0x with pitch preserved, media volume 1, and gain 1.0', async () => {
+  it('plays the WAV at 1.0x with pitch preserved, media volume 1, and gain 1.5', async () => {
     const f = installFakes()
     const engine = await freshEngine()
     expect(await engine.playDetailed('/audio/points/a.wav', 'p1', 'text')).toBe('played')
@@ -112,7 +113,7 @@ describe('AudioEngine', () => {
     expect(f.created[0].playbackRate).toBe(1)
     expect(f.created[0].preservesPitch).toBe(true)
     expect(f.gains).toHaveLength(1)
-    expect(f.gains[0].gain.value).toBe(1)
+    expect(f.gains[0].gain.value).toBe(1.5)
     expect(f.filters).toHaveLength(0)
     expect(f.sources).toHaveLength(1)
     expect(f.speak).not.toHaveBeenCalled()
@@ -131,7 +132,7 @@ describe('AudioEngine', () => {
     expect(f.speak).not.toHaveBeenCalled()
   })
 
-  it('uses one unity gain for every voice and does not open the EQ graph', async () => {
+  it('uses one 1.5 gain for every voice and does not open the EQ graph', async () => {
     const f = installFakes()
     const ctorSpy = vi.fn()
     const Base = (globalThis as unknown as { AudioContext: new () => object }).AudioContext
@@ -152,6 +153,7 @@ describe('AudioEngine', () => {
       ['/audio/points/route-4.wav', 'p4'],
     ] as const) {
       expect(await engine.playDetailed(url, id, 't')).toBe('played')
+      f.created[f.created.length - 1]?.onended?.()
     }
     expect(ctorSpy).toHaveBeenCalledTimes(1)
     expect(f.created.every((audio) => audio.playbackRate === 1)).toBe(true)
@@ -227,6 +229,80 @@ describe('AudioEngine', () => {
     expect(await engine.playDetailed('/audio/b.wav', 'p2', 't')).toBe('played')
   })
 
+  it('stopAll() resolves an in-flight start as cancelled and prevents later playback', async () => {
+    const f = installFakes({ playNeverResolves: true })
+    const engine = await freshEngine()
+    const request = engine.playDetailed('/audio/a.wav', 'p1', 't')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    engine.stopAll()
+
+    await expect(request).resolves.toBe('cancelled')
+    expect(f.created[0].pause).toHaveBeenCalled()
+    expect(engine.isBusy()).toBe(false)
+  })
+
+  it('reports a delayed media error once and releases the active PIN for retry', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    const onFailure = vi.fn()
+
+    expect(
+      await engine.playDetailed('/audio/a.wav', 'p1', 't', { onFailure }),
+    ).toBe('played')
+    const oldErrorHandler = f.created[0].onerror
+    oldErrorHandler?.()
+
+    expect(onFailure).toHaveBeenCalledTimes(1)
+    expect(onFailure).toHaveBeenCalledWith('media-error')
+    expect(engine.isBusy()).toBe(false)
+    expect(f.created[0].pause).toHaveBeenCalled()
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('played')
+  })
+
+  it('does not let a stale media callback clear or fail a newer playback', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    const oldFailure = vi.fn()
+    await engine.playDetailed('/audio/a.wav', 'p1', 't', { onFailure: oldFailure })
+    const oldErrorHandler = f.created[0].onerror
+    engine.stopAll()
+
+    const newFailure = vi.fn()
+    expect(await engine.playDetailed('/audio/b.wav', 'p2', 't', { onFailure: newFailure })).toBe('played')
+    oldErrorHandler?.()
+
+    expect(oldFailure).not.toHaveBeenCalled()
+    expect(newFailure).not.toHaveBeenCalled()
+    expect(engine.isBusy()).toBe(true)
+  })
+
+  it('single-flights all PINs: duplicate requests do not start overlapping audio', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    const first = await engine.playDetailed('/audio/a.wav', 'p1', 't')
+    expect(first).toBe('played')
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('duplicate')
+    expect(await engine.playDetailed('/audio/b.wav', 'p2', 't')).toBe('busy')
+    expect(f.created).toHaveLength(1)
+
+    f.created[0].onended?.()
+    expect(await engine.playDetailed('/audio/b.wav', 'p2', 't')).toBe('played')
+    expect(f.created[1].play).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to media playback with an explicit diagnostic when Web Audio is unavailable', async () => {
+    const f = installFakes()
+    vi.stubGlobal('AudioContext', undefined)
+    const engine = await freshEngine()
+
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('played')
+    expect(f.created[0].play).toHaveBeenCalledTimes(1)
+    expect(f.created[0].volume).toBe(1)
+    expect(engine.getDiagnostics().map((entry) => entry.reason)).toContain('gain-unavailable')
+  })
+
   it('after a play rejection the engine is not stuck and the next PIN can play', async () => {
     const f = installFakes({ playRejects: 'NotAllowedError' })
     const engine = await freshEngine()
@@ -241,9 +317,9 @@ describe('AudioEngine', () => {
     expect(f2.speak).not.toHaveBeenCalled()
   })
 
-  it('keeps VOICE_GAIN, VOICE_VOLUME and VOICE_PLAYBACK_RATE at 1.0', async () => {
+  it('keeps 1.5 gain while preserving media volume and playback rate', async () => {
     const mod = await import('./audio')
-    expect(mod.VOICE_GAIN).toBe(1)
+    expect(mod.VOICE_GAIN).toBe(1.5)
     expect(mod.VOICE_VOLUME).toBe(1)
     expect(mod.VOICE_PLAYBACK_RATE).toBe(1)
   })
