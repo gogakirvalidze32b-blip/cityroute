@@ -38,7 +38,22 @@ describe('Tbilisi route audio source audit', () => {
       expect(existsSync(join(AUDIO_DIR, decodePath(url).replace(/^\/audio\//, '')))).toBe(true)
     }
 
-    expect(missingAudioOrders).toEqual([3])
+    expect(missingAudioOrders).toEqual([])
+  })
+
+  it('maps Tbilisi PIN #3 to the exact existing 300 m right-turn recording', () => {
+    const pin3 = LOCAL_TBILISI_TEST_ROUTE.pins.find((pin) => pin.sort_order === 3)!
+    const audioUrl = resolvePinAudioUrl(LOCAL_TBILISI_TEST_ROUTE.slug, pin3)
+
+    expect(pin3.instruction_ka).toBe('გთხოვთ, 300 მეტრში მოუხვიოთ მარჯვნივ')
+    expect(audioUrl && decodePath(audioUrl)).toBe(
+      '/audio/points/300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+    )
+    expect(
+      existsSync(
+        join(AUDIO_DIR, 'points', '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ.wav'),
+      ),
+    ).toBe(true)
   })
 
   it('preserves the actual repeated-instruction mapping without inventing a separate recording', () => {

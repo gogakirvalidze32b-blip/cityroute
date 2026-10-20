@@ -105,8 +105,8 @@ const EXPECTED = [
   { lat: 41.6811569, lng: 44.9808128, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
 ]
 const ORDERS = [1, 2, 3, 4, 5]
-/** Pins with no exact instruction→WAV map entry (engine must stay silent — no TTS). */
-const WITHOUT_WAV = [3]
+/** No source PIN in this route is expected to lack an exact instruction→WAV mapping. */
+const WITHOUT_WAV: number[] = []
 
 const playDetailed = vi.mocked(audioEngine.playDetailed)
 const pin = (order: number) => route.pins.find((p) => p.sort_order === order)!
@@ -216,6 +216,9 @@ describe('standalone test city „ტესტი — თბილისი“',
     )
     expect(decodeAudioPath(resolvePinAudioUrl(route.slug, pin(2))!)).toBe(
       '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav',
+    )
+    expect(decodeAudioPath(resolvePinAudioUrl(route.slug, pin(3))!)).toBe(
+      '/audio/points/300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ.wav',
     )
     expect(decodeAudioPath(resolvePinAudioUrl(route.slug, pin(4))!)).toBe(
       '/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
