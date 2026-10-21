@@ -60,6 +60,8 @@ import {
 } from '@/lib/pin-audio'
 import { examRoadTrace } from '@/lib/pin-route-line'
 import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
+import { SPEED_LIMIT_DEBUG_PANEL } from '@/lib/debug-flags'
+import { SpeedLimitDebugPanel, type GpsRejectionInfo } from '@/components/SpeedLimitDebugPanel'
 import {
   nextSortOrder,
   ordersForIds,
@@ -129,6 +131,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [speedRoadU, setSpeedRoadU] = useState<number | null>(null)
   const speedRoadURef = useRef<number | null>(null)
   const speedLimitRoadRef = useRef<LatLng[] | null>(null)
+  /** Debug panel only: GPS readings dropped by the filter. */
+  const [gpsRejection, setGpsRejection] = useState<GpsRejectionInfo | null>(null)
   const [heading, setHeading] = useState(savedState?.heading || 0)
   const [speedKmh, setSpeedKmh] = useState(savedState?.speedKmh || 0)
   const [elapsedMs, setElapsedMs] = useState(() => (savedState ? examElapsedMsNow(savedState) : 0))
@@ -511,7 +515,17 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         
         // Reject invalid readings
         if (!filtered) {
+          if (SPEED_LIMIT_DEBUG_PANEL) {
+            setGpsRejection((prev) => ({
+              reason: gpsFilterRef.current.lastRejection ?? 'unknown',
+              count: (prev?.count ?? 0) + 1,
+              accuracyM: pos.accuracy,
+            }))
+          }
           return
+        }
+        if (SPEED_LIMIT_DEBUG_PANEL) {
+          setGpsRejection((prev) => (prev && prev.reason ? { ...prev, reason: null } : prev))
         }
         
         setRawPos(pos)
@@ -966,7 +980,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   return (
     <>
     <div
-      className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}`}
+      className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}${active && SPEED_LIMIT_DEBUG_PANEL ? ' exam-session--sl-debug' : ''}`}
     >
       {active && (
         <>
@@ -1033,6 +1047,21 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
                 თავიდან დაწყება
               </button>
             </div>
+          )}
+
+          {SPEED_LIMIT_DEBUG_PANEL && (
+            <SpeedLimitDebugPanel
+              routeSlug={route.slug}
+              routeId={route.id}
+              gpsStarted={gpsStarted}
+              gpsError={gpsError}
+              rawPos={rawPos}
+              userPos={userPos}
+              road={speedLimitRoad}
+              roadU={speedRoadU}
+              speedLimitKmh={speedLimitKmh}
+              rejection={gpsRejection}
+            />
           )}
 
           <div className="exam-drive-main">

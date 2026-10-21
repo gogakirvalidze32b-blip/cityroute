@@ -115,7 +115,7 @@ export function advanceRoadProgressU(
   return bestU
 }
 
-function zoneContainsU(zone: SpeedZone, roadU: number): boolean {
+export function zoneContainsU(zone: SpeedZone, roadU: number): boolean {
   return roadU >= zone.from - ROAD_U_SLACK && roadU <= zone.to + ROAD_U_SLACK
 }
 

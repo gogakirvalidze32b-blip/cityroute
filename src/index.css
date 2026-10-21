@@ -1289,6 +1289,81 @@ button:disabled {
   grid-row: 3;
 }
 
+/* Temporary Speed Limit debug panel: its own grid row, so it shrinks the map instead of covering it. */
+.exam-session--sl-debug.exam-session--active {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.exam-session--sl-debug.exam-session--active > .exam-drive-main {
+  grid-row: 4;
+}
+
+.exam-session--active > .sl-debug {
+  grid-row: 3;
+  min-width: 0;
+  max-height: 36dvh;
+  overflow-y: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border-bottom: 2px solid #38bdf8;
+}
+
+.sl-debug__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: #0369a1;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sl-debug__limit {
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.sl-debug__body {
+  padding: 4px 8px 6px;
+}
+
+.sl-debug__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.sl-debug__row > span {
+  flex: 0 0 auto;
+  color: #94a3b8;
+}
+
+.sl-debug__row > strong {
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.sl-debug__reason {
+  margin-top: 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: #7f1d1d;
+  color: #fecaca;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .exam-drive-main {
   min-height: 0;
   min-width: 0;
