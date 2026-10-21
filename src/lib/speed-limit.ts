@@ -85,12 +85,27 @@ export function advanceRoadProgressU(
 
   let bestU = 0
   let bestD = Infinity
+  const nearStartEnd: { u: number; d: number }[] = []
   for (let i = searchStart; i <= searchEnd; i += 1) {
     const { d, raw } = toSegment(position, road[i], road[i + 1])
     const t = Math.max(0, Math.min(1, raw))
+    const u = i + t
     if (d < bestD) {
       bestD = d
-      bestU = i + t
+      bestU = u
+    }
+    // Loop start/end only matter on the first fix (full-road search).
+    if (!hasPrev && (u < 2 || u > road.length - 3)) nearStartEnd.push({ u, d })
+  }
+
+  // Closed loops share the start plaza with the last vertices. The nearest point is often
+  // the END; without prior progress that locks the driver there and every later forward
+  // GPS step is rejected as a backward jump (pin #1 ≈ end, pin #2 ≈ 3).
+  if (!hasPrev) {
+    const atStart = nearStartEnd.filter((c) => c.u < 2 && c.d <= bestD + 5)
+    const atEnd = nearStartEnd.filter((c) => c.u > road.length - 3 && c.d <= bestD + 5)
+    if (atStart.length > 0 && atEnd.length > 0) {
+      bestU = atStart.reduce((min, c) => (c.u < min ? c.u : min), atStart[0].u)
     }
   }
 

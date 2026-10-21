@@ -353,3 +353,60 @@ describe('the current GPS speed display is unchanged', () => {
     expect(formatSpeed(49.6)).toBe('50 კმ/ს')
   })
 })
+/** Same GPS → roadU accumulation as MapPreviewPage (pins in route order). */
+function previewRoadU(
+  road: LatLng[],
+  pins: (typeof ROUTES)[number]['pins'],
+  throughSortOrder: number,
+): number | null {
+  let u: number | null = null
+  for (const pin of pins) {
+    u = advanceRoadProgressU([pin.lat, pin.lng], road, u)
+    if (pin.sort_order === throughSortOrder) break
+  }
+  return u
+}
+
+describe('loop-closure GPS start resolves to road start', () => {
+  it.each(['route-1', 'route-2'] as const)(
+    '%s first GPS at pin #1 is the start of the road, not the loop end',
+    (slug) => {
+      const { road, pins } = DATA[slug]
+      const startPin = pins.find((p) => p.sort_order === 1)!
+      const u = advanceRoadProgressU([startPin.lat, startPin.lng], road, null)
+      expect(u).toBeLessThan(2)
+    },
+  )
+
+  it('R1 pin #2 after pin #1 advances to ~3 instead of staying at u≈268', () => {
+    const { road, pins } = DATA['route-1']
+    const p1 = pins.find((p) => p.sort_order === 1)!
+    const p2 = pins.find((p) => p.sort_order === 2)!
+    let u = advanceRoadProgressU([p1.lat, p1.lng], road, null)
+    u = advanceRoadProgressU([p2.lat, p2.lng], road, u)
+    expect(u).toBeGreaterThan(1)
+    expect(u).toBeLessThan(10)
+  })
+})
+
+describe('driver-verified pin limits after GPS → roadU', () => {
+  it('R2 pins #17-22 = 40 km/h', () => {
+    const { road, pins } = DATA['route-2']
+    for (const n of [17, 18, 19, 20, 21, 22]) {
+      const pin = pins.find((p) => p.sort_order === n)!
+      const pos: LatLng = [pin.lat, pin.lng]
+      const u = previewRoadU(road, pins, n)
+      expect(u).toBeGreaterThan(130)
+      expect(u).toBeLessThan(220)
+      expect(resolveSpeedLimit('route-2', pos, road, u)).toBe(40)
+    }
+  })
+
+  it('R3 pin #21 = 50 km/h', () => {
+    const { road, pins } = DATA['route-3']
+    const pin = pins.find((p) => p.sort_order === 21)!
+    const pos: LatLng = [pin.lat, pin.lng]
+    const u = previewRoadU(road, pins, 21)
+    expect(resolveSpeedLimit('route-3', pos, road, u)).toBe(50)
+  })
+})
