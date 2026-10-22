@@ -7,8 +7,7 @@ import { audioEngine } from '@/lib/audio'
 import { createExamSession } from '@/lib/exam-session'
 import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
 import { examRoadTrace, examRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
-import { distanceToPinMeters, type GpsPosition, type LatLng } from '@/lib/gps'
-import { chooseStartPin } from '@/lib/start-pin'
+import type { GpsPosition } from '@/lib/gps'
 import { resolvePinAudioUrl } from '@/data/route-audio'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
@@ -19,7 +18,10 @@ vi.mock('@/hooks/useExamLayoutMode', () => ({ useExamLayoutMode: () => 'desktop'
 vi.mock('@/lib/audio', () => ({
   audioEngine: {
     play: vi.fn(() => Promise.resolve(true)),
-    playDetailed: vi.fn(() => Promise.resolve('played')),
+    playDetailed: vi.fn((_url, _id, _instruction, options) => {
+      if (audioTestState.autoEnd) options?.onEnded?.()
+      return Promise.resolve('played')
+    }),
     unlock: vi.fn(),
     isBusy: vi.fn(() => false),
     stopAll: vi.fn(),
@@ -31,6 +33,7 @@ const gps = vi.hoisted(() => ({
   onFix: null as ((pos: GpsPosition) => void) | null,
   once: null as GpsPosition | null,
 }))
+const audioTestState = vi.hoisted(() => ({ autoEnd: true }))
 
 vi.mock('@/lib/gps', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/gps')>()
@@ -107,6 +110,7 @@ function withRemotePins(route: RouteWithPins): RouteWithPins {
   }
 }
 const cases = [
+  ['route-1', 35],
   ['route-2', 29],
   ['route-3', 31],
   ['route-4', 32],
@@ -152,15 +156,19 @@ async function startAtPin1(route: RouteWithPins) {
   return view
 }
 
-describe('routes 2 and 3 field-test resume on production', () => {
+describe('Telavi field-test routes keep strict progress and resume on production', () => {
   beforeEach(() => {
     localStorage.clear()
     playDetailed.mockReset()
-    playDetailed.mockImplementation(() => Promise.resolve('played'))
+    playDetailed.mockImplementation((_url, _id, _instruction, options) => {
+      if (audioTestState.autoEnd) options?.onEnded?.()
+      return Promise.resolve('played')
+    })
     vi.mocked(audioEngine.play).mockReset()
     vi.mocked(audioEngine.play).mockImplementation(() => Promise.resolve(true))
     gps.onFix = null
     gps.once = null
+    audioTestState.autoEnd = true
   })
   afterEach(() => {
     cleanup()
@@ -180,6 +188,7 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
     expect(nextOrder()).toBe(1)
     await driveTo(route, 1)
+    expect(playDetailed).toHaveBeenCalledTimes(1)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
     expect(nextOrder()).toBe(2)
     await driveTo(route, 2)
@@ -242,6 +251,36 @@ describe('routes 2 and 3 field-test resume on production', () => {
     expect(playDetailed.mock.calls[0][1]).toBe(pin3.id)
     expect(nextOrder()).toBe(4)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+  })
+
+  it('route 1: Finish during a pending instruction persists and resumes that exact PIN', async () => {
+    const route = routeBySlug('route-1')
+    await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+
+    audioTestState.autoEnd = false
+    await driveTo(route, 3)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(3)
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(3)
+
+    audioTestState.autoEnd = true
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+    })
+    await settle()
+
+    expect(playedOrders(route).slice(-1)).toEqual([3])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
+    expect(nextOrder()).toBe(4)
+    expect(audioEngine.unlock).toHaveBeenCalled()
   })
 
   it('route 1: თავიდან after mid-route stop clears progress and a new start begins at PIN 1', async () => {
@@ -328,6 +367,27 @@ describe('routes 2 and 3 field-test resume on production', () => {
     await driveTo(route, last)
     expect(playDetailed).not.toHaveBeenCalled()
   }, 20_000)
+
+  it('keeps each route’s progress when switching among all four routes', async () => {
+    const routes = ['route-1', 'route-2', 'route-3', 'route-4'].map(routeBySlug)
+    for (const route of routes) {
+      const view = await startAtPin1(route)
+      await driveTo(route, 1)
+      await driveTo(route, 2)
+      expect(nextOrder()).toBe(3)
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+      view.unmount()
+    }
+
+    for (const route of routes) {
+      gps.once = fix(route, 1)
+      const view = render(<ExamDriveSession route={route} />)
+      await settle()
+      expect(nextOrder()).toBe(3)
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+      view.unmount()
+    }
+  })
 
   it.each(cases)('%s: pagehide writes the current pin progress', async (slug) => {
     const route = routeBySlug(slug)
@@ -458,53 +518,23 @@ describe('routes 2 and 3 field-test resume on production', () => {
     second.unmount()
   })
 
-  it('a new route 1 exam can start at PIN 10, and reload keeps that resume', async () => {
+  it('a new route 1 exam always starts at PIN 1 even when the first GPS fix is near PIN 10', async () => {
     const route = routeBySlug('route-1')
-    const pins = sorted(route)
-    const line = examRoadTrace(route.slug, pins)!
-    const bearing = (from: LatLng, to: LatLng) => {
-      const φ1 = (from[0] * Math.PI) / 180
-      const φ2 = (to[0] * Math.PI) / 180
-      const Δλ = ((to[1] - from[1]) * Math.PI) / 180
-      const y = Math.sin(Δλ) * Math.cos(φ2)
-      const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
-      return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360
-    }
-    let chosen: GpsPosition | null = null
-    for (let i = 1; i < line.length && !chosen; i++) {
-      const length = distanceToPinMeters(line[i - 1], line[i])
-      if (length === 0) continue
-      const heading = bearing(line[i - 1], line[i])
-      for (let d = 0; d <= length; d += 12) {
-        const t = d / length
-        const position: LatLng = [
-          line[i - 1][0] + (line[i][0] - line[i - 1][0]) * t,
-          line[i - 1][1] + (line[i][1] - line[i - 1][1]) * t,
-        ]
-        const decision = chooseStartPin(
-          pins,
-          { position, accuracyM: 5, headingDeg: heading, speedMps: 8 },
-          line,
-        )
-        if (decision.kind === 'start' && decision.sortOrder === 10) {
-          chosen = { lat: position[0], lng: position[1], accuracy: 5, heading, speed: 8, timestamp: Date.now() }
-          break
-        }
-      }
-    }
-    expect(chosen).not.toBeNull()
-    gps.once = chosen
+    gps.once = fix(route, 10)
     const first = render(<ExamDriveSession route={route} />)
     await settle()
     await pressStart()
-    expect(nextOrder()).toBe(10)
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(nextOrder()).toBe(1)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    await driveTo(route, 10)
+    expect(playedOrders(route)).toEqual([])
+    expect(nextOrder()).toBe(1)
     first.unmount()
 
     gps.once = fix(route, 1)
     render(<ExamDriveSession route={route} />)
     await settle()
-    expect(nextOrder()).toBe(10)
+    expect(nextOrder()).toBe(1)
     expect(screen.queryByRole('button', { name: /გამოცდის დაწყება/ })).toBeNull()
   })
 })

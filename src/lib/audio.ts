@@ -1,3 +1,7 @@
+import {
+  safeVoiceGain,
+} from './audio-normalization'
+
 /**
  * ხმის სიჩქარე — შეცვალე ეს რიცხვი.
  * 1 = ნორმალური · 0.9 = ოდნავ ნელი · 0.8 = უფრო ნელი · 0.75 = ნელი · 0.7 = ძალიან ნელი · 1.1 = ჩქარი · 1.2 = უფრო ჩქარი
@@ -23,11 +27,8 @@ export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
  */
 export const VOICE_VOLUME = 1
 
-/**
- * Web Audio GainNode multiplier (timbre / pitch / speed unchanged).
- * HTML media volume stays at 1.0; this gain adds approximately 3.5 dB.
- */
-export const VOICE_GAIN = 1.5
+/** Fallback multiplier for audio without a measured bundled-WAV loudness profile. */
+export const VOICE_GAIN = 2
 
 /** Shared Web Audio graph (one AudioContext for all voice files — mobile browsers cap contexts). */
 type WarmGraph = {
@@ -35,7 +36,7 @@ type WarmGraph = {
   input: AudioNode
 }
 
-/** Loudness only: one gain into the speakers. No EQ, no pitch shift. */
+/** Per-file loudness gain with source-peak headroom. No EQ, compression, or pitch shift. */
 type LoudGraph = {
   ctx: AudioContext
   gain: GainNode
@@ -47,6 +48,8 @@ export type PlayStatus = 'played' | 'duplicate' | 'busy' | 'cancelled' | 'failed
 export type PlaybackFailureReason = 'media-error' | 'play-rejected' | 'playback-timeout'
 
 export type PlayOptions = {
+  /** Called once after the media element reaches its natural end. */
+  onEnded?: () => void
   /** Called once if a started playback later fails. */
   onFailure?: (reason: PlaybackFailureReason) => void
 }
@@ -135,7 +138,7 @@ export class AudioEngine {
     audio.webkitPreservesPitch = audio.preservesPitch
   }
 
- /** Gain-only graph. Does not filter or change playback rate. */
+ /** Gain and peak-limiter graph. Does not EQ or change playback rate. */
   private getLoudGraph(): LoudGraph | null {
     if (this.loud) return this.loud
     if (typeof AudioContext === 'undefined') return null
@@ -241,7 +244,7 @@ export class AudioEngine {
    * while audio.play() still "succeeds". In that case we fall back to plain playback.
    */
   /**
-   * 130% loudness through a GainNode. The media element stays at volume 1.
+   * Boosts voice amplitude before a compressor protects speech peaks from clipping.
    * A suspended context is not wired: playback would succeed and stay silent.
    */
   private ensureLoudChain(audio: HTMLAudioElement): Promise<boolean> {
@@ -456,12 +459,17 @@ export class AudioEngine {
       const gainApplied =
         this.pitch === 'mid' ? await this.ensureWarmChain(audio) : await this.ensureLoudChain(audio)
       if (!isCurrent()) return 'cancelled'
+      if (gainApplied && this.pitch !== 'mid' && this.loud) {
+        this.loud.gain.gain.value = safeVoiceGain(url, VOICE_GAIN)
+      }
       if (!gainApplied) {
         this.report(pinId, url, 'gain-unavailable', 'Playing at original media level')
       }
 
       audio.onended = () => {
-        if (isCurrent()) clearPlayback()
+        if (!isCurrent()) return
+        clearPlayback()
+        options.onEnded?.()
       }
       audio.onerror = () => {
         if (!isCurrent()) return

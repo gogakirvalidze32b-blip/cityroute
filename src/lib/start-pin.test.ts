@@ -235,6 +235,21 @@ describe('starting pin for a new exam', () => {
     expect(ambiguous).toBeLessThan(checked)
   })
 
+  it('starts at PIN 24 after the outbound PIN 22/23 cues have already passed', () => {
+    const pins = routePins(1)
+    const decision = chooseStartPin(
+      pins,
+      fixAt([41.918796596932204, 45.484709508753554], {
+        speedMps: 8,
+        headingDeg: 250.9905533509231,
+      }),
+      road(1, pins),
+    )
+
+    expect(decision.kind).toBe('start')
+    if (decision.kind === 'start') expect(decision.sortOrder).toBe(24)
+  })
+
   function cuePinsOf(pins: StartPinInput[]) {
     return pins.map((p) => ({
       id: String(p.sort_order),

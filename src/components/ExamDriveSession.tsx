@@ -47,7 +47,6 @@ import {
   collectPreloadAudioUrls,
   enrichPinsWithLocalAudio,
   EXAM_START_TEXT,
-  isStartPinAlreadyAnnounced,
 } from '@/data/route-audio'
 import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } from '@/lib/route-nav'
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
@@ -57,6 +56,7 @@ import {
   AUDIO_TRIGGER_DISTANCE_M,
   audioHeadingOk,
   decidePinAudio,
+  recordSegmentApproach,
 } from '@/lib/pin-audio'
 import { examRoadTrace } from '@/lib/pin-route-line'
 import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
@@ -69,7 +69,6 @@ import {
   resolveExamResume,
   savedHandledOrders,
 } from '@/lib/route-resume'
-import { chooseStartPin } from '@/lib/start-pin'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 
@@ -77,6 +76,8 @@ type Phase = 'preview' | 'active' | 'summary'
 
 /** Sort-order resume for Telavi exam routes and the local Tbilisi GPS test city. */
 const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4', 'test-route-tbilisi'])
+const AUDIO_RETRY_BASE_MS = 500
+const AUDIO_RETRY_MAX_MS = 4000
 
 function initialHandledOrders(
   saved: SavedExamState,
@@ -125,8 +126,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [gpsStarted, setGpsStarted] = useState(savedState ? true : false)
   const [gpsStarting, setGpsStarting] = useState(false)
   const [gpsError, setGpsError] = useState<string | null>(() => getGpsEnvironmentIssue())
+  const [freshGpsRouteSlug, setFreshGpsRouteSlug] = useState<string | null>(null)
   const [rawPos, setRawPos] = useState<GpsPosition | null>(null)
   const [userPos, setUserPos] = useState<LatLng | null>(savedState?.userPos || null)
+  const currentPositionRef = useRef<LatLng | null>(savedState?.userPos || null)
   /** Along-road u on examRoadTrace for speed zones (monotonic; optional for resolver). */
   const [speedRoadU, setSpeedRoadU] = useState<number | null>(null)
   const speedRoadURef = useRef<number | null>(null)
@@ -140,6 +143,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
   const [routeComplete, setRouteComplete] = useState(false)
+  const [pendingPinSortOrder, setPendingPinSortOrderState] = useState<number | null>(
+    savedState?.pendingPinSortOrder ?? null,
+  )
   /** After mid-route დასრულება, summary offers გაგრძელება using kept localStorage progress. */
   const [summaryCanContinue, setSummaryCanContinue] = useState(false)
   const resumePendingRef = useRef(false)
@@ -173,16 +179,25 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   // Audio catch-up bookkeeping (closest approach per PIN, failed-playback attempts). Not persisted.
   const pinApproachRef = useRef<Map<string, number>>(new Map())
   const audioAttemptsRef = useRef<Map<string, number>>(new Map())
+  const pendingPinSortOrderRef = useRef<number | null>(savedState?.pendingPinSortOrder ?? null)
+  const audioAttemptInFlightRef = useRef(false)
+  const audioRetryTimerRef = useRef<number | null>(null)
   const releaseWake = useRef<(() => void) | null>(null)
   const sessionStartRef = useRef(savedState ? examSessionOriginMs(savedState) : 0)
   const resumedSlugRef = useRef<string | null>(savedState ? route.slug : null)
   const finishInProgressRef = useRef(false)
   const audioSessionGenerationRef = useRef(0)
+  const audioRouteSlugRef = useRef(route.slug)
   const saveOwnerRef = useRef(0)
   const saveNowRef = useRef<((allowProgressRollback?: boolean) => void) | null>(null)
   const prevGpsRef = useRef<GpsPosition | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
   const gpsFilterRef = useRef(createGpsFilter())
+
+  const setPendingPinSortOrder = useCallback((sortOrder: number | null) => {
+    pendingPinSortOrderRef.current = sortOrder
+    setPendingPinSortOrderState(sortOrder)
+  }, [])
 
   const polyline = route.polyline as LatLng[]
   const sortedPins = useMemo(
@@ -198,6 +213,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     () => enrichPinsWithLocalAudio(route.slug, sortedPins),
     [route.slug, sortedPins],
   )
+  const voicePinsRef = useRef(voicePins)
+  voicePinsRef.current = voicePins
   const pinsActive = voicePins.length > 0
   // Posted limit comes from the vehicle's real position on the route's road line (not from PIN proximity).
   // null (shown as "—") whenever the position is not inside a known zone.
@@ -205,14 +222,25 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const speedLimitRoad = useMemo(() => examRoadTrace(route.slug, voicePins), [route.slug, voicePins])
   speedLimitRoadRef.current = speedLimitRoad
   const speedLimitKmh = useMemo(
-    () => resolveSpeedLimit(route.slug, userPos, speedLimitRoad, speedRoadU),
-    [route.slug, userPos, speedLimitRoad, speedRoadU],
+    () =>
+      freshGpsRouteSlug === route.slug
+        ? resolveSpeedLimit(route.slug, userPos, speedLimitRoad, speedRoadU)
+        : null,
+    [freshGpsRouteSlug, route.slug, userPos, speedLimitRoad, speedRoadU],
   )
 
   useEffect(() => {
     speedRoadURef.current = null
     setSpeedRoadU(null)
+    setFreshGpsRouteSlug(null)
   }, [route.slug, speedLimitRoad])
+
+  const invalidateGpsFix = useCallback(() => {
+    setFreshGpsRouteSlug(null)
+    setRawPos(null)
+    // Hide the stale limit, but retain route progress to disambiguate a repeated road after GPS recovers.
+    setSpeedRoadU(null)
+  }, [])
 
   const updateSpeedRoadProgress = useCallback((pos: LatLng | null, reset = false) => {
     const road = speedLimitRoadRef.current
@@ -246,6 +274,19 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [phase, onPhaseChange])
 
   useEffect(() => {
+    if (audioRouteSlugRef.current !== route.slug) {
+      audioRouteSlugRef.current = route.slug
+      audioSessionGenerationRef.current++
+      audioEngine.stopAll()
+      if (audioRetryTimerRef.current !== null) {
+        clearTimeout(audioRetryTimerRef.current)
+        audioRetryTimerRef.current = null
+      }
+      audioAttemptInFlightRef.current = false
+      audioAttemptsRef.current.clear()
+      pinApproachRef.current.clear()
+      setPendingPinSortOrder(null)
+    }
     // ============================================================
     // Resume by slug so local-route-* → Supabase UUID does not drop the session.
     // Hydrate once per slug. Do not reset to preview. Do not call startSession().
@@ -260,9 +301,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       if (resumedSlugRef.current !== route.slug) {
         resumedSlugRef.current = route.slug
         triggeredRef.current = new Set(saved.triggeredPins)
+        setPendingPinSortOrder(saved.pendingPinSortOrder ?? null)
         sessionStartRef.current = examSessionOriginMs(saved)
         setExam(saved.exam)
         setExamSummary(null)
+        currentPositionRef.current = saved.userPos
         setUserPos(saved.userPos)
         updateSpeedRoadProgress(saved.userPos, true)
         setHeading(saved.heading)
@@ -310,6 +353,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setLastSpoken(null)
     triggeredRef.current = new Set()
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
+    setPendingPinSortOrder(null)
     resumePendingRef.current = false
     setRouteComplete(false)
     setNextPin(sortedPins[0] ?? null)
@@ -318,7 +362,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
     setHeading(0)
-  }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav])
+  }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav, setPendingPinSortOrder])
 
   // Local p2-/p3- ids and Supabase UUIDs share sort_order. Progress is kept by sort_order,
   // so a pin list swap re-derives the handled ids instead of dropping or guessing them.
@@ -348,6 +392,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       const pos = await requestGpsOnce({ allowCached: silent || hasGpsConsent() })
       const raw = gpsToLatLng(pos)
       setRawPos(pos)
+      setFreshGpsRouteSlug(route.slug)
+      currentPositionRef.current = raw
       setUserPos(raw)
       updateSpeedRoadProgress(raw)
       setHeading(resolveHeading(pos, null, raw, polyline))
@@ -357,6 +403,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       markGpsConsentGranted()
       return { position: raw, fix: pos, denied: false }
     } catch (err) {
+      invalidateGpsFix()
       const msg = err instanceof Error ? err.message : 'GPS შეცდომა'
       setGpsError(msg)
       if (msg.includes('უარყოფილი')) clearGpsConsent()
@@ -365,7 +412,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     } finally {
       if (!silent) setGpsStarting(false)
     }
-  }, [polyline, updateSpeedRoadProgress])
+  }, [polyline, route.slug, updateSpeedRoadProgress, invalidateGpsFix])
 
   useEffect(() => {
     if (gpsStarted || gpsStarting || getGpsEnvironmentIssue()) return
@@ -411,6 +458,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     return () => {
       releaseWake.current?.()
       audioSessionGenerationRef.current++
+      if (audioRetryTimerRef.current !== null) {
+        clearTimeout(audioRetryTimerRef.current)
+        audioRetryTimerRef.current = null
+      }
+      audioAttemptInFlightRef.current = false
       audioEngine.stopAll()
     }
   }, [])
@@ -469,11 +521,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           routeName: route.name_ka,
           phase: 'active',
           exam,
-          userPos,
+          userPos: currentPositionRef.current,
           heading,
           speedKmh,
           elapsedMs: liveElapsed,
           triggeredPins: Array.from(triggeredRef.current),
+          pendingPinSortOrder: pendingPinSortOrderRef.current,
           ...fieldTest,
           savedAt: Date.now(),
         },
@@ -530,9 +583,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         
         setRawPos(pos)
         setGpsError(null)
+        setFreshGpsRouteSlug(route.slug)
         const raw = filtered.position
         setUserPos(raw)
+        currentPositionRef.current = raw
         updateSpeedRoadProgress(raw)
+        const prevFix = prevGpsRef.current
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
         setHeading(resolveHeading(pos, prevRaw, raw, polyline))
         if (phase === 'active') {
@@ -572,6 +628,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         if (fieldTest && handledOrdersRef.current && totalPins > 0) {
           setRouteComplete(nextSortOrder(voicePins, handledOrdersRef.current).nextSortOrder === null)
         }
+        if (pendingPinSortOrderRef.current !== null) return
         
         // Log current state
         if (pending) {
@@ -605,16 +662,20 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         // აუდიო ყოველთვის ითამაშოს თუ routeAudio feature enabled-ია, view-ის მიუხედავად
         if (!pending || phase !== 'active' || !features.routeAudio) return
 
-        // First PIN is already announced by the ▶ start audio.
-        if (isStartPinAlreadyAnnounced(route.slug, pending.id)) {
-          triggeredRef.current.add(pending.id)
-          return
-        }
-
         // Audio trigger distance: AUDIO_TRIGGER_DISTANCE_M (20 m) — PIN detection above is unchanged.
         // Audio heading tolerance: AUDIO_HEADING_TOLERANCE_DEG (90°), skipped at very low speed.
         const pinPoint = (i: number): LatLng => [voicePins[i].lat, voicePins[i].lng]
         const dist = distanceToPinMeters(raw, pinPoint(nextPinIndex))
+
+        // A fix gap can hide the pass of the expected PIN between two fixes: record it as an approach
+        // so the existing "passed" catch-up plays the voice. Never selects or skips a PIN.
+        recordSegmentApproach(
+          pinApproachRef.current,
+          pending.id,
+          prevFix ? { lat: prevRaw![0], lng: prevRaw![1], t: prevFix.timestamp } : null,
+          { lat: raw[0], lng: raw[1], t: pos.timestamp },
+          pinPoint(nextPinIndex),
+        )
 
         const decision = decidePinAudio({
           pinIds: voicePins.map((p) => p.id),
@@ -636,15 +697,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
         if (!decision) return
 
-        // Routes 2/3 follow Tbilisi: never skip a pin, never mark it done without visiting it.
-        if (fieldTest && (decision.reason === 'lookahead' || decision.skipped.length > 0 || decision.index !== nextPinIndex)) {
-          return
-        }
-
-        // Missed PINs on routes 1/4: mark as passed, never speak a stale instruction.
-        if (!fieldTest) {
-          decision.skipped.forEach((i) => triggeredRef.current.add(voicePins[i].id))
-        }
+        // Every configured route follows the same strict order. A later pin can never
+        // replace the expected pin, even if GPS jumps or the driver approaches it first.
+        if (decision.skipped.length > 0 || decision.index !== nextPinIndex) return
 
         const target = voicePins[decision.index]
         devLog('[PIN SEQUENCE]',
@@ -653,64 +708,147 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           '| Audio:', target.instruction_ka,
           '| Progress:', (triggeredRef.current.size + 1) + '/' + totalPins,
         )
-        // Mark first (GPS fires every second) so the same PIN can never be spoken twice.
-        triggeredRef.current.add(target.id)
-        if (fieldTest) {
-          const orders = handledOrdersRef.current ?? new Set<number>()
-          orders.add(target.sort_order)
-          handledOrdersRef.current = orders
-          triggeredRef.current = pinIdsForOrders(pinsRef.current, orders)
-          const upcoming = nextSortOrder(pinsRef.current, orders).nextSortOrder
-          setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
-          setRouteComplete(pinsRef.current.length > 0 && upcoming === null)
-        }
-        setLastSpoken(target.instruction_ka)
+        // Reserve synchronously so duplicate GPS callbacks cannot queue this PIN twice.
+        // Progress is not committed until the audio element reports natural completion.
+        setPendingPinSortOrder(target.sort_order)
         saveNowRef.current?.()
-        const audioSessionGeneration = audioSessionGenerationRef.current
-        const restorePendingPin = () => {
-          if (
-            audioSessionGeneration !== audioSessionGenerationRef.current ||
-            phaseRef.current !== 'active' ||
-            finishInProgressRef.current
-          ) return
-          triggeredRef.current.delete(target.id)
-          const currentPin = pinsRef.current.find((pin) => pin.sort_order === target.sort_order)
-          if (currentPin) triggeredRef.current.delete(currentPin.id)
-          if (fieldTest && handledOrdersRef.current) {
-            handledOrdersRef.current.delete(target.sort_order)
-            triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrdersRef.current)
-            const upcoming = nextSortOrder(pinsRef.current, handledOrdersRef.current).nextSortOrder
-            setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
-            setRouteComplete(false)
-          } else {
-            setNextPin(voicePins.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
-          }
-          saveNowRef.current?.(true)
-        }
-        const handleAudioFailure = () => {
-          if (
-            audioSessionGeneration !== audioSessionGenerationRef.current ||
-            phaseRef.current !== 'active' ||
-            finishInProgressRef.current
-          ) return
-          // Original WAV failed: allow a few retries. Never fall back to browser TTS.
-          const key = route.slug + ':' + target.sort_order
-          const attempts = (audioAttemptsRef.current.get(key) ?? 0) + 1
-          audioAttemptsRef.current.set(key, attempts)
-          if (attempts < AUDIO_MAX_ATTEMPTS) {
-            restorePendingPin()
-          } else console.warn('[AUDIO] giving up on PIN voice after', attempts, 'attempts:', target.id)
-        }
-        void audioEngine.playDetailed(target.audio_url, target.id, target.instruction_ka, {
-          onFailure: handleAudioFailure,
-        }).then((status) => {
-          if (status === 'failed') handleAudioFailure()
-          else if (status === 'busy') restorePendingPin()
-        })
       },
-      (err) => setGpsError(formatGpsError(err)),
+      (err) => {
+        invalidateGpsFix()
+        setGpsError(formatGpsError(err))
+      },
     )
-  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline, updateSpeedRoadProgress])
+  }, [
+    gpsStarted,
+    voicePins,
+    phase,
+    route.slug,
+    features.routeAudio,
+    polyline,
+    updateSpeedRoadProgress,
+    invalidateGpsFix,
+  ])
+
+  useEffect(() => {
+    if (
+      phase !== 'active' ||
+      !features.routeAudio ||
+      pendingPinSortOrder === null ||
+      finishInProgressRef.current
+    ) return
+
+    const target = voicePins.find((pin) => pin.sort_order === pendingPinSortOrder)
+    if (!target) return
+    const generation = audioSessionGenerationRef.current
+
+    const isCurrent = () =>
+      generation === audioSessionGenerationRef.current &&
+      phaseRef.current === 'active' &&
+      !finishInProgressRef.current &&
+      pendingPinSortOrderRef.current === target.sort_order
+
+    const scheduleRetry = () => {
+      if (!isCurrent() || audioRetryTimerRef.current !== null) return
+      const key = `${route.slug}:${target.sort_order}`
+      const attempts = (audioAttemptsRef.current.get(key) ?? 0) + 1
+      audioAttemptsRef.current.set(key, attempts)
+      if (attempts === AUDIO_MAX_ATTEMPTS) {
+        console.warn('[AUDIO] PIN voice still pending after retries; keeping route progress on PIN', target.sort_order)
+      }
+      const delay = Math.min(AUDIO_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 3), AUDIO_RETRY_MAX_MS)
+      audioRetryTimerRef.current = window.setTimeout(() => {
+        audioRetryTimerRef.current = null
+        void attemptPlayback()
+      }, delay)
+    }
+
+    const completePin = () => {
+      if (!isCurrent()) return
+      audioAttemptInFlightRef.current = false
+      const currentPin = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order) ?? target
+
+      if (FIELD_TEST_SLUGS.has(route.slug)) {
+        const orders = handledOrdersRef.current ?? new Set<number>()
+        orders.add(currentPin.sort_order)
+        handledOrdersRef.current = orders
+        triggeredRef.current = pinIdsForOrders(pinsRef.current, orders)
+        const upcoming = nextSortOrder(pinsRef.current, orders).nextSortOrder
+        setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
+        setRouteComplete(pinsRef.current.length > 0 && upcoming === null)
+      } else {
+        triggeredRef.current.add(currentPin.id)
+        setNextPin(pinsRef.current.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
+      }
+
+      pinApproachRef.current.delete(currentPin.id)
+      audioAttemptsRef.current.delete(`${route.slug}:${currentPin.sort_order}`)
+      setLastSpoken(currentPin.instruction_ka)
+      setPendingPinSortOrder(null)
+      saveNowRef.current?.()
+    }
+
+    const attemptPlayback = async () => {
+      if (!isCurrent() || audioAttemptInFlightRef.current) return
+      if (audioEngine.isBusy()) {
+        scheduleRetry()
+        return
+      }
+
+      audioAttemptInFlightRef.current = true
+      let settled = false
+      const failed = () => {
+        if (settled) return
+        settled = true
+        audioAttemptInFlightRef.current = false
+        scheduleRetry()
+      }
+      const completed = () => {
+        if (settled) return
+        settled = true
+        completePin()
+      }
+
+      const currentTarget = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order)
+      if (!currentTarget) {
+        audioAttemptInFlightRef.current = false
+        return
+      }
+      const status = await audioEngine.playDetailed(
+        currentTarget.audio_url,
+        currentTarget.id,
+        currentTarget.instruction_ka,
+        { onEnded: completed, onFailure: failed },
+      )
+      if (status === 'failed' || status === 'busy' || status === 'cancelled') failed()
+      else if (status === 'duplicate') {
+        audioAttemptInFlightRef.current = false
+        scheduleRetry()
+      }
+    }
+
+    if (audioRetryTimerRef.current !== null) {
+      clearTimeout(audioRetryTimerRef.current)
+      audioRetryTimerRef.current = null
+    }
+    const resumePendingAudio = () => {
+      if (document.visibilityState !== 'visible' || audioAttemptInFlightRef.current) return
+      if (audioRetryTimerRef.current !== null) {
+        clearTimeout(audioRetryTimerRef.current)
+        audioRetryTimerRef.current = null
+      }
+      void attemptPlayback()
+    }
+    document.addEventListener('visibilitychange', resumePendingAudio)
+    void attemptPlayback()
+
+    return () => {
+      document.removeEventListener('visibilitychange', resumePendingAudio)
+      if (audioRetryTimerRef.current !== null) {
+        clearTimeout(audioRetryTimerRef.current)
+        audioRetryTimerRef.current = null
+      }
+    }
+  }, [pendingPinSortOrder, phase, features.routeAudio, route.slug, voicePins, setPendingPinSortOrder])
 
   const handleError = useCallback((errorId: string) => {
     setExam((prev) => recordExamError(prev, errorId, false))
@@ -720,36 +858,19 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setExam((prev) => recordSevereQuick(prev))
   }, [])
 
-  function startSession(fix: GpsPosition | null) {
+  function startSession() {
     audioSessionGenerationRef.current++
     audioEngine.stopAll()
+    if (audioRetryTimerRef.current !== null) {
+      clearTimeout(audioRetryTimerRef.current)
+      audioRetryTimerRef.current = null
+    }
+    audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
     triggeredRef.current = new Set()
     pinApproachRef.current = new Map()
     audioAttemptsRef.current = new Map()
-    const firstPin = voicePins[0]
-    if (firstPin && isStartPinAlreadyAnnounced(route.slug, firstPin.id)) {
-      triggeredRef.current.add(firstPin.id)
-    }
-    // New exam only. Resume never reaches here. A fallback or an ambiguous fix
-    // keeps the existing sequence from PIN 1; street lines and pin audio stay as they are.
-    if (fix && FIELD_TEST_SLUGS.has(route.slug) && voicePins.length > 0) {
-      const decision = chooseStartPin(
-        voicePins,
-        {
-          position: [fix.lat, fix.lng],
-          accuracyM: fix.accuracy,
-          headingDeg: fix.heading,
-          speedMps: fix.speed,
-        },
-        examRoadTrace(route.slug, voicePins),
-      )
-      if (decision.kind === 'start') {
-        for (const pin of voicePins) {
-          if (pin.sort_order < decision.sortOrder) triggeredRef.current.add(pin.id)
-        }
-      }
-    }
+    setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       handledOrdersRef.current = new Set(
         voicePins.filter((pin) => triggeredRef.current.has(pin.id)).map((pin) => pin.sort_order),
@@ -815,7 +936,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     // No saved state - this is a NEW session. Resume returned above.
     const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
     if (gpsResult.denied) return
-    startSession(gpsResult.fix)
+    startSession()
   }
 
   function fieldTestProgressFields() {
@@ -850,11 +971,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       routeName: route.name_ka,
       phase: 'active',
       exam,
-      userPos,
+      userPos: currentPositionRef.current,
       heading,
       speedKmh,
       elapsedMs: liveElapsed,
       triggeredPins: Array.from(triggeredRef.current),
+      pendingPinSortOrder: pendingPinSortOrderRef.current,
       ...(FIELD_TEST_SLUGS.has(route.slug) ? fieldTestProgressFields() : {}),
       savedAt: Date.now(),
     })
@@ -871,8 +993,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   function applySavedProgress(saved: SavedExamState) {
     triggeredRef.current = new Set(saved.triggeredPins)
+    setPendingPinSortOrder(saved.pendingPinSortOrder ?? null)
     sessionStartRef.current = examSessionOriginMs(saved)
     setExam(saved.exam)
+    currentPositionRef.current = saved.userPos
     setUserPos(saved.userPos)
     updateSpeedRoadProgress(saved.userPos, true)
     setHeading(saved.heading)
@@ -898,6 +1022,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   function finishSession() {
     audioSessionGenerationRef.current++
     finishInProgressRef.current = true
+    if (audioRetryTimerRef.current !== null) {
+      clearTimeout(audioRetryTimerRef.current)
+      audioRetryTimerRef.current = null
+    }
+    audioAttemptInFlightRef.current = false
     setRouteComplete(false)
     // Mid-route stop must keep progress so a later start resumes (even from the agency GPS).
     // Only a fully handled route (or non-field-test) clears — same as explicit თავიდან.
@@ -906,7 +1035,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       persistActiveExamNow()
       setSummaryCanContinue(true)
     } else {
-      clearActiveExam()
+      clearActiveExam(route.id, route.slug, route.name_ka)
       setSummaryCanContinue(false)
     }
     setSavedEpoch((v) => v + 1)
@@ -921,6 +1050,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function continueFromSummary() {
+    audioEngine.unlock()
     const saved = loadActiveExam(route.id, route.slug, route.name_ka)
     if (!saved) {
       restartPreview()
@@ -946,6 +1076,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     triggeredRef.current = new Set()
     pinApproachRef.current = new Map()
     audioAttemptsRef.current = new Map()
+    setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
     resumedSlugRef.current = null
     resumePendingRef.current = false
@@ -954,7 +1085,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setLastSpoken(null)
     setElapsedMs(0)
     sessionStartRef.current = 0
-    clearActiveExam() // Clear saved state when restarting
+    clearActiveExam(route.id, route.slug, route.name_ka) // Clear this route's saved state when restarting
     setSavedEpoch((v) => v + 1)
   }
 

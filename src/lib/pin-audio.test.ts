@@ -4,7 +4,14 @@ import {
   AUDIO_TRIGGER_DISTANCE_M,
   audioHeadingOk,
   decidePinAudio,
+  recordSegmentApproach,
+  segmentApproachMeters,
+  AUDIO_SEGMENT_MAX_GAP_MS,
+  AUDIO_SEGMENT_MAX_LENGTH_M,
+  AUDIO_SEGMENT_MAX_SPEED_MPS,
+  AUDIO_SEGMENT_NEAR_M,
   type PinAudioDecision,
+  type TimedFix,
 } from './pin-audio.ts'
 
 type Fix = { dists: number[]; ok?: boolean[] }
@@ -72,15 +79,14 @@ describe('PinAudio', () => {
     expect(r.step({ dists: [105, 190] })?.reason).toBe('passed')
   })
 
-  it('lookahead: GPS jumped to the following PIN → it plays, the missed one is passed silently', () => {
+  it('does not play or mark a later PIN when the expected PIN was missed', () => {
     const r = makeRunner(['a', 'b', 'c'])
     r.step({ dists: [50, 130, 400] })
     const d = r.step({ dists: [70, 8, 300] })
-    expect(d?.reason).toBe('lookahead')
-    expect(d?.index).toBe(1)
-    expect(d?.skipped).toEqual([0])
-    expect(r.played).toEqual(['b'])
-    expect(r.triggered.has('a')).toBe(true) // 'missed PIN must not block the sequence'
+    expect(d).toBeNull()
+    expect(r.played).toEqual([])
+    expect(r.triggered.has('a')).toBe(false)
+    expect(r.triggered.has('b')).toBe(false)
   })
 
   it('no skipping when the expected PIN was never approached (loops / overlapping streets)', () => {
@@ -88,12 +94,6 @@ describe('PinAudio', () => {
     expect(r.step({ dists: [500, 600, 10] })).toBe(null)
     expect(r.step({ dists: [500, 5, 400] })).toBe(null)
     expect(r.played).toEqual([])
-  })
-
-  it('lookahead is limited to the next 2 PINs', () => {
-    const r = makeRunner(['a', 'b', 'c', 'd'])
-    r.step({ dists: [50, 400, 400, 400] })
-    expect(r.step({ dists: [90, 400, 400, 5] })).toBe(null)
   })
 
   it('busy defers playback but not tracking; nothing is lost afterwards', () => {
@@ -141,5 +141,170 @@ describe('PinAudio', () => {
       }
       expect(r.played).toEqual(ids) // 'run ' + run
     }
+  })
+})
+
+describe('segment approach (GPS gap between two fixes)', () => {
+  const LAT0 = 41.93
+  const LNG0 = 45.47
+  const M_LAT = 110540
+  const M_LNG = 111320 * Math.cos((LAT0 * Math.PI) / 180)
+  const at = (east: number, north: number, t: number): TimedFix => ({ lat: LAT0 + north / M_LAT, lng: LNG0 + east / M_LNG, t })
+  const pinAt = (east: number, north: number): [number, number] => [LAT0 + north / M_LAT, LNG0 + east / M_LNG]
+  const distM = (a: TimedFix, p: readonly [number, number]) =>
+    Math.hypot((a.lng - p[1]) * M_LNG, (a.lat - p[0]) * M_LAT)
+
+  it('constants: 60 s gap, 1000 m length, 25 m closeness', () => {
+    expect(AUDIO_SEGMENT_MAX_GAP_MS).toBe(60000)
+    expect(AUDIO_SEGMENT_MAX_LENGTH_M).toBe(1000)
+    expect(AUDIO_SEGMENT_NEAR_M).toBe(25)
+  })
+
+  it('movement passing right over the PIN between two fixes is detected', () => {
+    const d = segmentApproachMeters(at(-80, 0, 0), at(80, 0, 10000), pinAt(0, 6))
+    expect(d).not.toBeNull()
+    expect(d!).toBeCloseTo(6, 0)
+  })
+
+  it('recovers the expected PIN after a plausible 30-second GPS outage', () => {
+    const d = segmentApproachMeters(at(-100, 0, 0), at(100, 0, 30000), pinAt(0, 5))
+    expect(d).not.toBeNull()
+    expect(d!).toBeCloseTo(5, 0)
+  })
+
+  it('GPS gap: PIN passed unseen between two fixes → the existing passed rule plays it once, late', () => {
+    const pin = pinAt(0, 5)
+    const next = pinAt(400, 0)
+    const ids = ['a', 'b']
+    const triggered = new Set<string>()
+    const minDist = new Map<string, number>()
+    const fixes = [at(-200, 0, 0), at(-120, 0, 10000), at(120, 0, 20000), at(160, 0, 21000), at(200, 0, 22000)]
+    const played: string[] = []
+    let prev: TimedFix | null = null
+    for (const f of fixes) {
+      const nextIdx = ids.findIndex((id) => !triggered.has(id))
+      if (nextIdx >= 0) recordSegmentApproach(minDist, ids[nextIdx], prev, f, nextIdx === 0 ? pin : next)
+      const d = decidePinAudio({
+        pinIds: ids,
+        triggered,
+        distanceTo: (i) => distM(f, i === 0 ? pin : next),
+        headingOkAt: () => true,
+        minDist,
+      })
+      if (d) {
+        triggered.add(ids[d.index])
+        played.push(ids[d.index])
+      }
+      prev = f
+    }
+    expect(played).toEqual(['a'])
+  })
+
+  it('without the segment record the same gap leaves the PIN unplayed (baseline)', () => {
+    const pin = pinAt(0, 5)
+    const minDist = new Map<string, number>()
+    const triggered = new Set<string>()
+    for (const f of [at(-200, 0, 0), at(-120, 0, 10000), at(120, 0, 20000), at(160, 0, 21000)]) {
+      const d = decidePinAudio({
+        pinIds: ['a', 'b'],
+        triggered,
+        distanceTo: (i) => (i === 0 ? distM(f, pin) : 9999),
+        headingOkAt: () => true,
+        minDist,
+      })
+      expect(d).toBeNull()
+    }
+  })
+
+  it('opposite direction: PIN behind the start of the movement is not an approach', () => {
+    expect(segmentApproachMeters(at(10, 0, 0), at(110, 0, 8000), pinAt(-5, 2))).toBeNull()
+    expect(segmentApproachMeters(at(80, 0, 0), at(-80, 0, 10000), pinAt(100, 3))).toBeNull()
+  })
+
+  it('PIN on another road (more than 25 m beside the movement) is not an approach', () => {
+    expect(segmentApproachMeters(at(-80, 0, 0), at(80, 0, 10000), pinAt(0, 40))).toBeNull()
+    expect(segmentApproachMeters(at(-80, 0, 0), at(80, 0, 10000), pinAt(0, -26))).toBeNull()
+  })
+
+  it('movement over 1000 m is not trusted', () => {
+    expect(segmentApproachMeters(at(-600, 0, 0), at(600, 0, 60000), pinAt(0, 3))).toBeNull()
+    expect(segmentApproachMeters(at(-400, 0, 0), at(400, 0, 60000), pinAt(0, 3))).not.toBeNull()
+  })
+
+  it('GPS jump (implied speed above 40 m/s) is not a drive and not an approach', () => {
+    expect(segmentApproachMeters(at(-100, 0, 0), at(100, 0, 1000), pinAt(0, 3))).toBeNull()
+    expect(segmentApproachMeters(at(-100, 0, 0), at(100, 0, 5000), pinAt(0, 3))).not.toBeNull()
+    expect(AUDIO_SEGMENT_MAX_SPEED_MPS).toBe(40)
+  })
+
+  it('long fix gap (over 60 s), equal or reversed timestamps, and zero movement are not trusted', () => {
+    expect(segmentApproachMeters(at(-80, 0, 0), at(80, 0, 60001), pinAt(0, 3))).toBeNull()
+    expect(segmentApproachMeters(at(-80, 0, 0), at(80, 0, 60000), pinAt(0, 3))).not.toBeNull()
+    expect(segmentApproachMeters(at(-80, 0, 5000), at(80, 0, 5000), pinAt(0, 3))).toBeNull()
+    expect(segmentApproachMeters(at(-80, 0, 9000), at(80, 0, 1000), pinAt(0, 3))).toBeNull()
+    expect(segmentApproachMeters(at(0, 0, 0), at(0, 0, 5000), pinAt(0, 3))).toBeNull()
+  })
+
+  it('first fix (no previous) records nothing; duplicate records keep only the closest value', () => {
+    const m = new Map<string, number>()
+    recordSegmentApproach(m, 'a', null, at(0, 0, 0), pinAt(0, 3))
+    expect(m.size).toBe(0)
+    recordSegmentApproach(m, 'a', at(-80, 0, 0), at(80, 0, 10000), pinAt(0, 12))
+    recordSegmentApproach(m, 'a', at(-80, 0, 0), at(80, 0, 10000), pinAt(0, 12))
+    recordSegmentApproach(m, 'a', at(-80, 0, 0), at(80, 0, 10000), pinAt(0, 20))
+    expect(m.get('a')).toBeCloseTo(12, 0)
+  })
+
+  it('the record never touches other PINs: only the expected PIN id is written', () => {
+    const m = new Map<string, number>()
+    recordSegmentApproach(m, 'expected', at(-80, 0, 0), at(80, 0, 10000), pinAt(0, 4))
+    expect([...m.keys()]).toEqual(['expected'])
+  })
+
+  it('order and no duplicates: a drive with a mid-route gap plays every PIN once, in order, no lookahead', () => {
+    const xs = [100, 300, 500, 700, 900]
+    const pins = xs.map((x) => pinAt(x, 3))
+    const ids = xs.map((_, i) => 'p' + i)
+    const triggered = new Set<string>()
+    const minDist = new Map<string, number>()
+    const played: { id: string; reason: string }[] = []
+    let prev: TimedFix | null = null
+    let t = 0
+    // 1 s fixes at 20 m/s, but x in (260, 500) is a GPS blackout (240 m, 12 s) that hides p1 at 300
+    for (let x = 0; x <= 1100; x += 20) {
+      t += 1000
+      if (x > 260 && x < 500) continue
+      const f = at(x, 0, t)
+      const nextIdx = ids.findIndex((id) => !triggered.has(id))
+      if (nextIdx >= 0) recordSegmentApproach(minDist, ids[nextIdx], prev, f, pins[nextIdx])
+      const d = decidePinAudio({
+        pinIds: ids,
+        triggered,
+        distanceTo: (i) => distM(f, pins[i]),
+        headingOkAt: () => true,
+        minDist,
+      })
+      if (d) {
+        expect(d.reason).not.toBe('lookahead')
+        expect(d.skipped).toEqual([])
+        triggered.add(ids[d.index])
+        played.push({ id: ids[d.index], reason: d.reason })
+      }
+      prev = f
+    }
+    expect(played.map((p) => p.id)).toEqual(ids)
+  })
+
+  it('busy audio: a pass recorded during playback is played afterwards, still in order', () => {
+    const pin = pinAt(0, 4)
+    const minDist = new Map<string, number>()
+    const triggered = new Set<string>()
+    recordSegmentApproach(minDist, 'a', at(-60, 0, 0), at(60, 0, 9000), pin)
+    const fix = at(60, 0, 9000)
+    const base = { pinIds: ['a', 'b'], triggered, distanceTo: (i: number) => (i === 0 ? distM(fix, pin) : 9999), headingOkAt: () => true, minDist }
+    expect(decidePinAudio({ ...base, busy: true })).toBeNull()
+    const d = decidePinAudio({ ...base, busy: false })
+    expect(d?.index).toBe(0)
+    expect(d?.reason).toBe('passed')
   })
 })

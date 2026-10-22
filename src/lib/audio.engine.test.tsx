@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { safeVoiceGain } from './audio-normalization'
 
 /**
  * AudioEngine: original WAV only at 1.0x speed — never browser TTS.
@@ -31,6 +32,7 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
 
   const sources: unknown[] = []
   const gains: FakeNode[] = []
+  const compressors: FakeNode[] = []
   const filters: FakeNode[] = []
   const resume = vi.fn(() => (ctxState === 'running' ? Promise.resolve() : new Promise<void>(() => {})))
   class FakeNode {
@@ -62,7 +64,11 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
       filters.push(n)
       return n
     }
-    createDynamicsCompressor = () => new FakeNode()
+    createDynamicsCompressor = () => {
+      const n = new FakeNode()
+      compressors.push(n)
+      return n
+    }
     createMediaElementSource = () => {
       const n = new FakeNode()
       sources.push(n)
@@ -85,7 +91,7 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
     configurable: true,
     value: { speak, cancel: vi.fn(), getVoices: () => [], addEventListener: vi.fn() },
   })
-  return { created, sources, gains, filters, resume, speak }
+  return { created, sources, gains, compressors, filters, resume, speak }
 }
 
 async function freshEngine() {
@@ -104,7 +110,7 @@ describe('AudioEngine', () => {
     vi.restoreAllMocks()
   })
 
-  it('plays the WAV at 1.0x with pitch preserved, media volume 1, and gain 1.5', async () => {
+  it('preserves WAV tempo and pitch while configuring fallback gain without compression', async () => {
     const f = installFakes()
     const engine = await freshEngine()
     expect(await engine.playDetailed('/audio/points/a.wav', 'p1', 'text')).toBe('played')
@@ -113,7 +119,8 @@ describe('AudioEngine', () => {
     expect(f.created[0].playbackRate).toBe(1)
     expect(f.created[0].preservesPitch).toBe(true)
     expect(f.gains).toHaveLength(1)
-    expect(f.gains[0].gain.value).toBe(1.5)
+    expect(f.gains[0].gain.value).toBe(2)
+    expect(f.compressors).toHaveLength(0)
     expect(f.filters).toHaveLength(0)
     expect(f.sources).toHaveLength(1)
     expect(f.speak).not.toHaveBeenCalled()
@@ -132,7 +139,7 @@ describe('AudioEngine', () => {
     expect(f.speak).not.toHaveBeenCalled()
   })
 
-  it('uses one 1.5 gain for every voice and does not open the EQ graph', async () => {
+  it('uses one 2x gain and peak compressor for every voice without opening the EQ graph', async () => {
     const f = installFakes()
     const ctorSpy = vi.fn()
     const Base = (globalThis as unknown as { AudioContext: new () => object }).AudioContext
@@ -157,7 +164,32 @@ describe('AudioEngine', () => {
     }
     expect(ctorSpy).toHaveBeenCalledTimes(1)
     expect(f.created.every((audio) => audio.playbackRate === 1)).toBe(true)
+    expect(f.compressors).toHaveLength(0)
     expect(f.speak).not.toHaveBeenCalled()
+  })
+
+  it('applies the safe per-file 2x gain without overlapping or replaying audio', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    const quietUrl = '/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav'
+    const loudUrl = '/audio/points/300 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ.wav'
+    const expectedQuietGain = safeVoiceGain(quietUrl, 2)
+    const expectedLoudGain = safeVoiceGain(loudUrl, 2)
+    const onEnded = vi.fn()
+    engine.setVolume(0.5)
+
+    expect(await engine.playDetailed(quietUrl, 'quiet-pin', 'text', { onEnded })).toBe('played')
+    expect(f.gains[0].gain.value).toBeCloseTo(expectedQuietGain)
+    expect(f.created[0].volume).toBe(0.5)
+    expect(await engine.playDetailed(loudUrl, 'next-pin', 'text')).toBe('busy')
+    expect(f.created).toHaveLength(1)
+    f.created[0].onended?.()
+    expect(onEnded).toHaveBeenCalledTimes(1)
+
+    expect(await engine.playDetailed(loudUrl, 'next-pin', 'text')).toBe('played')
+    expect(f.gains[0].gain.value).toBeCloseTo(expectedLoudGain)
+    expect(f.created).toHaveLength(2)
+    expect(f.created.every((audio) => audio.playbackRate === 1)).toBe(true)
   })
 
   it('autoplay blocked → failed with diagnostic; TTS is never used', async () => {
@@ -208,6 +240,20 @@ describe('AudioEngine', () => {
     expect(engine.isBusy()).toBe(true)
     f.created[0].onended?.()
     expect(engine.isBusy()).toBe(false)
+  })
+
+  it('reports natural audio completion once, without treating playback start as completion', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    const onEnded = vi.fn()
+
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't', { onEnded })).toBe('played')
+    expect(onEnded).not.toHaveBeenCalled()
+
+    f.created[0].onended?.()
+    f.created[0].onended?.()
+
+    expect(onEnded).toHaveBeenCalledTimes(1)
   })
 
   it('after a voice ends, the next PIN instruction can play', async () => {
@@ -317,9 +363,9 @@ describe('AudioEngine', () => {
     expect(f2.speak).not.toHaveBeenCalled()
   })
 
-  it('keeps 1.5 gain while preserving media volume and playback rate', async () => {
+  it('keeps 2x gain while preserving media volume and playback rate', async () => {
     const mod = await import('./audio')
-    expect(mod.VOICE_GAIN).toBe(1.5)
+    expect(mod.VOICE_GAIN).toBe(2)
     expect(mod.VOICE_VOLUME).toBe(1)
     expect(mod.VOICE_PLAYBACK_RATE).toBe(1)
   })

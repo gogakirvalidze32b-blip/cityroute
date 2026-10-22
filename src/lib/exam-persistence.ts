@@ -19,17 +19,27 @@ export type SavedExamState = {
   triggeredPins: string[]
   /** Handled pins by sort_order. Survives local `p2-*` ids versus Supabase UUIDs. */
   triggeredSortOrders?: number[]
+  /** The instruction that was selected but whose audio has not ended yet. */
+  pendingPinSortOrder?: number | null
   lastPassedSortOrder?: number | null
   nextSortOrder?: number | null
   savedAt: number
 }
 
 const STORAGE_KEY = 'cityroute-active-exam'
+const ROUTE_STORAGE_PREFIX = `${STORAGE_KEY}:`
 const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 საათი
 
-function readSavedExam(): SavedExamState | null {
+function routeStorageKeys(routeId: string, routeSlug?: string): string[] {
+  const keys = [routeSlug, routeId]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => `${ROUTE_STORAGE_PREFIX}${encodeURIComponent(value)}`)
+  return [...new Set(keys)]
+}
+
+function readSavedExam(storageKey = STORAGE_KEY): SavedExamState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(storageKey)
     if (!raw) return null
 
     const state = JSON.parse(raw) as SavedExamState
@@ -37,7 +47,7 @@ function readSavedExam(): SavedExamState | null {
     const age = Date.now() - state.savedAt
     if (age > MAX_AGE_MS) {
       console.log('🗑️ Saved exam expired (24h+), clearing')
-      clearActiveExam()
+      localStorage.removeItem(storageKey)
       return null
     }
 
@@ -46,6 +56,20 @@ function readSavedExam(): SavedExamState | null {
     console.error('Failed to load exam state:', err)
     return null
   }
+}
+
+function readSavedExamForRoute(
+  routeId: string,
+  routeSlug?: string,
+  routeName?: string,
+): SavedExamState | null {
+  for (const key of routeStorageKeys(routeId, routeSlug)) {
+    const state = readSavedExam(key)
+    if (state && matchesRoute(state, routeId, routeSlug, routeName)) return state
+  }
+
+  const legacyState = readSavedExam()
+  return legacyState && matchesRoute(legacyState, routeId, routeSlug, routeName) ? legacyState : null
 }
 
 function matchesRoute(
@@ -73,22 +97,27 @@ function orderCount(state: SavedExamState): number {
 
 /**
  * Keep the richer sort-order progress when a later write is empty or older.
- * A different route still replaces the single active-exam slot.
+ * Each route is persisted independently; the legacy slot remains the most recently saved route.
  */
 export function mergeExamSave(previous: SavedExamState | null, incoming: SavedExamState): SavedExamState {
   if (!previous || !sameRoute(previous, incoming)) return incoming
   const prevCount = orderCount(previous)
   const nextCount = orderCount(incoming)
+  const mergePendingPin = (state: SavedExamState): SavedExamState => {
+    if ('pendingPinSortOrder' in incoming) return state
+    if (!('pendingPinSortOrder' in previous)) return state
+    return { ...state, pendingPinSortOrder: previous.pendingPinSortOrder }
+  }
   if (prevCount > 0 && nextCount === 0) {
-    return {
+    return mergePendingPin({
       ...incoming,
       triggeredSortOrders: previous.triggeredSortOrders,
       lastPassedSortOrder: previous.lastPassedSortOrder ?? incoming.lastPassedSortOrder,
       nextSortOrder: previous.nextSortOrder ?? incoming.nextSortOrder,
-    }
+    })
   }
   if (prevCount > nextCount) return previous
-  return incoming
+  return mergePendingPin(incoming)
 }
 
 /**
@@ -99,9 +128,20 @@ export function saveActiveExam(
   options: { allowProgressRollback?: boolean } = {},
 ): void {
   try {
-    const previous = readSavedExam()
     const incoming = { ...state, savedAt: Date.now() }
+    const routeKey = routeStorageKeys(incoming.routeId, incoming.routeSlug)[0]
+    const legacyState = readSavedExam()
+    if (legacyState && !sameRoute(legacyState, incoming)) {
+      const legacyRouteKey = routeStorageKeys(legacyState.routeId, legacyState.routeSlug)[0]
+      if (!readSavedExam(legacyRouteKey)) {
+        localStorage.setItem(legacyRouteKey, JSON.stringify(legacyState))
+      }
+    }
+    const previous =
+      readSavedExamForRoute(incoming.routeId, incoming.routeSlug, incoming.routeName) ??
+      (legacyState && sameRoute(legacyState, incoming) ? legacyState : null)
     const merged = options.allowProgressRollback ? incoming : mergeExamSave(previous, incoming)
+    localStorage.setItem(routeKey, JSON.stringify(merged))
     localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
     console.log('💾 Exam state saved:', merged.routeName, merged.routeSlug ?? merged.routeId)
   } catch (err) {
@@ -118,13 +158,8 @@ export function loadActiveExam(
   routeSlug?: string,
   routeName?: string,
 ): SavedExamState | null {
-  const state = readSavedExam()
+  const state = readSavedExamForRoute(routeId, routeSlug, routeName)
   if (!state) return null
-
-  if (!matchesRoute(state, routeId, routeSlug, routeName)) {
-    console.log('⚠️ Saved exam is for a different route')
-    return null
-  }
 
   const age = Date.now() - state.savedAt
   console.log('✅ Loaded saved exam state:', state.routeName, `(${Math.round(age / 60000)}m ago)`)
@@ -136,19 +171,31 @@ export function loadActiveExam(
  * Used before Supabase ids are available (RoutePage first paint).
  */
 export function hasSavedExamForSlug(routeSlug: string, routeName?: string): boolean {
-  const state = readSavedExam()
+  const state = readSavedExam(`${ROUTE_STORAGE_PREFIX}${encodeURIComponent(routeSlug)}`) ?? readSavedExam()
   if (!state) return false
   if (state.routeSlug) return state.routeSlug === routeSlug
   return !!routeName && state.routeName === routeName
 }
 
 /**
- * Clear saved exam state
+ * Clear one route's saved exam, or all saved exams when called without a route.
  */
-export function clearActiveExam(): void {
+export function clearActiveExam(routeId?: string, routeSlug?: string, routeName?: string): void {
   try {
-    localStorage.removeItem(STORAGE_KEY)
-    console.log('🗑️ Cleared saved exam state')
+    if (!routeId && !routeSlug) {
+      const keys = Object.keys(localStorage).filter(
+        (key) => key === STORAGE_KEY || key.startsWith(ROUTE_STORAGE_PREFIX),
+      )
+      keys.forEach((key) => localStorage.removeItem(key))
+    } else {
+      const id = routeId ?? routeSlug!
+      routeStorageKeys(id, routeSlug).forEach((key) => localStorage.removeItem(key))
+      const legacyState = readSavedExam()
+      if (legacyState && matchesRoute(legacyState, id, routeSlug, routeName)) {
+        localStorage.removeItem(STORAGE_KEY)
+      }
+    }
+    console.log('🗑️ Cleared saved exam state', routeSlug ?? routeId ?? '')
   } catch (err) {
     console.error('Failed to clear exam state:', err)
   }

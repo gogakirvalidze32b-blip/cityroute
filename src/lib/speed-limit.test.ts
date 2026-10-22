@@ -390,6 +390,16 @@ describe('loop-closure GPS start resolves to road start', () => {
 })
 
 describe('driver-verified pin limits after GPS → roadU', () => {
+  it('R2 pin #12 = 60 km/h', () => {
+    const { road, pins } = DATA['route-2']
+    const pin = pins.find((p) => p.sort_order === 12)!
+    const pos: LatLng = [pin.lat, pin.lng]
+    const u = previewRoadU(road, pins, 12)
+    expect(u).toBeGreaterThan(80)
+    expect(u).toBeLessThan(105)
+    expect(resolveSpeedLimit('route-2', pos, road, u)).toBe(60)
+  })
+
   it('R2 pins #17-22 = 40 km/h', () => {
     const { road, pins } = DATA['route-2']
     for (const n of [17, 18, 19, 20, 21, 22]) {
