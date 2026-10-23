@@ -23,6 +23,10 @@ describe('route PIN progress is independent from the active session', () => {
       saveRoutePinProgress(slug, orders)
       const restored = loadRoutePinProgress(slug)
       expect(restored).toEqual(orders)
+      saveRoutePinProgress(slug, [])
+      expect(loadRoutePinProgress(slug)).toEqual(orders)
+      saveRoutePinProgress(slug, orders.slice(0, Math.floor(completed / 2)))
+      expect(loadRoutePinProgress(slug)).toEqual(orders)
       expect(nextSortOrder(pins, new Set(restored ?? [])).nextSortOrder).toBe(
         completed < pins.length ? completed + 1 : null,
       )

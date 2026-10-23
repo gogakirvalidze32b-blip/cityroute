@@ -29,11 +29,13 @@ export function loadRoutePinProgress(routeSlug: string): number[] | null {
 }
 
 export function saveRoutePinProgress(routeSlug: string, orders: Iterable<number>): void {
-  const sorted = [...new Set(orders)].sort((a, b) => a - b)
-  if (!validOrders(sorted)) {
+  const incoming = [...new Set(orders)].sort((a, b) => a - b)
+  if (!validOrders(incoming)) {
     console.error('Failed to save route PIN progress: invalid PIN order', routeSlug)
     return
   }
+  const sorted = [...new Set([...(loadRoutePinProgress(routeSlug) ?? []), ...incoming])]
+    .sort((a, b) => a - b)
   try {
     localStorage.setItem(storageKey(routeSlug), JSON.stringify(sorted))
   } catch (err) {

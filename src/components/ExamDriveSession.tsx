@@ -88,6 +88,31 @@ function initialHandledOrders(
   const orders = savedHandledOrders(saved, pins, routeSlug)
   return orders === 'invalid' ? null : orders
 }
+function mostAdvancedPinProgress(
+  pins: readonly PinRow[],
+  ...candidates: Array<Iterable<number> | null | undefined>
+): Set<number> {
+  const orderedPins = [...pins].sort((a, b) => a.sort_order - b.sort_order)
+  let best: number[] = []
+
+  for (const candidate of candidates) {
+    const orders = new Set(candidate ?? [])
+    if (orderedPins.length === 0) {
+      const saved = [...orders].filter((order) => Number.isInteger(order) && order > 0).sort((a, b) => a - b)
+      if (saved.length > best.length) best = saved
+      continue
+    }
+
+    const prefix: number[] = []
+    for (const pin of orderedPins) {
+      if (!orders.has(pin.sort_order)) break
+      prefix.push(pin.sort_order)
+    }
+    if (prefix.length > best.length) best = prefix
+  }
+
+  return new Set(best)
+}
 
 /** Only the newest mounted session may write on pagehide / unmount. */
 let examSaveOwner = 0
@@ -170,14 +195,21 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   const finishRouteSlugRef = useRef<string | null>(null)
   const [initialRoutePinProgress] = useState(() => loadRoutePinProgress(route.slug) ?? [])
-  const initialProgressOrders = savedState
-    ? initialHandledOrders(savedState, route.pins, route.slug) ?? new Set(initialRoutePinProgress)
-    : new Set(initialRoutePinProgress)
-  const triggeredRef = useRef<Set<string>>(
-    savedState
-      ? new Set(savedState.triggeredPins)
-      : pinIdsForOrders(route.pins, initialProgressOrders),
+  const savedProgressOrders = savedState
+    ? initialHandledOrders(savedState, route.pins, route.slug)
+    : null
+  const initialProgressOrders = mostAdvancedPinProgress(
+    route.pins,
+    initialRoutePinProgress,
+    savedProgressOrders,
   )
+  const initialTriggeredPinIds = new Set(
+    savedProgressOrders === null ? savedState?.triggeredPins ?? [] : [],
+  )
+  for (const id of pinIdsForOrders(route.pins, initialProgressOrders)) {
+    initialTriggeredPinIds.add(id)
+  }
+  const triggeredRef = useRef<Set<string>>(initialTriggeredPinIds)
   /** Routes 2/3: handled pins by sort_order (Tbilisi resume). Null until a save can be placed. */
   const handledOrdersRef = useRef<Set<number> | null>(
     FIELD_TEST_SLUGS.has(route.slug)
@@ -334,12 +366,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           if (resolution.status === 'resume') {
             resumePendingRef.current = resolution.handledOrders === null
             if (resolution.handledOrders) {
-              const storedOrders = loadRoutePinProgress(route.slug)
-              const orders =
-                storedOrders && storedOrders.length > resolution.handledOrders.length
-                  ? storedOrders
-                  : resolution.handledOrders
-              saveRoutePinProgress(route.slug, orders)
+              const orders = persistMostAdvancedPinProgress(resolution.handledOrders)
               handledOrdersRef.current = new Set(orders)
               triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
               const progress = nextSortOrder(sortedPins, handledOrdersRef.current)
@@ -791,17 +818,18 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       if (FIELD_TEST_SLUGS.has(route.slug)) {
         const orders = handledOrdersRef.current ?? new Set<number>()
         orders.add(currentPin.sort_order)
-        handledOrdersRef.current = orders
-        triggeredRef.current = pinIdsForOrders(pinsRef.current, orders)
-        const upcoming = nextSortOrder(pinsRef.current, orders).nextSortOrder
+        const progressOrders = persistMostAdvancedPinProgress(orders)
+        handledOrdersRef.current = progressOrders
+        triggeredRef.current = pinIdsForOrders(pinsRef.current, progressOrders)
+        const upcoming = nextSortOrder(pinsRef.current, progressOrders).nextSortOrder
         setNextPin(pinsRef.current.find((pin) => pin.sort_order === upcoming) ?? null)
         setRouteComplete(pinsRef.current.length > 0 && upcoming === null)
       } else {
         triggeredRef.current.add(currentPin.id)
         setNextPin(pinsRef.current.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
+        persistMostAdvancedPinProgress(getHandledPinOrders())
       }
 
-      saveRoutePinProgress(route.slug, getHandledPinOrders())
       pinApproachRef.current.delete(currentPin.id)
       audioAttemptsRef.current.delete(`${route.slug}:${currentPin.sort_order}`)
       setLastSpoken(currentPin.instruction_ka)
@@ -889,11 +917,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
-    const activeOrders = getHandledPinOrders()
-    const storedOrders = loadRoutePinProgress(route.slug)
-    const handledOrders =
-      storedOrders && storedOrders.length > activeOrders.length ? storedOrders : activeOrders
-    saveRoutePinProgress(route.slug, handledOrders)
+    const handledOrders = persistMostAdvancedPinProgress(getHandledPinOrders())
     const handled = new Set(handledOrders)
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
@@ -945,10 +969,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       if (FIELD_TEST_SLUGS.has(route.slug)) {
         const resolution = resolveExamResume(savedState, voicePins, route.slug)
         if (resolution.status === 'resume' && resolution.handledOrders) {
-          handledOrdersRef.current = new Set(resolution.handledOrders)
+          const orders = persistMostAdvancedPinProgress(resolution.handledOrders)
+          handledOrdersRef.current = orders
           triggeredRef.current = pinIdsForOrders(voicePins, handledOrdersRef.current)
-          setNextPin(voicePins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
-          setRouteComplete(voicePins.length > 0 && resolution.nextSortOrder === null)
+          const progress = nextSortOrder(voicePins, orders)
+          setNextPin(voicePins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
+          setRouteComplete(voicePins.length > 0 && progress.nextSortOrder === null)
           resumePendingRef.current = false
         }
       }
@@ -993,6 +1019,16 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       handled ??
       ordersForIds(triggeredRef.current, pinsRef.current, route.slug).orders
     return [...orders].sort((a, b) => a - b)
+  }
+
+  function persistMostAdvancedPinProgress(...candidates: Array<Iterable<number> | null | undefined>) {
+    const orders = mostAdvancedPinProgress(
+      pinsRef.current,
+      loadRoutePinProgress(route.slug),
+      ...candidates,
+    )
+    saveRoutePinProgress(route.slug, orders)
+    return orders
   }
 
   function persistActiveExamNow() {
@@ -1040,10 +1076,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       const resolution = resolveExamResume(saved, pinsRef.current, route.slug)
       if (resolution.status === 'resume' && resolution.handledOrders) {
-        handledOrdersRef.current = new Set(resolution.handledOrders)
+        const orders = persistMostAdvancedPinProgress(resolution.handledOrders)
+        handledOrdersRef.current = orders
         triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrdersRef.current)
-        setNextPin(pinsRef.current.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
-        setRouteComplete(pinsRef.current.length > 0 && resolution.nextSortOrder === null)
+        const progress = nextSortOrder(pinsRef.current, orders)
+        setNextPin(pinsRef.current.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
+        setRouteComplete(pinsRef.current.length > 0 && progress.nextSortOrder === null)
         resumePendingRef.current = false
       } else {
         handledOrdersRef.current = initialHandledOrders(saved, pinsRef.current, route.slug)
@@ -1063,7 +1101,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     audioAttemptInFlightRef.current = false
     setRouteComplete(false)
-    saveRoutePinProgress(route.slug, getHandledPinOrders())
+    const handledOrders = persistMostAdvancedPinProgress(getHandledPinOrders())
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = handledOrders
+    triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrders)
     // Mid-route stop must keep progress so a later start resumes (even from the agency GPS).
     // Only a fully handled route (or non-field-test) clears — same as explicit თავიდან.
     const keepForResume = routeHasRemainingPins()
@@ -1114,12 +1154,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function restartPreview() {
-    const activeOrders = getHandledPinOrders()
-    const storedOrders = loadRoutePinProgress(route.slug)
-    const handledOrders =
-      storedOrders && storedOrders.length > activeOrders.length ? storedOrders : activeOrders
-    saveRoutePinProgress(route.slug, handledOrders)
-    const handled = new Set(handledOrders)
+    const handled = persistMostAdvancedPinProgress(getHandledPinOrders())
     finishInProgressRef.current = false
     finishRouteSlugRef.current = null
     setPhase('preview')
