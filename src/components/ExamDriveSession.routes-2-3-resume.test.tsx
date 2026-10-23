@@ -469,8 +469,8 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(nextOrder()).toBe(3)
 
     await sendFix({
-      lat: road[15][0],
-      lng: road[15][1],
+      lat: road[13][0],
+      lng: road[13][1],
       accuracy: 5,
       heading: 0,
       speed: 0.3,
