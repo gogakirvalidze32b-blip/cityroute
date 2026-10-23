@@ -147,6 +147,20 @@ describe('production street line for Telavi routes 1–4', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
     const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
     const line = examRouteLine('route-2', pins)
+    const expectedSegment = [
+      [41.93107, 45.476158],
+      [41.931074441187754, 45.47614045734653],
+      [41.93079442953597, 45.47593631654672],
+      [41.93020198884709, 45.47555050024073],
+      [41.92958738586849, 45.475180355405826],
+      [41.92920425374276, 45.474896041257274],
+      [41.929092506439304, 45.475137440062646],
+      [41.92966720477171, 45.47549685606176],
+      [41.93028180698128, 45.475926009493534],
+      [41.930712823180095, 45.476210323642086],
+      [41.93118374495688, 45.47648390895485],
+      [41.931145, 45.476422],
+    ]
     const near = (pin: { lat: number; lng: number }) => {
       let best = 0
       let bestD = Infinity
@@ -164,8 +178,16 @@ describe('production street line for Telavi routes 1–4', () => {
     const lo = Math.min(near(p2), near(p3))
     const hi = Math.max(near(p2), near(p3))
     const segment = line.slice(lo, hi + 1)
-    expect(Math.min(...segment.map((p) => p[0]))).toBeGreaterThanOrEqual(41.9306)
-    expect(Math.min(...segment.map((p) => p[1]))).toBeGreaterThanOrEqual(45.4759)
+    expect(segment).toEqual(expectedSegment)
+    expect(
+      maxPinOffsetFromLineM(
+        [
+          [p2.lat, p2.lng],
+          [p3.lat, p3.lng],
+        ],
+        segment,
+      ),
+    ).toBeLessThanOrEqual(10)
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
 })
