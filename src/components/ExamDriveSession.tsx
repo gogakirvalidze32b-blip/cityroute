@@ -71,6 +71,7 @@ import {
 } from '@/lib/route-resume'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { TELAVI_CENTER } from '@/data/telavi-landmarks'
+import { loadRoutePinProgress, saveRoutePinProgress } from '@/lib/route-pin-progress'
 
 type Phase = 'preview' | 'active' | 'summary'
 
@@ -168,14 +169,19 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [phase])
 
   const finishRouteSlugRef = useRef<string | null>(null)
-
-  const triggeredRef = useRef<Set<string>>(savedState ? new Set(savedState.triggeredPins) : new Set())
+  const [initialRoutePinProgress] = useState(() => loadRoutePinProgress(route.slug) ?? [])
+  const initialProgressOrders = savedState
+    ? initialHandledOrders(savedState, route.pins, route.slug) ?? new Set(initialRoutePinProgress)
+    : new Set(initialRoutePinProgress)
+  const triggeredRef = useRef<Set<string>>(
+    savedState
+      ? new Set(savedState.triggeredPins)
+      : pinIdsForOrders(route.pins, initialProgressOrders),
+  )
   /** Routes 2/3: handled pins by sort_order (Tbilisi resume). Null until a save can be placed. */
   const handledOrdersRef = useRef<Set<number> | null>(
     FIELD_TEST_SLUGS.has(route.slug)
-      ? savedState
-        ? initialHandledOrders(savedState, route.pins, route.slug)
-        : new Set()
+      ? initialProgressOrders
       : null,
   )
   // Audio catch-up bookkeeping (closest approach per PIN, failed-playback attempts). Not persisted.
@@ -328,12 +334,17 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           if (resolution.status === 'resume') {
             resumePendingRef.current = resolution.handledOrders === null
             if (resolution.handledOrders) {
-              handledOrdersRef.current = new Set(resolution.handledOrders)
+              const storedOrders = loadRoutePinProgress(route.slug)
+              const orders =
+                storedOrders && storedOrders.length > resolution.handledOrders.length
+                  ? storedOrders
+                  : resolution.handledOrders
+              saveRoutePinProgress(route.slug, orders)
+              handledOrdersRef.current = new Set(orders)
               triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
-              setNextPin(sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
-              setRouteComplete(
-                sortedPins.length > 0 && resolution.nextSortOrder === null,
-              )
+              const progress = nextSortOrder(sortedPins, handledOrdersRef.current)
+              setNextPin(sortedPins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
+              setRouteComplete(sortedPins.length > 0 && progress.nextSortOrder === null)
             }
           } else if (resolution.status === 'pending') {
             resumePendingRef.current = true
@@ -360,12 +371,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setDriveView(features.mapNav ? 'map' : 'panel')
     setGpsError(getGpsEnvironmentIssue())
     setLastSpoken(null)
-    triggeredRef.current = new Set()
-    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
+    const savedOrders = new Set(loadRoutePinProgress(route.slug) ?? [])
+    triggeredRef.current = pinIdsForOrders(sortedPins, savedOrders)
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = savedOrders
     setPendingPinSortOrder(null)
     resumePendingRef.current = false
     setRouteComplete(false)
-    setNextPin(sortedPins[0] ?? null)
+    setNextPin(sortedPins.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
     prevGpsRef.current = null
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
@@ -789,6 +801,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setNextPin(pinsRef.current.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
       }
 
+      saveRoutePinProgress(route.slug, getHandledPinOrders())
       pinApproachRef.current.delete(currentPin.id)
       audioAttemptsRef.current.delete(`${route.slug}:${currentPin.sort_order}`)
       setLastSpoken(currentPin.instruction_ka)
@@ -876,18 +889,22 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
-    triggeredRef.current = new Set()
+    const activeOrders = getHandledPinOrders()
+    const storedOrders = loadRoutePinProgress(route.slug)
+    const handledOrders =
+      storedOrders && storedOrders.length > activeOrders.length ? storedOrders : activeOrders
+    saveRoutePinProgress(route.slug, handledOrders)
+    const handled = new Set(handledOrders)
+    triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     audioAttemptsRef.current = new Map()
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) {
-      handledOrdersRef.current = new Set(
-        voicePins.filter((pin) => triggeredRef.current.has(pin.id)).map((pin) => pin.sort_order),
-      )
+      handledOrdersRef.current = handled
     }
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
-    setRouteComplete(false)
+    setRouteComplete(voicePins.length > 0 && nextSortOrder(voicePins, handled).nextSortOrder === null)
     resumePendingRef.current = false
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
@@ -970,6 +987,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
   }
 
+  function getHandledPinOrders(): number[] {
+    const handled = handledOrdersRef.current
+    const orders =
+      handled ??
+      ordersForIds(triggeredRef.current, pinsRef.current, route.slug).orders
+    return [...orders].sort((a, b) => a - b)
+  }
+
   function persistActiveExamNow() {
     const liveElapsed = sessionStartRef.current
       ? Math.max(0, Date.now() - sessionStartRef.current)
@@ -1038,6 +1063,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     audioAttemptInFlightRef.current = false
     setRouteComplete(false)
+    saveRoutePinProgress(route.slug, getHandledPinOrders())
     // Mid-route stop must keep progress so a later start resumes (even from the agency GPS).
     // Only a fully handled route (or non-field-test) clears — same as explicit თავიდან.
     const keepForResume = routeHasRemainingPins()
@@ -1088,21 +1114,27 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function restartPreview() {
+    const activeOrders = getHandledPinOrders()
+    const storedOrders = loadRoutePinProgress(route.slug)
+    const handledOrders =
+      storedOrders && storedOrders.length > activeOrders.length ? storedOrders : activeOrders
+    saveRoutePinProgress(route.slug, handledOrders)
+    const handled = new Set(handledOrders)
     finishInProgressRef.current = false
     finishRouteSlugRef.current = null
     setPhase('preview')
     setExamSummary(null)
     setSummaryCanContinue(false)
     setExam(createExamSession(route.id, route.name_ka))
-    triggeredRef.current = new Set()
+    triggeredRef.current = pinIdsForOrders(sortedPins, handled)
     pinApproachRef.current = new Map()
     audioAttemptsRef.current = new Map()
     setPendingPinSortOrder(null)
-    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set()
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = handled
     resumedSlugRef.current = null
     resumePendingRef.current = false
     setRouteComplete(false)
-    setNextPin(sortedPins[0] ?? null)
+    setNextPin(sortedPins.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
     setLastSpoken(null)
     setElapsedMs(0)
     sessionStartRef.current = 0
