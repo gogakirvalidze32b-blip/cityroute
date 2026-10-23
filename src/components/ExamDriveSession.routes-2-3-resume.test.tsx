@@ -76,7 +76,9 @@ vi.mock('@/components/ExamLiveMap', () => ({
   ),
 }))
 vi.mock('@/components/ExamErrorGrid', () => ({ ExamErrorGrid: () => null }))
-vi.mock('@/components/ExamScoreboard', () => ({ ExamScoreboard: () => null }))
+vi.mock('@/components/ExamScoreboard', () => ({
+  ExamScoreboard: ({ elapsedMs }: { elapsedMs: number }) => <output data-testid="elapsed-ms">{elapsedMs}</output>,
+}))
 vi.mock('@/components/ExamViewSwitcher', () => ({ ExamViewSwitcher: () => null }))
 vi.mock('@/components/GpsAccuracyBadge', () => ({ GpsAccuracyBadge: () => null }))
 vi.mock('@/components/RoutePreviewMap', () => ({ RoutePreviewMap: () => <div data-testid="preview" /> }))
@@ -284,54 +286,78 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(audioEngine.unlock).toHaveBeenCalled()
   })
 
-  it('route 1: თავიდან after mid-route stop keeps progress and resumes at PIN 3', async () => {
-    const route = routeBySlug('route-1')
-    const first = await startAtPin1(route)
-    await driveTo(route, 1)
-    await driveTo(route, 2)
-    await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
-    })
-    await settle()
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+  it('route 1: თავიდან starts a new session at 00:00 and PIN 1', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const route = routeBySlug('route-1')
+      const view = await startAtPin1(route)
+      await driveTo(route, 1)
+      await driveTo(route, 2)
+      now += 65_000
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+      })
+      await settle()
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
 
-    await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
-    })
-    await settle()
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
-    expect(nextOrder()).toBe(3)
+      now += 30_000
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
+      })
+      await settle()
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
 
-    playDetailed.mockClear()
-    await driveTo(route, 1)
-    await driveTo(route, 2)
-    expect(playDetailed).not.toHaveBeenCalled()
-    await driveTo(route, 3)
-    expect(playedOrders(route)).toEqual([3])
-    first.unmount()
+      playDetailed.mockClear()
+      await pressStart()
+      expect(nextOrder()).toBe(1)
+      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(0)
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.elapsedMs).toBeLessThan(1000)
+
+      await driveTo(route, 1)
+      expect(playedOrders(route)).toEqual([1])
+      view.unmount()
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
-  it('route 1: starting after returning to preview resumes at the next PIN', async () => {
-    const route = routeBySlug('route-1')
-    const first = await startAtPin1(route)
-    await driveTo(route, 1)
-    await driveTo(route, 2)
+  it('route 2: გაგრძელება preserves elapsed time and resumes at PIN 3 after PINs 1 and 2', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const route = routeBySlug('route-2')
+      const view = await startAtPin1(route)
+      await driveTo(route, 1)
+      await driveTo(route, 2)
+      now += 125_000
 
-    await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
-    })
-    await settle()
-    expect(screen.getByRole('button', { name: 'გაგრძელება' })).toBeTruthy()
-    await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
-    })
-    await settle()
-    expect(nextOrder()).toBe(3)
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+      })
+      await settle()
+      const stopped = loadActiveExam(route.id, route.slug, route.name_ka)
+      expect(stopped?.triggeredSortOrders).toEqual([1, 2])
+      expect(stopped?.nextSortOrder).toBe(3)
+      expect(stopped?.elapsedMs).toBeGreaterThanOrEqual(125_000)
 
-    await driveTo(route, 3)
-    expect(playedOrders(route)).toEqual([1, 2, 3])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
-    first.unmount()
+      now += 120_000
+      playDetailed.mockClear()
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+      })
+      await settle()
+
+      expect(nextOrder()).toBe(3)
+      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(stopped?.elapsedMs)
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(3)
+      expect(playDetailed).not.toHaveBeenCalled()
+      view.unmount()
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   it.each(cases)('%s uses its street trace', (slug, count) => {

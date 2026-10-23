@@ -1071,7 +1071,16 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     audioSessionGenerationRef.current++
     setSummaryCanContinue(false)
     setExamSummary(null)
-    applySavedProgress(saved)
+    const resumedAt = Date.now()
+    const elapsedAtPause = Number.isFinite(saved.elapsedMs)
+      ? Math.max(0, saved.elapsedMs)
+      : examElapsedMsNow(saved)
+    const continuation = {
+      ...saved,
+      savedAt: resumedAt,
+      exam: { ...saved.exam, startedAt: resumedAt - elapsedAtPause },
+    }
+    applySavedProgress(continuation)
     setDriveView(features.mapNav ? 'map' : 'panel')
     setPhase('active')
     setSavedEpoch((v) => v + 1)
@@ -1079,12 +1088,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function restartPreview() {
-    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
-    if (saved && resolveExamResume(saved, pinsRef.current, route.slug).status === 'resume') {
-      continueFromSummary()
-      return
-    }
-
     finishInProgressRef.current = false
     finishRouteSlugRef.current = null
     setPhase('preview')
