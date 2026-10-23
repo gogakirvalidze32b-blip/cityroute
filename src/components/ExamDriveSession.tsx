@@ -152,10 +152,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   
   // DEBUG: Session diagnostic panel state
   // Production: panel and its 500 ms re-render timer are off. Development: unchanged.
-  const [debugSessionVisible, setDebugSessionVisible] = useState(import.meta.env.DEV)
+  const [debugSessionVisible, setDebugSessionVisible] = useState(SPEED_LIMIT_DEBUG_PANEL)
   const [, forceDebugUpdate] = useState(0)
   useEffect(() => {
-    if (!import.meta.env.DEV || !debugSessionVisible) return
+    if (!SPEED_LIMIT_DEBUG_PANEL || !debugSessionVisible) return
     const interval = setInterval(() => {
       forceDebugUpdate(v => v + 1)
     }, 500)
@@ -1291,7 +1291,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       )}
       
       {/* DEBUG PANEL - Session diagnostic */}
-      {debugSessionVisible && (
+      {SPEED_LIMIT_DEBUG_PANEL && debugSessionVisible && (
         <div style={{
           position: 'fixed',
           top: '10px',
