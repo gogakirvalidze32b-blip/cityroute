@@ -2349,6 +2349,31 @@ button:disabled {
   z-index: 0;
 }
 
+.exam-preview__map--interactive {
+  overflow: hidden;
+}
+
+.exam-preview__map--interactive .exam-preview-map {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.leaflet-tooltip.route-pin-tip {
+  background: #fff;
+  border: 1px solid #1d4ed8;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.25);
+  color: #1e3a8a;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+}
+
+.leaflet-tooltip.route-pin-tip::before {
+  border-top-color: #fff;
+}
+
 .exam-preview__map-label {
   position: absolute;
   left: 0.5rem;
