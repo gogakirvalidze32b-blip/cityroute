@@ -48,27 +48,27 @@ export const SPEED_ZONES: Readonly<Record<string, readonly SpeedZone[]>> = {
   ],
   'route-2': [
     {
-      id: 'r2-2', limitKmh: 40, from: 17.845, to: 61.6447, maxOffsetM: NEAR,
+      id: 'r2-2', limitKmh: 40, from: 23.845, to: 67.6447, maxOffsetM: NEAR,
       anchors: [[41.9346285, 45.4791052], [41.93015, 45.506383]], pins: [5, 6, 7, 8], source: 'R2 #2',
     },
     {
-      id: 'r2-3', limitKmh: 60, from: 83.0831, to: 102.5136, maxOffsetM: NEAR,
+      id: 'r2-3', limitKmh: 60, from: 89.0831, to: 108.5136, maxOffsetM: NEAR,
       anchors: [[41.922835, 45.50226], [41.9198, 45.500105]], pins: [12], source: 'R2 #3',
     },
     {
-      id: 'r2-4', limitKmh: 50, from: 105.334, to: 112.0054, maxOffsetM: NEAR,
+      id: 'r2-4', limitKmh: 50, from: 111.334, to: 118.0054, maxOffsetM: NEAR,
       anchors: [[41.919592, 45.499799], [41.919263, 45.497462]], pins: [13], source: 'R2 #4 = R4 #3',
     },
     {
-      id: 'r2-5', limitKmh: 30, from: 112.0658, to: 120.3815, maxOffsetM: BOTH_DIRECTIONS,
+      id: 'r2-5', limitKmh: 30, from: 118.0658, to: 126.3815, maxOffsetM: BOTH_DIRECTIONS,
       anchors: [[41.919246, 45.497309], [41.918732, 45.492608]], pins: [14], source: 'R2 #5 = R4 #4',
     },
     {
-      id: 'r2-6', limitKmh: 50, from: 121.8391, to: 135.1881, maxOffsetM: NEAR,
+      id: 'r2-6', limitKmh: 50, from: 127.8391, to: 141.1881, maxOffsetM: NEAR,
       anchors: [[41.918708, 45.492201], [41.918924, 45.486064]], pins: [15, 16], source: 'R2 #6 = R4 #5',
     },
     {
-      id: 'r2-7', limitKmh: 40, from: 139.7355, to: 211.9461, maxOffsetM: NEAR,
+      id: 'r2-7', limitKmh: 40, from: 145.7355, to: 217.9461, maxOffsetM: NEAR,
       anchors: [[41.918942, 45.485366], [41.924764, 45.47216]], pins: [17, 18, 19, 20, 21, 22], source: 'R2 #7',
     },
   ],

@@ -97,9 +97,9 @@ describe('speed limit zones are bound to the real road lines', () => {
     }
   })
 
-  it('route-2 road has 247 points matching the zone from/to index space', () => {
-    expect((route2Road as LatLng[]).length).toBe(247)
-    expect(DATA['route-2'].road.length).toBe(247)
+  it('route-2 road has 253 points matching the zone from/to index space', () => {
+    expect((route2Road as LatLng[]).length).toBe(253)
+    expect(DATA['route-2'].road.length).toBe(253)
   })
 
   it.each(ALL_ZONES.map(({ slug, zone }) => [zone.id, slug, zone] as const))(

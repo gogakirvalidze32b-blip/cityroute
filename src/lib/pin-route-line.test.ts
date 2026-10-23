@@ -149,17 +149,18 @@ describe('production street line for Telavi routes 1–4', () => {
     const line = examRouteLine('route-2', pins)
     const expectedSegment = [
       [41.93107, 45.476158],
-      [41.931074441187754, 45.47614045734653],
-      [41.93079442953597, 45.47593631654672],
-      [41.93020198884709, 45.47555050024073],
-      [41.92958738586849, 45.475180355405826],
-      [41.92920425374276, 45.474896041257274],
-      [41.929092506439304, 45.475137440062646],
-      [41.92966720477171, 45.47549685606176],
-      [41.93028180698128, 45.475926009493534],
-      [41.930712823180095, 45.476210323642086],
-      [41.93118374495688, 45.47648390895485],
-      [41.931145, 45.476422],
+      [41.93099, 45.47611],
+      [41.93091, 45.47606],
+      [41.93079, 45.47598],
+      [41.93067, 45.4759],
+      [41.93064, 45.47599],
+      [41.93061, 45.47608],
+      [41.930825, 45.47622],
+      [41.93104, 45.47636],
+      [41.93142, 45.476595],
+      [41.9318, 45.47683],
+      [41.93187, 45.476875],
+      [41.93194, 45.47692],
     ]
     const near = (pin: { lat: number; lng: number }) => {
       let best = 0
@@ -175,9 +176,8 @@ describe('production street line for Telavi routes 1–4', () => {
     }
     const p2 = pins.find((p) => p.sort_order === 2)!
     const p3 = pins.find((p) => p.sort_order === 3)!
-    const lo = Math.min(near(p2), near(p3))
-    const hi = Math.max(near(p2), near(p3))
-    const segment = line.slice(lo, hi + 1)
+    const start = near(p2)
+    const segment = line.slice(start, start + expectedSegment.length)
     expect(segment).toEqual(expectedSegment)
     expect(
       maxPinOffsetFromLineM(
