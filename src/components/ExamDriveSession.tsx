@@ -167,6 +167,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     phaseRef.current = phase
   }, [phase])
 
+  const finishRouteSlugRef = useRef<string | null>(null)
+
   const triggeredRef = useRef<Set<string>>(savedState ? new Set(savedState.triggeredPins) : new Set())
   /** Routes 2/3: handled pins by sort_order (Tbilisi resume). Null until a save can be placed. */
   const handledOrdersRef = useRef<Set<number> | null>(
@@ -293,7 +295,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     // ============================================================
     // After Finish the summary must stay. The flag stays up until restartPreview()/startSession()
     // (it is not consumed here), so a later re-run of this effect cannot overwrite the summary.
-    if (finishInProgressRef.current || phaseRef.current === 'summary') return
+    if (finishInProgressRef.current && finishRouteSlugRef.current !== route.slug) {
+      finishInProgressRef.current = false
+      finishRouteSlugRef.current = null
+    }
+    if (
+      finishInProgressRef.current ||
+      (phaseRef.current === 'summary' && finishRouteSlugRef.current === route.slug)
+    ) return
 
     const saved = loadActiveExam(route.id, route.slug, route.name_ka)
 
@@ -1022,6 +1031,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   function finishSession() {
     audioSessionGenerationRef.current++
     finishInProgressRef.current = true
+    finishRouteSlugRef.current = route.slug
     if (audioRetryTimerRef.current !== null) {
       clearTimeout(audioRetryTimerRef.current)
       audioRetryTimerRef.current = null
@@ -1057,6 +1067,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       return
     }
     finishInProgressRef.current = false
+    finishRouteSlugRef.current = null
     audioSessionGenerationRef.current++
     setSummaryCanContinue(false)
     setExamSummary(null)
@@ -1068,7 +1079,14 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function restartPreview() {
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    if (saved && resolveExamResume(saved, pinsRef.current, route.slug).status === 'resume') {
+      continueFromSummary()
+      return
+    }
+
     finishInProgressRef.current = false
+    finishRouteSlugRef.current = null
     setPhase('preview')
     setExamSummary(null)
     setSummaryCanContinue(false)

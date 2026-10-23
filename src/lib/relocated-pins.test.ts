@@ -109,7 +109,7 @@ describe('nine corrected Telavi pin coordinates', () => {
       { slug: 'route-1', order: 26, lat: 41.918213, lng: 45.473228, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-1', order: 31, lat: 41.932953, lng: 45.477635, instruction: 'მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ' },
       { slug: 'route-1', order: 32, lat: 41.933733, lng: 45.477972, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
-      { slug: 'route-2', order: 3, lat: 41.93113, lng: 45.476467, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-2', order: 3, lat: 41.931738, lng: 45.476857, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-2', order: 12, lat: 41.920923, lng: 45.500863, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-2', order: 17, lat: 41.918890, lng: 45.485221, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
       { slug: 'route-2', order: 20, lat: 41.918213, lng: 45.473228, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },

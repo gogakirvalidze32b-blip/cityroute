@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { ExamDriveSession } from './ExamDriveSession'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+import route2Road from '@/data/route-2-road.json'
 import { audioEngine } from '@/lib/audio'
 import { createExamSession } from '@/lib/exam-session'
 import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
@@ -283,7 +284,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(audioEngine.unlock).toHaveBeenCalled()
   })
 
-  it('route 1: თავიდან after mid-route stop clears progress and a new start begins at PIN 1', async () => {
+  it('route 1: თავიდან after mid-route stop keeps progress and resumes at PIN 3', async () => {
     const route = routeBySlug('route-1')
     const first = await startAtPin1(route)
     await driveTo(route, 1)
@@ -293,27 +294,44 @@ describe('Telavi field-test routes keep strict progress and resume on production
     })
     await settle()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
-    expect(screen.getByRole('button', { name: 'გაგრძელება' })).toBeTruthy()
 
     await act(async () => {
       await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
     })
     await settle()
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
-    expect(screen.getByRole('button', { name: /გამოცდის დაწყება/ })).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(nextOrder()).toBe(3)
 
-    // Fresh mount after clear: new exam must start at PIN 1 (not leftover GPS watch state).
-    first.unmount()
     playDetailed.mockClear()
-    gps.onFix = null
-    gps.once = fix(route, 1)
-    render(<ExamDriveSession route={route} />)
-    await settle()
-    await pressStart()
-    expect(nextOrder()).toBe(1)
     await driveTo(route, 1)
-    expect(playedOrders(route)).toEqual([1])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    await driveTo(route, 2)
+    expect(playDetailed).not.toHaveBeenCalled()
+    await driveTo(route, 3)
+    expect(playedOrders(route)).toEqual([3])
+    first.unmount()
+  })
+
+  it('route 1: starting after returning to preview resumes at the next PIN', async () => {
+    const route = routeBySlug('route-1')
+    const first = await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(screen.getByRole('button', { name: 'გაგრძელება' })).toBeTruthy()
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
+    })
+    await settle()
+    expect(nextOrder()).toBe(3)
+
+    await driveTo(route, 3)
+    expect(playedOrders(route)).toEqual([1, 2, 3])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+    first.unmount()
   })
 
   it.each(cases)('%s uses its street trace', (slug, count) => {
@@ -399,6 +417,99 @@ describe('Telavi field-test routes keep strict progress and resume on production
     })
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(3)
+  })
+
+  it('route 1 and route 2 keep separate progress across route switches and remounts', async () => {
+    const route1 = routeBySlug('route-1')
+    const route2 = routeBySlug('route-2')
+
+    const route1View = await startAtPin1(route1)
+    await driveTo(route1, 1)
+    await driveTo(route1, 2)
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    route1View.unmount()
+
+    const route2View = await startAtPin1(route2)
+    await driveTo(route2, 1)
+    await driveTo(route2, 2)
+    await driveTo(route2, 3)
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    route2View.unmount()
+
+    render(<ExamDriveSession route={route1} />)
+    await settle()
+    expect(nextOrder()).toBe(3)
+    expect(loadActiveExam(route1.id, route1.slug, route1.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    cleanup()
+
+    render(<ExamDriveSession route={route2} />)
+    await settle()
+    expect(nextOrder()).toBe(4)
+    expect(loadActiveExam(route2.id, route2.slug, route2.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+  })
+
+  it('route 2 PIN #3 stays quiet at the agency exit and plays at its later road position', async () => {
+    const route = routeBySlug('route-2')
+    const road = route2Road as [number, number][]
+    await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    expect(nextOrder()).toBe(3)
+
+    playDetailed.mockClear()
+    await sendFix({
+      lat: road[2][0],
+      lng: road[2][1],
+      accuracy: 5,
+      heading: 0,
+      speed: 5,
+      timestamp: Date.now() + 1000,
+    })
+    expect(playDetailed).not.toHaveBeenCalled()
+    expect(nextOrder()).toBe(3)
+
+    await sendFix({
+      lat: road[15][0],
+      lng: road[15][1],
+      accuracy: 5,
+      heading: 0,
+      speed: 0.3,
+      timestamp: Date.now() + 2000,
+    })
+    expect(playedOrders(route)).toEqual([3])
+    expect(nextOrder()).toBe(4)
+  })
+
+  it('route 1 mid-route progress survives a finish and a route 2 hop in the same mounted session', async () => {
+    const route1 = routeBySlug('route-1')
+    const route2 = routeBySlug('route-2')
+    const view = await startAtPin1(route1)
+    await driveTo(route1, 1)
+    await driveTo(route1, 2)
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(loadActiveExam(route1.id, route1.slug, route1.name_ka)?.nextSortOrder).toBe(3)
+
+    view.rerender(<ExamDriveSession route={route2} />)
+    await settle()
+    expect(screen.getByRole('button', { name: /გამოცდის დაწყება/ })).toBeTruthy()
+    await pressStart()
+    await driveTo(route2, 1)
+    await driveTo(route2, 2)
+    await driveTo(route2, 3)
+
+    view.rerender(<ExamDriveSession route={route1} />)
+    await settle()
+    expect(nextOrder()).toBe(3)
+    expect(loadActiveExam(route1.id, route1.slug, route1.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+
+    view.rerender(<ExamDriveSession route={route2} />)
+    await settle()
+    expect(nextOrder()).toBe(4)
+    expect(loadActiveExam(route2.id, route2.slug, route2.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
   })
 
   it.each(cases)('%s: an incomplete empty-pin write does not erase saved progress', async (slug) => {
