@@ -11,10 +11,12 @@ import { useExamLayoutMode } from '@/hooks/useExamLayoutMode'
 import { useRoutes } from '@/hooks/useRoutes'
 import { planName, calculatePrice } from '@/data/subscription-plans'
 import { useState } from 'react'
+import { selectableRoutes } from '@/data/selectable-routes'
 
 export function HomePage() {
   const { profile, hasAccess, deviceBlocked, signOut } = useAuth()
   const { routes, source } = useRoutes()
+  const visibleRoutes = selectableRoutes(routes)
   const layoutMode = useExamLayoutMode()
   const onTrial = profile?.subscription_status === 'trial' && hasAccess
   const [paymentError, setPaymentError] = useState<string | null>(null)
@@ -112,7 +114,7 @@ export function HomePage() {
       </header>
 
       <div className="route-list" data-testid="home-route-list">
-        {routes.map((route, index) => (
+        {visibleRoutes.map((route, index) => (
           <Link 
             key={route.id} 
             to={`/route/${route.slug}`} 
