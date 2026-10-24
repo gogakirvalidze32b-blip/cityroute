@@ -86,6 +86,27 @@ describe('exam save merge: incomplete writes do not replace progress', () => {
     expect(mergeExamSave(previous, completed).pendingPinSortOrder).toBeNull()
   })
 
+  it('preserves an audio queue when a later save predates queue metadata', () => {
+    const previous = saved({ pendingPinSortOrder: 3, queuedPinSortOrders: [4, 5] })
+    const legacyWrite = saved({ savedAt: 2_000 })
+    expect(mergeExamSave(previous, legacyWrite).queuedPinSortOrders).toEqual([4, 5])
+  })
+
+  it('clears the queue only when a newer save explicitly writes an empty queue', () => {
+    const previous = saved({ pendingPinSortOrder: 3, queuedPinSortOrders: [4, 5] })
+    const completed = saved({
+      triggeredPins: ['p2-1', 'p2-2', 'p2-3'],
+      triggeredSortOrders: [1, 2, 3],
+      lastPassedSortOrder: 3,
+      nextSortOrder: 4,
+      pendingPinSortOrder: null,
+      queuedPinSortOrders: [],
+      savedAt: 2_000,
+    })
+    expect(mergeExamSave(previous, completed).pendingPinSortOrder).toBeNull()
+    expect(mergeExamSave(previous, completed).queuedPinSortOrders).toEqual([])
+  })
+
   it('lets a different route replace the single active slot', () => {
     const previous = saved()
     const other = saved({
@@ -130,12 +151,16 @@ describe('exam save merge: incomplete writes do not replace progress', () => {
       triggeredPins: ['p1-1', 'p1-2'],
       triggeredSortOrders: [1, 2],
       nextSortOrder: 3,
+      pendingPinSortOrder: 2,
+      queuedPinSortOrders: [3],
     })
     const route2 = saved({
       triggeredPins: ['p2-1', 'p2-2', 'p2-3'],
       triggeredSortOrders: [1, 2, 3],
       lastPassedSortOrder: 3,
       nextSortOrder: 4,
+      pendingPinSortOrder: 1,
+      queuedPinSortOrders: [2],
     })
 
     saveActiveExam(route1)
@@ -143,6 +168,8 @@ describe('exam save merge: incomplete writes do not replace progress', () => {
 
     expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')?.nextSortOrder).toBe(3)
     expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.nextSortOrder).toBe(4)
+    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')?.queuedPinSortOrders).toEqual([3])
+    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.queuedPinSortOrders).toEqual([2])
     expect(localStorage.getItem('cityroute-active-exam:route-1')).not.toBeNull()
     expect(localStorage.getItem('cityroute-active-exam:route-2')).not.toBeNull()
   })

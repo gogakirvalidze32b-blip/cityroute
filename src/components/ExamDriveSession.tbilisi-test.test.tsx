@@ -274,7 +274,7 @@ describe('standalone test city „ტესტი — თბილისი“',
 
     await driveTo(2)
     expect(playedOrders()).toEqual([1, 2])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
   })
 
   it('ignores a delayed audio error from a prior mounted session', async () => {

@@ -21,6 +21,8 @@ export type SavedExamState = {
   triggeredSortOrders?: number[]
   /** The instruction that was selected but whose audio has not ended yet. */
   pendingPinSortOrder?: number | null
+  /** Instructions queued behind the current PIN audio, in playback order. */
+  queuedPinSortOrders?: number[]
   lastPassedSortOrder?: number | null
   nextSortOrder?: number | null
   savedAt: number
@@ -132,21 +134,26 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
   if (!previous || !sameRoute(previous, incoming)) return incoming
   const prevCount = orderCount(previous)
   const nextCount = orderCount(incoming)
-  const mergePendingPin = (state: SavedExamState): SavedExamState => {
-    if ('pendingPinSortOrder' in incoming) return state
-    if (!('pendingPinSortOrder' in previous)) return state
-    return { ...state, pendingPinSortOrder: previous.pendingPinSortOrder }
+  const mergePendingAudio = (state: SavedExamState): SavedExamState => {
+    let merged = state
+    if (!('pendingPinSortOrder' in incoming) && 'pendingPinSortOrder' in previous) {
+      merged = { ...merged, pendingPinSortOrder: previous.pendingPinSortOrder }
+    }
+    if (!('queuedPinSortOrders' in incoming) && 'queuedPinSortOrders' in previous) {
+      merged = { ...merged, queuedPinSortOrders: previous.queuedPinSortOrders }
+    }
+    return merged
   }
   if (prevCount > 0 && nextCount === 0) {
-    return mergePendingPin({
+    return mergePendingAudio({
       ...incoming,
       triggeredSortOrders: previous.triggeredSortOrders,
       lastPassedSortOrder: previous.lastPassedSortOrder ?? incoming.lastPassedSortOrder,
       nextSortOrder: previous.nextSortOrder ?? incoming.nextSortOrder,
     })
   }
-  if (prevCount > nextCount) return previous
-  return mergePendingPin(incoming)
+  if (prevCount > nextCount) return mergePendingAudio(previous)
+  return mergePendingAudio(incoming)
 }
 
 /**

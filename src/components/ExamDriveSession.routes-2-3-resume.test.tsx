@@ -313,7 +313,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
 
     audioTestState.autoEnd = false
     await driveTo(route, 3)
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(3)
 
     await act(async () => {
@@ -682,6 +682,59 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(playedOrders(route3)).toEqual([11])
     expect(loadRoutePinProgress(route3.slug)).toEqual([...savedRoute3Orders, 11])
     expect(loadRoutePinProgress(route2.slug)).toEqual(completedRoute2Orders)
+  })
+
+  it('restores independent Route 2 and Route 3 audio queues after route switches', async () => {
+    audioTestState.autoEnd = false
+    const route2 = routeBySlug('route-2')
+    const route3 = routeBySlug('route-3')
+    const view = await startAtPin1(route2)
+    await driveTo(route2, 1)
+    await driveTo(route2, 2)
+
+    const route2State = loadActiveExam(route2.id, route2.slug, route2.name_ka)
+    expect(route2State?.pendingPinSortOrder).toBe(1)
+    expect(route2State?.queuedPinSortOrders).toEqual([2])
+
+    const route3Pins = sorted(route3)
+    const route3Handled = route3Pins.filter((pin) => pin.sort_order <= 2)
+    saveActiveExam({
+      routeId: route3.id,
+      routeSlug: route3.slug,
+      routeName: route3.name_ka,
+      phase: 'active',
+      exam: createExamSession(route3.id, route3.name_ka),
+      userPos: [route3Pins[0]!.lat, route3Pins[0]!.lng],
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 1000,
+      triggeredPins: route3Handled.map((pin) => pin.id),
+      triggeredSortOrders: [1, 2],
+      lastPassedSortOrder: 2,
+      nextSortOrder: 3,
+      pendingPinSortOrder: 2,
+      queuedPinSortOrders: [3],
+      savedAt: Date.now(),
+    })
+
+    view.rerender(<ExamDriveSession route={route3} />)
+    await settle()
+    expect(playDetailed.mock.calls.at(-1)?.[1]).toBe(pinAt(route3, 2).id)
+    expect(loadActiveExam(route3.id, route3.slug, route3.name_ka)?.queuedPinSortOrders).toEqual([3])
+
+    view.rerender(<ExamDriveSession route={route2} />)
+    await settle()
+    expect(playDetailed.mock.calls.at(-1)?.[1]).toBe(pinAt(route2, 1).id)
+    expect(loadActiveExam(route2.id, route2.slug, route2.name_ka)?.queuedPinSortOrders).toEqual([2])
+
+    await act(async () => {
+      audioTestState.autoEnd = true
+      const latestOptions = playDetailed.mock.calls.at(-1)?.[3]
+      latestOptions?.onEnded?.()
+    })
+    await settle()
+    expect(playDetailed.mock.calls.at(-1)?.[1]).toBe(pinAt(route2, 2).id)
+    expect(loadActiveExam(route3.id, route3.slug, route3.name_ka)?.queuedPinSortOrders).toEqual([3])
   })
 
   it('route 2 PIN #3 stays quiet at the agency exit and plays at its later road position', async () => {
