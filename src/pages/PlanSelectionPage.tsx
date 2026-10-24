@@ -1,93 +1,215 @@
-﻿import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { AppBrand } from '@/components/AppBrand'
+import { useState } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
+import { PaymentButton } from '@/components/PaymentButton'
+import { SupportFooterLinks } from '@/components/support/SupportLinks'
 import { useAuth } from '@/context/AuthContext'
-import { type SubscriptionPlan, calculatePrice } from '@/data/subscription-plans'
-import { useEffect, useState } from 'react'
+import { calculatePrice } from '@/data/subscription-plans'
+import { accessLabel } from '@/types/database'
+import './subscription-page.css'
 
-export function PlanSelectionPage() {
-  const { user, loading, hasAccess, needsPlanSelection, profile, selectPlan } = useAuth()
-  const [selected, setSelected] = useState<SubscriptionPlan>(profile?.subscription_plan ?? 'premium')
-  const [deviceSlots, setDeviceSlots] = useState(profile?.device_slots ?? 1)
+const VEHICLE_OPTIONS = [1, 2] as const
+type PreviewMode = 'trial' | 'expired'
+
+export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode } = {}) {
+  const { user, loading, hasAccess, needsPlanSelection, profile, selectPackage } = useAuth()
+  const [deviceSlots, setDeviceSlots] = useState<1 | 2>(profile?.device_slots === 2 ? 2 : 1)
   const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [previewNotice, setPreviewNotice] = useState<string | null>(null)
+  const [trialSubmitting, setTrialSubmitting] = useState(false)
   const navigate = useNavigate()
+  const isPreview = Boolean(previewMode)
 
-  useEffect(() => {
-    if (profile?.subscription_plan) setSelected(profile.subscription_plan)
-    if (profile?.device_slots) setDeviceSlots(profile.device_slots)
-  }, [profile?.subscription_plan, profile?.device_slots])
+  if (loading && !isPreview) {
+    return (
+      <main className="subscription-page subscription-page--center">
+        <p className="muted">იტვირთება...</p>
+      </main>
+    )
+  }
 
-  if (!loading && !user) return <Navigate to="/login" replace />
-  if (!loading && user && !hasAccess) return <Navigate to="/" replace />
+  if (!isPreview && !user) return <Navigate to="/login" replace />
+  if (!isPreview && hasAccess && profile?.subscription_plan && !needsPlanSelection) {
+    return <Navigate to="/" replace />
+  }
 
-  const chosen = 'premium'
-  const isFirstPick = needsPlanSelection
-  const totalPrice = calculatePrice(chosen, deviceSlots)
+  const price = calculatePrice('premium', deviceSlots)
+  const trialActive = previewMode ? previewMode === 'trial' : profile?.subscription_status === 'trial' && hasAccess
 
-  async function onContinue() {
-    // Start 24-hour trial with selected device slots
-    navigate('/')
+  async function continueWithTrial() {
+    if (isPreview) {
+      setPreviewNotice('ეს ვიზუალური Preview-ია — Trial არ აქტიურდება და ანგარიში არ იცვლება.')
+      return
+    }
+    setTrialSubmitting(true)
+    setError(null)
+    try {
+      const saveError = await selectPackage(deviceSlots)
+      if (saveError) {
+        setError(`პაკეტის შენახვა ვერ მოხერხდა: ${saveError}`)
+        return
+      }
+      navigate('/', { replace: true })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'პაკეტის შენახვა ვერ მოხერხდა')
+    } finally {
+      setTrialSubmitting(false)
+    }
   }
 
   return (
-    <div className="page plan-page">
-      <header className="plan-page__header">
-        <AppBrand centered />
-        <h1>პრემიუმ პაკეტი</h1>
-        <p className="muted plan-page__lead">
-          <strong>24 საათი უფასოდ</strong> · შემდეგ {totalPrice} ₾/თვე
-        </p>
-      </header>
+    <main className="subscription-page">
+      <div className="subscription-layout">
+        <section className="subscription-intro">
+          <h1 className="subscription-title">CityRoute <span>Premium</span></h1>
+          <p className="subscription-hero__subtitle">
+            მოამზადე მოსწავლე მართვის პრაქტიკული გამოცდისთვის
+          </p>
+          <p className="subscription-hero__description">
+            CityRoute ინსტრუქტორებს ეხმარება მოსწავლეები ქალაქ თელავში პრაქტიკული მართვის გამოცდისთვის მოამზადონ.
+          </p>
 
-      <div className="device-selector">
-        <p className="device-selector__label">რამდენ მანქანაზე გინდა გამოყენება?</p>
-        <div className="device-selector__buttons">
-          <button
-            type="button"
-            className={`device-btn ${deviceSlots === 1 ? 'device-btn--active' : ''}`}
-            onClick={() => setDeviceSlots(1)}
-          >
-            <span className="device-btn__icon">🚗</span>
-            <strong>1 მანქანა</strong>
-            <span className="device-btn__price">99 ₾/თვე</span>
-          </button>
-          <button
-            type="button"
-            className={`device-btn ${deviceSlots === 2 ? 'device-btn--active' : ''}`}
-            onClick={() => setDeviceSlots(2)}
-          >
-            <span className="device-btn__icon">🚗🚗</span>
-            <strong>2 მანქანა</strong>
-            <span className="device-btn__price">189 ₾/თვე</span>
-          </button>
-        </div>
-        <p className="device-selector__note">1 ანგარიში (ერთი ემაილი) = მაქსიმუმ {deviceSlots} მოწყობილობა</p>
+          {trialActive ? (
+            <div className="subscription-status subscription-status--trial">
+              <span className="subscription-status__icon" aria-hidden="true">24</span>
+              <div>
+                <strong>უფასო Trial აქტიურია</strong>
+                <p>
+                  {previewMode === 'trial'
+                    ? 'ვიზუალური დემო · Trial რეგისტრაციის შემდეგ ითვლება'
+                    : profile
+                      ? accessLabel(profile)
+                      : 'Trial რეგისტრაციისას დაიწყო'}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="subscription-status subscription-status--expired">
+              <span className="subscription-status__icon" aria-hidden="true">↻</span>
+              <div>
+                <strong>გააქტიურე Premium</strong>
+                <p>
+                  {previewMode === 'expired'
+                    ? 'Trial დასრულებულია · აირჩიე პაკეტი'
+                    : profile
+                      ? accessLabel(profile)
+                      : 'ანგარიშის გამოწერის მონაცემები ვერ ჩაიტვირთა'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <ul className="subscription-benefits">
+            <li><span aria-hidden="true">✓</span> საგამოცდო მარშრუტები — ქალაქი თელავი</li>
+            <li><span aria-hidden="true">✓</span> ხმოვანი მითითებები გზაზე</li>
+            <li><span aria-hidden="true">✓</span> მოსწავლის მომზადება რეალურ მარშრუტებზე</li>
+            <li><span aria-hidden="true">✓</span> მოსახერხებელი GPS ნავიგაცია</li>
+          </ul>
+        </section>
+
+        <section className="subscription-checkout" aria-labelledby="subscription-title">
+          <div className="subscription-checkout__body">
+            <h2 id="subscription-title">რამდენი ავტომობილისთვის?</h2>
+
+            <div className="subscription-options" role="radiogroup" aria-label="მანქანების რაოდენობა">
+              {VEHICLE_OPTIONS.map((slots) => {
+                const optionPrice = calculatePrice('premium', slots)
+                const selected = deviceSlots === slots
+                return (
+                  <button
+                    key={slots}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    className={`subscription-option${selected ? ' is-selected' : ''}`}
+                    onClick={() => {
+                      setDeviceSlots(slots)
+                      setError(null)
+                    }}
+                  >
+                    <span className="subscription-option__left">
+                      <span className="subscription-option__icon" aria-hidden="true">
+                        {slots === 1 ? '🚗' : '🚗🚗'}
+                      </span>
+                      <span className="subscription-option__copy">
+                        <strong>{slots} {slots === 1 ? 'მანქანა' : 'მანქანისთვის'}</strong>
+                        <small>{optionPrice} ₾ / 30 დღე</small>
+                      </span>
+                    </span>
+                    <span className="subscription-option__right">
+                      {slots === 2 && (
+                        <>
+                          <s className="subscription-option__old-price">198 ₾</s>
+                          <span className="subscription-option__discount">დაზოგავ 19 ₾-ს</span>
+                        </>
+                      )}
+                      {selected && <span className="subscription-option__check" aria-hidden="true">✓</span>}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {trialActive && !isPreview && (
+              <button
+                type="button"
+                className="subscription-trial-button"
+                disabled={trialSubmitting}
+                onClick={() => void continueWithTrial()}
+              >
+                {trialSubmitting ? 'ინახება...' : '24-საათიანი უფასო Trial'}
+                {!trialSubmitting && <span aria-hidden="true">→</span>}
+              </button>
+            )}
+            {trialActive && !isPreview && (
+              <p className="subscription-trial-copy">უფასო წვდომა 24 საათით, გადახდის გარეშე.</p>
+            )}
+
+            {previewNotice && <p className="subscription-preview-notice" role="status">{previewNotice}</p>}
+            {error && <p className="subscription-error" role="alert">{error}</p>}
+            {!isPreview && (
+              <>
+                <div className="subscription-total">
+                  <span>არჩეული პაკეტი</span>
+                  <strong>{price} ₾ <small>/ 30 დღე</small></strong>
+                </div>
+
+                {!profile && (
+                  <p className="subscription-error" role="alert">
+                    გამოწერის მონაცემები მიუწვდომელია. სცადე გვერდის განახლება ან დაუკავშირდი მხარდაჭერას.
+                  </p>
+                )}
+
+                <PaymentButton
+                  deviceSlots={deviceSlots}
+                  disabled={!profile}
+                  onError={setError}
+                />
+              </>
+            )}
+            {isPreview && (
+              <>
+                <div className="subscription-total">
+                  <span>არჩეული პაკეტი</span>
+                  <strong>{price} ₾ <small>/ 30 დღე</small></strong>
+                </div>
+                <button type="button" className="payment-button" disabled>
+                  გადახდა — {price} ₾
+                </button>
+              </>
+            )}
+            {!isPreview && (
+              <p className="subscription-disclaimer">
+                Premium გააქტიურდება გადახდის დადასტურების შემდეგ.
+              </p>
+            )}
+          </div>
+
+        </section>
       </div>
-
-      <div className="plan-summary">
-        <h2>სრული ფუნქციონალი</h2>
-        <p className="plan-price">{totalPrice} ₾/თვე</p>
-        <ul className="plan-features">
-          <li>GPS ხმოვანი მარშრუტი</li>
-          <li>Live რუკა მძღოლობისას</li>
-          <li>გამოცდის პანელი</li>
-          <li>გადართვა: რუკა ↔ შეცდომები</li>
-          <li>ყველა მომავალი ფუნქცია</li>
-        </ul>
-      </div>
-
-      <footer className="plan-page__footer">
-        {error && <p className="error-text">{error}</p>}
-        <button type="button" className="primary plan-page__cta premium-cta" disabled={submitting} onClick={() => void onContinue()}>
-          {submitting ? 'ინახება...' : '🚀 24 საათიანი უფასო წვდომის დაწყება'}
-        </button>
-        {!isFirstPick && (
-          <Link to="/" className="plan-page__back">
-            ← მარშრუტებზე დაბრუნება
-          </Link>
-        )}
-        <p className="muted plan-page__fine">ანგარიშიდან გასვლით შეგიძლია სხვა მოწყობილობაზე შესვლა</p>
-      </footer>
-    </div>
+      <p className="subscription-support">
+        კითხვები გაქვს? მოგვწერე: <a href="mailto:support@cityroute.ge">support@cityroute.ge</a>
+      </p>
+      <div className="subscription-bottom-links"><SupportFooterLinks /></div>
+    </main>
   )
 }

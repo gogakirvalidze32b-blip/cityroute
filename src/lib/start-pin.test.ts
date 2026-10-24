@@ -235,13 +235,13 @@ describe('starting pin for a new exam', () => {
     expect(ambiguous).toBeLessThan(checked)
   })
 
-  it('starts at PIN 24 after the outbound PIN 22/23 cues have already passed', () => {
+  it('starts at PIN 24 after outbound PINs 22 and 23 have passed', () => {
     const pins = routePins(1)
     const decision = chooseStartPin(
       pins,
-      fixAt([41.918796596932204, 45.484709508753554], {
+      fixAt([41.918364, 45.483093], {
         speedMps: 8,
-        headingDeg: 250.9905533509231,
+        headingDeg: 250.9,
       }),
       road(1, pins),
     )

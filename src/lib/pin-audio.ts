@@ -20,6 +20,12 @@ export const AUDIO_PASSED_NEAR_M = 40
 /** Driver is considered to have passed a PIN once this much farther than closest approach (m). */
 export const AUDIO_PASSED_MARGIN_M = 8
 
+/** How many PINs after the next one may be used to recover a missed voice. */
+export const AUDIO_LOOKAHEAD_PINS = 2
+
+/** Lookahead is only allowed if the driver really came this close (m) to the missed PIN. */
+export const AUDIO_LOOKAHEAD_MIN_APPROACH_M = 60
+
 /** GPS heading is unreliable below this speed (m/s) → heading check is skipped. */
 export const AUDIO_HEADING_MIN_SPEED_MS = 1
 
@@ -36,6 +42,13 @@ export const AUDIO_SEGMENT_MAX_LENGTH_M = 1000
 export const AUDIO_SEGMENT_NEAR_M = 25
 /** Maximum implied speed between two fixes (m/s, 144 km/h); above it the movement is a GPS jump. */
 export const AUDIO_SEGMENT_MAX_SPEED_MPS = 40
+
+/** Route 3's later #12 pass begins at this point on its active street trace. */
+export const ROUTE3_PIN12_AFTER_ROAD_U = 256
+
+export function canTriggerRoute3Pin12(roadProgressU: number | null): boolean {
+  return roadProgressU !== null && roadProgressU >= ROUTE3_PIN12_AFTER_ROAD_U
+}
 
 export interface TimedFix {
   lat: number
@@ -104,7 +117,7 @@ export function audioHeadingOk(matches: boolean, speedMs: number | null | undefi
   return matches
 }
 
-export type PinAudioReason = 'in-range' | 'passed'
+export type PinAudioReason = 'in-range' | 'passed' | 'lookahead'
 
 export interface PinAudioInput {
   /** PIN ids in sort_order. */
@@ -151,6 +164,20 @@ export function decidePinAudio(input: PinAudioInput): PinAudioDecision | null {
   // 2) Passed it: came near, now moving away, voice never played → play it now (late is better than never).
   if (min <= AUDIO_PASSED_NEAR_M && d - min >= AUDIO_PASSED_MARGIN_M) {
     return { index: next, skipped: [], reason: 'passed' }
+  }
+
+  // 3) Lookahead: GPS jumped past the expected PIN and we are now at one of the next few.
+  //    Only when we genuinely approached the expected PIN, to avoid loops/overlaps skipping pins.
+  if (min <= AUDIO_LOOKAHEAD_MIN_APPROACH_M) {
+    const last = Math.min(pinIds.length - 1, next + AUDIO_LOOKAHEAD_PINS)
+    for (let i = next + 1; i <= last; i++) {
+      if (triggered.has(pinIds[i])) continue
+      if (distanceTo(i) <= AUDIO_TRIGGER_DISTANCE_M && headingOkAt(i)) {
+        const skipped: number[] = []
+        for (let j = next; j < i; j++) if (!triggered.has(pinIds[j])) skipped.push(j)
+        return { index: i, skipped, reason: 'lookahead' }
+      }
+    }
   }
 
   return null

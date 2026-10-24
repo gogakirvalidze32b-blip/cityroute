@@ -42,3 +42,11 @@ export function saveRoutePinProgress(routeSlug: string, orders: Iterable<number>
     console.error('Failed to save route PIN progress:', err)
   }
 }
+
+export function clearRoutePinProgress(routeSlug: string): void {
+  try {
+    localStorage.removeItem(storageKey(routeSlug))
+  } catch (err) {
+    console.error('Failed to clear route PIN progress:', err)
+  }
+}

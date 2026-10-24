@@ -27,8 +27,8 @@ export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
  */
 export const VOICE_VOLUME = 1
 
-/** Fallback multiplier for audio without a measured bundled-WAV loudness profile. */
-export const VOICE_GAIN = 2
+/** Maximum multiplier for measured voice files; per-file normalization may choose less. */
+export const VOICE_GAIN = 4
 
 /** Shared Web Audio graph (one AudioContext for all voice files — mobile browsers cap contexts). */
 type WarmGraph = {
@@ -36,7 +36,7 @@ type WarmGraph = {
   input: AudioNode
 }
 
-/** Per-file loudness gain with source-peak headroom. No EQ, compression, or pitch shift. */
+/** Per-file loudness gain with measured source-peak headroom. No EQ or pitch shift. */
 type LoudGraph = {
   ctx: AudioContext
   gain: GainNode
@@ -138,7 +138,7 @@ export class AudioEngine {
     audio.webkitPreservesPitch = audio.preservesPitch
   }
 
- /** Gain and peak-limiter graph. Does not EQ or change playback rate. */
+ /** Gain graph. Per-file gain is capped below the measured source peak ceiling. */
   private getLoudGraph(): LoudGraph | null {
     if (this.loud) return this.loud
     if (typeof AudioContext === 'undefined') return null

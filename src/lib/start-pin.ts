@@ -285,7 +285,6 @@ function cachedCueDistances(
 ): number[] {
   cachedLegPaths(pins, ordered, trace)
   if (!legPathCache?.cueDistances) {
-    // Use each pin's first cue after the preceding ordered pin, not its first geometric pass.
     const cueDistances: number[] = ordered.length > 0 ? [0] : []
     let minimumProgress = 0
     for (const pin of ordered.slice(1)) {
@@ -406,13 +405,7 @@ export function chooseStartPin(
   const atPins: Candidate[] = []
   const unsure: number[] = []
   ordered.forEach((pin, i) => {
-    if (
-      !inZone[i] ||
-      i === 0 ||
-      (overlappingPassed && cueOutOfPass(i))
-    ) {
-      return
-    }
+    if (!inZone[i] || i === 0 || (overlappingPassed && cueOutOfPass(i))) return
     const side = moving ? passedPin(i) : 'ahead'
     if (side !== 'ahead') {
       // The next pin decides for itself when the car is in its zone too.

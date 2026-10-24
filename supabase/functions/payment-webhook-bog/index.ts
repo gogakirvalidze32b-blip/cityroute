@@ -1,125 +1,104 @@
-/**
- * Bank of Georgia (BOG) Payment Webhook Handler
- * Receives callbacks from BOG when payment status changes
- * 
- * Deploy: supabase functions deploy payment-webhook-bog
- * URL: https://<project-ref>.supabase.co/functions/v1/payment-webhook-bog
- */
-
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import {
+  getBogOrderDetails,
+  canApplyBogPaymentStatus,
+  toPersistedBogPaymentStatus,
+  verifyBogCallbackSignature,
+  verifyBogOrderDetails,
+} from '../_shared/bog-payment.ts'
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const BOG_CLIENT_ID = Deno.env.get('BOG_CLIENT_ID')!
-const BOG_SECRET_KEY = Deno.env.get('BOG_SECRET_KEY')!
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+const BOG_CLIENT_KEY = Deno.env.get('BOG_CLIENT_KEY') ?? Deno.env.get('BOG_CLIENT_ID')
+const BOG_SECRET_KEY = Deno.env.get('BOG_SECRET_KEY')
 
 serve(async (req) => {
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, 405)
+  }
+
   try {
-    // Only accept POST requests
-    if (req.method !== 'POST') {
-      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-        status: 405,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !BOG_CLIENT_KEY || !BOG_SECRET_KEY) {
+      return jsonResponse({ error: 'Preview BOG callback is not configured' }, 503)
     }
 
-    // Parse callback payload
-    const payload = await req.json()
-    const orderId = payload.order_id
-
-    if (!orderId) {
-      console.error('Missing order_id in callback', payload)
-      return new Response(JSON.stringify({ error: 'Missing order_id' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    const rawBody = await req.text()
+    const signature = req.headers.get('Callback-Signature')
+    if (!await verifyBogCallbackSignature(rawBody, signature)) {
+      return jsonResponse({ error: 'Invalid BOG callback signature' }, 401)
     }
 
-    console.log('BOG Callback received:', { orderId })
+    const callback: {
+      event?: unknown
+      body?: { order_id?: unknown }
+    } = JSON.parse(rawBody)
+    if (callback.event !== 'order_payment' || typeof callback.body?.order_id !== 'string') {
+      return jsonResponse({ error: 'Invalid BOG callback body' }, 400)
+    }
 
-    // Get OAuth2 access token from BOG
-    const credentials = btoa(`${BOG_CLIENT_ID}:${BOG_SECRET_KEY}`)
-    const tokenFormData = new URLSearchParams()
-    tokenFormData.append('grant_type', 'client_credentials')
-
-    const tokenResponse = await fetch('https://api.bog.ge/oauth2/token', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${credentials}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: tokenFormData.toString(),
+    const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
     })
+    const { data: transaction, error: transactionError } = await admin
+      .from('payment_transactions')
+      .select('payment_id, merchant_payment_id, amount, currency, status')
+      .eq('provider', 'bog')
+      .eq('payment_id', callback.body.order_id)
+      .maybeSingle()
 
-    if (!tokenResponse.ok) {
-      throw new Error(`Failed to get BOG access token: ${tokenResponse.status}`)
+    if (transactionError) throw transactionError
+    if (!transaction || !transaction.merchant_payment_id) {
+      return jsonResponse({ error: 'BOG transaction was not found' }, 404)
     }
 
-    const { access_token } = await tokenResponse.json()
-
-    // Verify payment status with BOG
-    const orderResponse = await fetch(`https://api.bog.ge/payments/v1/ecommerce/orders/${orderId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Accept': 'application/json',
-      },
+    const details = await getBogOrderDetails(
+      { clientKey: BOG_CLIENT_KEY, secretKey: BOG_SECRET_KEY },
+      transaction.payment_id,
+    )
+    const verified = verifyBogOrderDetails(details, {
+      orderId: transaction.payment_id,
+      externalOrderId: transaction.merchant_payment_id,
+      amount: Number(transaction.amount),
+      currency: transaction.currency,
     })
+    const persistedStatus = toPersistedBogPaymentStatus(verified.status)
 
-    if (!orderResponse.ok) {
-      throw new Error(`Failed to get order status: ${orderResponse.status}`)
+    if (!canApplyBogPaymentStatus(transaction.status, persistedStatus)) {
+      return jsonResponse({ success: true, duplicateOrStale: true }, 200)
     }
 
-    const orderData = await orderResponse.json()
-    console.log('BOG Order status:', orderData)
-
-    // Map BOG status to our internal status
-    let status = 'pending'
-    if (orderData.status === 'success') {
-      status = 'success'
-    } else if (orderData.status === 'failed') {
-      status = 'failed'
-    } else if (orderData.status === 'expired') {
-      status = 'cancelled'
-    }
-
-    // Update payment transaction in Supabase
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-
-    const { data, error } = await supabase.rpc('update_payment_status', {
+    const { error: updateError } = await admin.rpc('update_payment_status', {
       p_provider: 'bog',
-      p_payment_id: orderId,
-      p_status: status,
-      p_transaction_id: orderData.transaction_id,
+      p_payment_id: transaction.payment_id,
+      p_status: persistedStatus,
+      p_transaction_id: verified.transactionId,
       p_metadata: {
-        shop_order_id: orderData.shop_order_id,
-        amount: orderData.amount,
-        currency: orderData.currency,
-        payment_method: orderData.payment_method,
-        pan: orderData.pan,
-        paid_at: orderData.paid_at,
-        callback_received_at: new Date().toISOString(),
+        bank_status: verified.bankStatus,
+        bank_amount: verified.amount,
+        bank_refund_amount: verified.refundAmount,
+        bank_currency: verified.currency,
+        bank_external_order_id: verified.externalOrderId,
+        bank_status_unknown: verified.status === 'unknown',
+        callback_verified_at: new Date().toISOString(),
       },
     })
+    if (updateError) throw updateError
 
-    if (error) {
-      console.error('Failed to update payment status:', error)
-      throw error
-    }
-
-    console.log('Payment updated successfully:', data)
-
-    // BOG expects 200 status
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse({ success: true }, 200)
   } catch (error) {
-    console.error('BOG webhook error:', error)
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    console.error('BOG sandbox callback failed:', safeErrorMessage(error))
+    return jsonResponse({ error: 'BOG callback could not be processed' }, 500)
   }
 })
+
+function jsonResponse(body: Record<string, unknown>, status: number) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error'
+}

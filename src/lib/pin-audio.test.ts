@@ -10,9 +10,13 @@ import {
   AUDIO_SEGMENT_MAX_LENGTH_M,
   AUDIO_SEGMENT_MAX_SPEED_MPS,
   AUDIO_SEGMENT_NEAR_M,
+  ROUTE3_PIN12_AFTER_ROAD_U,
+  canTriggerRoute3Pin12,
   type PinAudioDecision,
   type TimedFix,
 } from './pin-audio.ts'
+import route3Road from '@/data/route-3-road.json'
+import { distanceToPinMeters } from '@/lib/gps'
 
 type Fix = { dists: number[]; ok?: boolean[] }
 
@@ -48,6 +52,25 @@ describe('PinAudio', () => {
     expect(AUDIO_HEADING_TOLERANCE_DEG).toBe(90)
   })
 
+  describe('Route 3 PIN #12 roundabout pass gate', () => {
+    it('ignores the early overlapping trace pass and enables the later pass after #11', () => {
+      const pin12: [number, number] = [41.9183, 45.482891]
+      const earlyPass = (route3Road as [number, number][])
+        .slice(229, 232)
+        .some((point) => distanceToPinMeters(point, pin12) <= 4)
+      const laterPass = (route3Road as [number, number][])
+        .slice(255, 258)
+        .some((point) => distanceToPinMeters(point, pin12) <= 4)
+
+      expect(earlyPass).toBe(true)
+      expect(laterPass).toBe(true)
+      expect(ROUTE3_PIN12_AFTER_ROAD_U).toBe(256)
+      expect(canTriggerRoute3Pin12(255.99)).toBe(false)
+      expect(canTriggerRoute3Pin12(256)).toBe(true)
+      expect(canTriggerRoute3Pin12(null)).toBe(false)
+    })
+  })
+
   it('plays the next PIN at 20 m, not at 25 m', () => {
     const r = makeRunner(['a', 'b'])
     expect(r.step({ dists: [25, 300] })).toBe(null)
@@ -79,14 +102,15 @@ describe('PinAudio', () => {
     expect(r.step({ dists: [105, 190] })?.reason).toBe('passed')
   })
 
-  it('does not play or mark a later PIN when the expected PIN was missed', () => {
+  it('lookahead: GPS jumped to the following PIN → it plays, the missed one is passed silently', () => {
     const r = makeRunner(['a', 'b', 'c'])
     r.step({ dists: [50, 130, 400] })
     const d = r.step({ dists: [70, 8, 300] })
-    expect(d).toBeNull()
-    expect(r.played).toEqual([])
-    expect(r.triggered.has('a')).toBe(false)
-    expect(r.triggered.has('b')).toBe(false)
+    expect(d?.reason).toBe('lookahead')
+    expect(d?.index).toBe(1)
+    expect(d?.skipped).toEqual([0])
+    expect(r.played).toEqual(['b'])
+    expect(r.triggered.has('a')).toBe(true) // 'missed PIN must not block the sequence'
   })
 
   it('no skipping when the expected PIN was never approached (loops / overlapping streets)', () => {
@@ -94,6 +118,12 @@ describe('PinAudio', () => {
     expect(r.step({ dists: [500, 600, 10] })).toBe(null)
     expect(r.step({ dists: [500, 5, 400] })).toBe(null)
     expect(r.played).toEqual([])
+  })
+
+  it('lookahead is limited to the next 2 PINs', () => {
+    const r = makeRunner(['a', 'b', 'c', 'd'])
+    r.step({ dists: [50, 400, 400, 400] })
+    expect(r.step({ dists: [90, 400, 400, 5] })).toBe(null)
   })
 
   it('busy defers playback but not tracking; nothing is lost afterwards', () => {

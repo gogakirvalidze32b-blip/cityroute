@@ -99,12 +99,12 @@ function pinsForRoute(routeNumber) {
 
 /**
  * Forced vias only when direct OSRM misses the intended corridor.
- * - Roundabout east of #22/#23: direct 23→24 reverses before the circle;
+ * - Roundabout east of #22/#23: direct 22→23 reverses before the circle;
  *   via the ring so the blue line enters, turns, and comes back west.
  * Do NOT revive the old 41.91735/45.479 vias (Amirejibi south U-turn).
  */
 const VIA = {
-  '1:23-24': [[41.91902, 45.48565]],
+  '1:22-23': [[41.91902, 45.48565]],
 }
 
 async function legWithOptionalVias(routeNumber, fromPin, toPin, a, b) {

@@ -349,7 +349,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
   })
 
-  it('resumes automatic retries after repeated delayed errors without advancing', async () => {
+  it('pauses after three delayed failures and keeps the PIN available for manual retry', async () => {
     vi.useFakeTimers()
     h.autoEnd = false
     await emit(182)
@@ -358,10 +358,46 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       expect(onFailure).toBeTypeOf('function')
       await act(async () => {
         onFailure?.('media-error')
-        await vi.advanceTimersByTimeAsync(attempt === 0 ? 500 : attempt === 1 ? 1000 : 2000)
+        if (attempt < 2) {
+          await vi.advanceTimersByTimeAsync(attempt === 0 ? 500 : 1000)
+        }
       })
     }
+    expect(played()).toEqual(['pin-1', 'pin-1', 'pin-1'])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+    expect(screen.getByRole('alert').textContent).toContain('PIN გამოტოვებული არ არის')
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8000)
+    })
+    expect(played()).toHaveLength(3)
+
+    h.playStatus = 'played'
+    fireEvent.click(screen.getByRole('button', { name: 'აუდიოს ხელახლა ცდა' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
     expect(played()).toEqual(['pin-1', 'pin-1', 'pin-1', 'pin-1'])
+    await act(async () => {
+      h.playOptions[3]?.onEnded?.()
+    })
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
+  })
+
+  it('retries the same pending PIN after a playback timeout', async () => {
+    vi.useFakeTimers()
+    h.autoEnd = false
+    await emit(182)
+    expect(played()).toEqual(['pin-1'])
+
+    await act(async () => {
+      h.playOptions[0]?.onFailure?.('playback-timeout')
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(played()).toEqual(['pin-1', 'pin-1'])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
   })

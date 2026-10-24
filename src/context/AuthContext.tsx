@@ -20,8 +20,6 @@ import {
 
 import type { Session, User } from '@supabase/supabase-js'
 
-import type { SubscriptionPlan } from '@/data/subscription-plans'
-
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 
 import { getDeviceFingerprint, parseDeviceBindResult } from '@/lib/device'
@@ -39,70 +37,6 @@ import {
 import type { Profile } from '@/types/database'
 
 import { isAccessActive } from '@/types/database'
-
-
-
-const LOCAL_PLAN_KEY = 'cityroute-plan'
-
-
-
-function localPlanKey(userId: string) {
-
-  return `${LOCAL_PLAN_KEY}-${userId}`
-
-}
-
-
-
-function readLocalPlan(userId: string): SubscriptionPlan | null {
-
-  try {
-
-    const raw = localStorage.getItem(localPlanKey(userId))
-
-    if (raw === 'nav' || raw === 'panel' || raw === 'full') return raw as SubscriptionPlan
-
-  } catch {
-
-    /* ignore */
-
-  }
-
-  return null
-
-}
-
-
-
-function writeLocalPlan(userId: string, plan: SubscriptionPlan) {
-
-  try {
-
-    localStorage.setItem(localPlanKey(userId), plan)
-
-  } catch {
-
-    /* ignore */
-
-  }
-
-}
-
-
-
-function mergeProfilePlan(profile: Profile | null, userId: string): Profile | null {
-
-  if (!profile) return null
-
-  if (profile.subscription_plan) return profile
-
-  const local = readLocalPlan(userId)
-
-  if (!local) return profile
-
-  return { ...profile, subscription_plan: local }
-
-}
 
 
 
@@ -126,7 +60,7 @@ type AuthState = {
 
   refreshProfile: () => Promise<void>
 
-  selectPlan: (plan: SubscriptionPlan) => Promise<string | null>
+  selectPackage: (deviceSlots: number) => Promise<string | null>
 
   signUp: (email: string, password: string, fullName: string) => Promise<string | null>
 
@@ -150,7 +84,7 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
 
   if (error) throw error
 
-  return mergeProfilePlan(data, userId)
+  return data
 
 }
 
@@ -199,50 +133,6 @@ async function bindDevice(): Promise<string | null> {
     return null // არ უნდა აბლოკოს login-ს
 
   }
-
-}
-
-
-
-async function persistPlan(userId: string, plan: SubscriptionPlan): Promise<string | null> {
-
-  writeLocalPlan(userId, plan)
-
-
-
-  const supabase = getSupabase()
-
-  const { error: rpcError } = await supabase.rpc('select_subscription_plan', { chosen: plan })
-
-  if (!rpcError) return null
-
-
-
-  const { error: updateError } = await supabase
-
-    .from('profiles')
-
-    .update({ subscription_plan: plan })
-
-    .eq('id', userId)
-
-
-
-  if (updateError) {
-
-    if (updateError.message.includes('subscription_plan')) {
-
-      return null
-
-    }
-
-    return updateError.message
-
-  }
-
-
-
-  return null
 
 }
 
@@ -544,26 +434,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
 
-  const selectPlan = useCallback(
-
-    async (plan: SubscriptionPlan) => {
-
+  const selectPackage = useCallback(
+    async (deviceSlots: number) => {
       if (!session?.user) return 'ჯერ შედი ანგარიშში'
+      if (deviceSlots !== 1 && deviceSlots !== 2) return 'აირჩიე 1 ან 2 ავტომობილი'
 
-      const err = await persistPlan(session.user.id, plan)
-
-      if (err) return err
-
-      setProfile((prev) => (prev ? { ...prev, subscription_plan: plan } : prev))
+      const { error } = await getSupabase().rpc('select_subscription_package', {
+        p_device_slots: deviceSlots,
+      })
+      if (error) return error.message
 
       await refreshProfile()
-
       return null
-
     },
-
     [session?.user, refreshProfile],
-
   )
 
 
@@ -600,7 +484,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       refreshProfile,
 
-      selectPlan,
+      selectPackage,
 
       signUp,
 
@@ -628,7 +512,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       refreshProfile,
 
-      selectPlan,
+      selectPackage,
 
       signUp,
 
@@ -665,5 +549,3 @@ export function usePlanFeatures() {
   return useAuth().features
 
 }
-
-

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { VOICE_GAIN, VOICE_PITCH, VOICE_PLAYBACK_RATE, VOICE_VOLUME } from '@/lib/audio'
 import {
   safeVoiceGain,
+  VOICE_TARGET_RMS_DBFS,
   VOICE_LEVELS_BY_FILE,
   VOICE_PEAK_CEILING_DBFS,
 } from '@/lib/audio-normalization'
@@ -70,9 +71,9 @@ function wavLevels(file: string): { activeRmsDbfs: number; peakDbfs: number } {
 }
 
 describe('voice gain headroom', () => {
-  it('keeps media volume at 1, fallback gain at 2, pitch and speed unchanged', () => {
+  it('keeps media volume at 1, normalization ceiling at 4, pitch and speed unchanged', () => {
     expect(VOICE_VOLUME).toBe(1)
-    expect(VOICE_GAIN).toBe(2)
+    expect(VOICE_GAIN).toBe(4)
     expect(VOICE_PITCH).toBe('normal')
     expect(VOICE_PLAYBACK_RATE).toBe(1)
   })
@@ -86,10 +87,15 @@ describe('voice gain headroom', () => {
     expect(audio.volume).toBe(1)
   })
 
-  it('boosts every bundled voice WAV by 2x without clipping or changing source files', () => {
+  it('keeps unprofiled audio at the conservative fallback gain', () => {
+    expect(safeVoiceGain('/audio/remote-instruction.mp3', VOICE_GAIN)).toBe(2)
+  })
+
+  it('normalizes every bundled voice WAV without clipping or changing source files', () => {
     const files = wavFiles(join(process.cwd(), 'public', 'audio'))
     expect(files.length).toBeGreaterThan(0)
-    const profiles = files.map((file) => {
+    const normalizedLevels: number[] = []
+    files.forEach((file) => {
       const levels = wavLevels(file)
       const filename = file.split(/[\\/]/).pop()!
       const profile = VOICE_LEVELS_BY_FILE[filename]
@@ -97,13 +103,15 @@ describe('voice gain headroom', () => {
       expect(profile!.activeRmsDbfs).toBeCloseTo(levels.activeRmsDbfs, 1)
       expect(profile!.peakDbfs).toBeCloseTo(levels.peakDbfs, 1)
       const gain = safeVoiceGain(`/audio/${filename}`, VOICE_GAIN)
-      expect(gain).toBe(2)
       const amplifiedPeakDbfs =
         levels.peakDbfs + 20 * Math.log10(gain)
       expect(amplifiedPeakDbfs).toBeLessThanOrEqual(VOICE_PEAK_CEILING_DBFS + 0.05)
-      return levels.activeRmsDbfs + 20 * Math.log10(gain)
+      const normalizedRmsDbfs = levels.activeRmsDbfs + 20 * Math.log10(gain)
+      expect(normalizedRmsDbfs).toBeCloseTo(VOICE_TARGET_RMS_DBFS, 1)
+      expect(gain).toBeGreaterThan(2)
+      normalizedLevels.push(normalizedRmsDbfs)
     })
     expect(Object.keys(VOICE_LEVELS_BY_FILE)).toHaveLength(files.length)
-    expect(Math.max(...profiles) - Math.min(...profiles)).toBeLessThan(4.5)
+    expect(Math.max(...normalizedLevels) - Math.min(...normalizedLevels)).toBeLessThan(0.2)
   })
 })

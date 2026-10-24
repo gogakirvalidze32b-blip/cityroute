@@ -1,33 +1,26 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getSupabase } from '@/lib/supabase'
-import type { PaymentProvider } from '@/lib/payments/payment-service'
+import { calculatePrice } from '@/data/subscription-plans'
+import { getOrCreateBogPaymentRequestId } from '@/lib/bog-payment-request'
 
 type PaymentButtonProps = {
-  provider: PaymentProvider
-  amount: number
-  onPaymentInitiated?: (paymentId: string, paymentUrl: string) => void
+  deviceSlots: 1 | 2
   onError?: (error: string) => void
   disabled?: boolean
 }
 
 export function PaymentButton({
-  provider,
-  amount,
-  onPaymentInitiated,
+  deviceSlots,
   onError,
   disabled,
 }: PaymentButtonProps) {
   const [loading, setLoading] = useState(false)
+  const requestIdRef = useRef<string | null>(null)
+  const amount = calculatePrice('premium', deviceSlots)
 
-  const providerNames = {
-    tbc: 'TBC Bank',
-    bog: 'Bank of Georgia',
-  }
-
-  const providerLogos = {
-    tbc: '🏦 TBC',
-    bog: '🏦 BOG',
-  }
+  useEffect(() => {
+    requestIdRef.current = null
+  }, [deviceSlots])
 
   async function handlePayment() {
     setLoading(true)
@@ -41,11 +34,15 @@ export function PaymentButton({
         throw new Error('შესვლა საჭიროა')
       }
 
+      const requestId = requestIdRef.current ?? getOrCreateBogPaymentRequestId(deviceSlots)
+      requestIdRef.current = requestId
+
       // Call Supabase Edge Function to initialize payment
       const { data, error } = await supabase.functions.invoke('payment-initialize', {
         body: {
-          provider,
-          amount,
+          provider: 'bog',
+          deviceSlots,
+          requestId,
         },
       })
 
@@ -54,8 +51,6 @@ export function PaymentButton({
       }
 
       if (data.success && data.paymentUrl) {
-        onPaymentInitiated?.(data.paymentId, data.paymentUrl)
-        // Redirect to payment page
         window.location.href = data.paymentUrl
       } else {
         throw new Error(data.error || 'გადახდის URL ვერ მოიძებნა')
@@ -75,16 +70,14 @@ export function PaymentButton({
       className="payment-button"
       onClick={() => void handlePayment()}
       disabled={disabled || loading}
-      data-provider={provider}
+      data-provider="bog"
     >
       {loading ? (
         <>
           <span className="spinner">⏳</span> იტვირთება...
         </>
       ) : (
-        <>
-          {providerLogos[provider]} გადახდა {providerNames[provider]}-ით
-        </>
+        <>გადახდა — {amount} ₾</>
       )}
     </button>
   )

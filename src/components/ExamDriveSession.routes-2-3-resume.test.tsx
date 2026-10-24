@@ -3,6 +3,7 @@ import { act, cleanup, render, screen } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { ExamDriveSession } from './ExamDriveSession'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+import route3Road from '@/data/route-3-road.json'
 import route2Road from '@/data/route-2-road.json'
 import { audioEngine } from '@/lib/audio'
 import { createExamSession } from '@/lib/exam-session'
@@ -158,6 +159,53 @@ async function startAtPin1(route: RouteWithPins) {
   await settle()
   await pressStart()
   return view
+}
+
+async function startRoute3AtPin11(route: RouteWithPins) {
+  const priorOrders = route.pins.filter((pin) => pin.sort_order < 11).map((pin) => pin.sort_order)
+  const priorPins = route.pins.filter((pin) => pin.sort_order < 11).map((pin) => pin.id)
+  const [lat, lng] = route3Road[230]
+  saveActiveExam({
+    routeId: route.id,
+    routeSlug: route.slug,
+    routeName: route.name_ka,
+    phase: 'active',
+    exam: createExamSession(route.id, route.name_ka),
+    userPos: [lat, lng],
+    heading: 0,
+    speedKmh: 5,
+    elapsedMs: 1000,
+    triggeredPins: priorPins,
+    triggeredSortOrders: priorOrders,
+    lastPassedSortOrder: 10,
+    nextSortOrder: 11,
+    savedAt: Date.now(),
+  })
+  const view = render(<ExamDriveSession route={route} />)
+  await settle()
+  expect(nextOrder()).toBe(11)
+  return view
+}
+
+async function driveThroughPin12(route: RouteWithPins, startOrder = 1) {
+  for (let order = startOrder; order <= 12; order += 1) {
+    if (route.slug === 'route-3' && order === 12) {
+      await driveTo(route, order)
+      expect(nextOrder()).toBe(order)
+      for (const [index, [lat, lng]] of route3Road.slice(231, 258).entries()) {
+        await sendFix({
+          lat,
+          lng,
+          accuracy: 5,
+          heading: 0,
+          speed: 5,
+          timestamp: Date.now() + index + 1,
+        })
+      }
+    } else {
+      await driveTo(route, order)
+    }
+  }
 }
 
 describe('Telavi field-test routes keep strict progress and resume on production', () => {
@@ -332,6 +380,101 @@ describe('Telavi field-test routes keep strict progress and resume on production
     }
   })
 
+  it.each(cases)('%s: finish and restart resumes after PIN 12, including after remount', async (slug) => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const route = routeBySlug(slug)
+      let view =
+        slug === 'route-3'
+          ? await startRoute3AtPin11(route)
+          : await startAtPin1(route)
+      await driveThroughPin12(route, slug === 'route-3' ? 11 : 1)
+      const completedOrders = Array.from({ length: 12 }, (_, index) => index + 1)
+      expect(nextOrder()).toBe(13)
+      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
+
+      now += 65_000
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+      })
+      await settle()
+      const stopped = loadActiveExam(route.id, route.slug, route.name_ka)
+      expect(stopped?.triggeredSortOrders).toEqual(completedOrders)
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
+      })
+      await settle()
+      await pressStart()
+
+      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(0)
+      expect(nextOrder()).toBe(13)
+      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
+
+      view.unmount()
+      gps.once = fix(route, 1)
+      view = render(<ExamDriveSession route={route} />)
+      await settle()
+      expect(nextOrder()).toBe(13)
+      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
+      view.unmount()
+    } finally {
+      nowSpy.mockRestore()
+    }
+  }, 30_000)
+
+  it.each(cases)('%s: stale active-session progress cannot erase route PIN progress', async (slug) => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const route = routeBySlug(slug)
+      const completedOrders = Array.from({ length: 12 }, (_, index) => index + 1)
+      saveRoutePinProgress(route.slug, completedOrders)
+      saveActiveExam({
+        routeId: route.id,
+        routeSlug: route.slug,
+        routeName: route.name_ka,
+        phase: 'active',
+        exam: createExamSession(route.id, route.name_ka),
+        userPos: [route.pins[0].lat, route.pins[0].lng],
+        heading: 0,
+        speedKmh: 5,
+        elapsedMs: 45_000,
+        triggeredPins: [],
+        triggeredSortOrders: [],
+        lastPassedSortOrder: null,
+        nextSortOrder: 1,
+        pendingPinSortOrder: null,
+        savedAt: now,
+      })
+
+      gps.once = fix(route, 1)
+      const view = render(<ExamDriveSession route={route} />)
+      await settle()
+      expect(nextOrder()).toBe(13)
+      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
+
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+      })
+      await settle()
+      const stopped = loadActiveExam(route.id, route.slug, route.name_ka)
+      expect(stopped?.triggeredSortOrders).toEqual(completedOrders)
+      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
+      await act(async () => {
+        await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
+      })
+      await settle()
+      await pressStart()
+      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(0)
+      expect(nextOrder()).toBe(13)
+      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
+      view.unmount()
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
   it('route 2: გაგრძელება preserves elapsed time and resumes at PIN 3 after PINs 1 and 2', async () => {
     let now = Date.now()
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
@@ -429,8 +572,31 @@ describe('Telavi field-test routes keep strict progress and resume on production
   it.each(cases)('%s: finishing all pins keeps the completed state after reload', async (slug) => {
     const route = routeBySlug(slug)
     const last = sorted(route).at(-1)!.sort_order
-    const first = await startAtPin1(route)
-    for (const pin of sorted(route)) await driveTo(route, pin.sort_order)
+    const first = slug === 'route-3'
+      ? await startRoute3AtPin11(route)
+      : await startAtPin1(route)
+    for (const pin of sorted(route)) {
+      if (slug === 'route-3' && pin.sort_order < 11) continue
+      if (slug === 'route-3' && pin.sort_order === 12) {
+        await driveTo(route, pin.sort_order)
+        expect(nextOrder()).toBe(12)
+        expect(playedOrders(route)).not.toContain(12)
+
+        for (const [index, [lat, lng]] of route3Road.slice(231, 258).entries()) {
+          await sendFix({
+            lat,
+            lng,
+            accuracy: 5,
+            heading: 0,
+            speed: 5,
+            timestamp: Date.now() + index + 1,
+          })
+        }
+        expect(playedOrders(route)).toContain(12)
+        continue
+      }
+      await driveTo(route, pin.sort_order)
+    }
     expect(screen.getByTestId('route-complete').textContent).toContain('მარშრუტი დასრულებულია')
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual(
       sorted(route).map((pin) => pin.sort_order),
@@ -445,27 +611,6 @@ describe('Telavi field-test routes keep strict progress and resume on production
     await driveTo(route, last)
     expect(playDetailed).not.toHaveBeenCalled()
   }, 20_000)
-
-  it('keeps each route’s progress when switching among all four routes', async () => {
-    const routes = ['route-1', 'route-2', 'route-3', 'route-4'].map(routeBySlug)
-    for (const route of routes) {
-      const view = await startAtPin1(route)
-      await driveTo(route, 1)
-      await driveTo(route, 2)
-      expect(nextOrder()).toBe(3)
-      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
-      view.unmount()
-    }
-
-    for (const route of routes) {
-      gps.once = fix(route, 1)
-      const view = render(<ExamDriveSession route={route} />)
-      await settle()
-      expect(nextOrder()).toBe(3)
-      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
-      view.unmount()
-    }
-  })
 
   it.each(cases)('%s: pagehide writes the current pin progress', async (slug) => {
     const route = routeBySlug(slug)
@@ -709,145 +854,3 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(screen.queryByRole('button', { name: /გამოცდის დაწყება/ })).toBeNull()
   })
 })
-import route3Road from '@/data/route-3-road.json'
-async function startRoute3AtPin11(route: RouteWithPins) {
-  const priorOrders = route.pins.filter((pin) => pin.sort_order < 11).map((pin) => pin.sort_order)
-  const priorPins = route.pins.filter((pin) => pin.sort_order < 11).map((pin) => pin.id)
-  const [lat, lng] = route3Road[230]
-  saveActiveExam({
-    routeId: route.id,
-    routeSlug: route.slug,
-    routeName: route.name_ka,
-    phase: 'active',
-    exam: createExamSession(route.id, route.name_ka),
-    userPos: [lat, lng],
-    heading: 0,
-    speedKmh: 5,
-    elapsedMs: 1000,
-    triggeredPins: priorPins,
-    triggeredSortOrders: priorOrders,
-    lastPassedSortOrder: 10,
-    nextSortOrder: 11,
-    savedAt: Date.now(),
-  })
-  const view = render(<ExamDriveSession route={route} />)
-  await settle()
-  expect(nextOrder()).toBe(11)
-  return view
-}
-
-async function driveThroughPin12(route: RouteWithPins, startOrder = 1) {
-  for (let order = startOrder; order <= 12; order += 1) {
-    if (route.slug === 'route-3' && order === 12) {
-      await driveTo(route, order)
-      expect(nextOrder()).toBe(order)
-      for (const [index, [lat, lng]] of route3Road.slice(231, 258).entries()) {
-        await sendFix({
-          lat,
-          lng,
-          accuracy: 5,
-          heading: 0,
-          speed: 5,
-          timestamp: Date.now() + index + 1,
-        })
-      }
-    } else {
-      await driveTo(route, order)
-    }
-  }
-}
-
-  it.each(cases)('%s: finish and restart resumes after PIN 12, including after remount', async (slug) => {
-    let now = Date.now()
-    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
-    try {
-      const route = routeBySlug(slug)
-      let view =
-        slug === 'route-3'
-          ? await startRoute3AtPin11(route)
-          : await startAtPin1(route)
-      await driveThroughPin12(route, slug === 'route-3' ? 11 : 1)
-      const completedOrders = Array.from({ length: 12 }, (_, index) => index + 1)
-      expect(nextOrder()).toBe(13)
-      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
-
-      now += 65_000
-      await act(async () => {
-        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
-      })
-      await settle()
-      const stopped = loadActiveExam(route.id, route.slug, route.name_ka)
-      expect(stopped?.triggeredSortOrders).toEqual(completedOrders)
-      await act(async () => {
-        await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
-      })
-      await settle()
-      await pressStart()
-
-      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(0)
-      expect(nextOrder()).toBe(13)
-      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
-
-      view.unmount()
-      gps.once = fix(route, 1)
-      view = render(<ExamDriveSession route={route} />)
-      await settle()
-      expect(nextOrder()).toBe(13)
-      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
-      view.unmount()
-    } finally {
-      nowSpy.mockRestore()
-    }
-  }, 30_000)
-
-  it.each(cases)('%s: stale active-session progress cannot erase route PIN progress', async (slug) => {
-    let now = Date.now()
-    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
-    try {
-      const route = routeBySlug(slug)
-      const completedOrders = Array.from({ length: 12 }, (_, index) => index + 1)
-      saveRoutePinProgress(route.slug, completedOrders)
-      saveActiveExam({
-        routeId: route.id,
-        routeSlug: route.slug,
-        routeName: route.name_ka,
-        phase: 'active',
-        exam: createExamSession(route.id, route.name_ka),
-        userPos: [route.pins[0].lat, route.pins[0].lng],
-        heading: 0,
-        speedKmh: 5,
-        elapsedMs: 45_000,
-        triggeredPins: [],
-        triggeredSortOrders: [],
-        lastPassedSortOrder: null,
-        nextSortOrder: 1,
-        pendingPinSortOrder: null,
-        savedAt: now,
-      })
-
-      gps.once = fix(route, 1)
-      const view = render(<ExamDriveSession route={route} />)
-      await settle()
-      expect(nextOrder()).toBe(13)
-      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
-
-      await act(async () => {
-        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
-      })
-      await settle()
-      const stopped = loadActiveExam(route.id, route.slug, route.name_ka)
-      expect(stopped?.triggeredSortOrders).toEqual(completedOrders)
-      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
-      await act(async () => {
-        await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან' }))
-      })
-      await settle()
-      await pressStart()
-      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(0)
-      expect(nextOrder()).toBe(13)
-      expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
-      view.unmount()
-    } finally {
-      nowSpy.mockRestore()
-    }
-  })

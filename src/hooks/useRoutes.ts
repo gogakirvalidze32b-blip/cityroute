@@ -2,6 +2,7 @@
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { applyLocalTbilisiTestPin } from '@/data/local-tbilisi-test-pin'
+import { PREVIEW_TEST_ROUTE_ENABLED } from '@/lib/debug-flags'
 import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
 
 const MOVED_PINS: Array<[[number, number], [number, number]]> = [
@@ -47,12 +48,16 @@ export function selectRoutePins<T>(localPins: readonly T[], remotePins: readonly
  * route-polylines.ts / TELAVI_ROUTES_FALLBACK is the source of truth for map geometry and PIN coords.
  */
 function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): RouteWithPins[] {
+  const localRoutes = applyLocalTbilisiTestPin(
+    applyRelocatedPin(TELAVI_ROUTES_FALLBACK),
+    PREVIEW_TEST_ROUTE_ENABLED,
+  )
   if (!remoteRows?.length) {
     console.log('[DEBUG] mergeRoutes: No remote rows, returning TELAVI_ROUTES_FALLBACK')
-    return applyLocalTbilisiTestPin(applyRelocatedPin(TELAVI_ROUTES_FALLBACK))
+    return localRoutes
   }
 
-  return applyLocalTbilisiTestPin(applyRelocatedPin(TELAVI_ROUTES_FALLBACK)).map((local) => {
+  return localRoutes.map((local) => {
     const remote = remoteRows.find((r) => r.slug === local.slug)
     if (!remote) {
       console.log(`[DEBUG] mergeRoutes: ${local.slug} - no remote match, using local (${local.pins.length} pins)`)
@@ -78,7 +83,10 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
 
 export function useRoutes() {
   const [routes, setRoutes] = useState<RouteWithPins[]>(() =>
-    applyLocalTbilisiTestPin(applyRelocatedPin(TELAVI_ROUTES_FALLBACK)),
+    applyLocalTbilisiTestPin(
+      applyRelocatedPin(TELAVI_ROUTES_FALLBACK),
+      PREVIEW_TEST_ROUTE_ENABLED,
+    ),
   )
   const [source, setSource] = useState<'local' | 'merged'>('local')
 

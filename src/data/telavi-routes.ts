@@ -4,6 +4,7 @@ import route1Official from './route-1-official.json'
 import route2Official from './route-2-official.json'
 import auditedPins from './audio-audit-pins.fixture.json'
 import { L, TELAVI_CENTER } from './telavi-landmarks'
+import { applyCommonFinishInstructions } from './route-finish'
 
 export { TELAVI_CENTER }
 
@@ -100,7 +101,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 1,
     active: true,
     polyline: line('route-1', route1Fallback),
-    pins: ROUTE1_PINS_ENABLED ? route1Pins('local-route-1') : [],
+    pins: ROUTE1_PINS_ENABLED ? applyCommonFinishInstructions(route1Pins('local-route-1')) : [],
   },
   {
     id: 'local-route-2',
@@ -112,7 +113,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 2,
     active: true,
     polyline: line('route-2', route2Fallback),
-    pins: pinsFromAudit(2, 'local-route-2', 'p2'),
+    pins: applyCommonFinishInstructions(pinsFromAudit(2, 'local-route-2', 'p2')),
   },
   {
     id: 'local-route-3',
@@ -124,7 +125,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 3,
     active: true,
     polyline: line('route-3', route3Fallback),
-    pins: pinsFromAudit(3, 'local-route-3', 'p3'),
+    pins: applyCommonFinishInstructions(pinsFromAudit(3, 'local-route-3', 'p3')),
   },
   {
     id: 'local-route-4',
@@ -136,7 +137,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 4,
     active: true,
     polyline: line('route-4', route4Fallback),
-    pins: pinsFromAudit(4, 'local-route-4', 'p4'),
+    pins: applyCommonFinishInstructions(pinsFromAudit(4, 'local-route-4', 'p4')),
   },
   {
     id: 'local-route-5',

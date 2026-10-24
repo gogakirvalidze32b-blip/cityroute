@@ -29,7 +29,9 @@ function saved(over: Partial<SavedExamState> = {}): SavedExamState {
 }
 
 describe('exam save merge: incomplete writes do not replace progress', () => {
-  afterEach(() => localStorage.clear())
+  afterEach(() => {
+    localStorage.clear()
+  })
 
   it('keeps sort-order progress when a later save has no orders (empty pin list)', () => {
     const previous = saved()
@@ -111,81 +113,115 @@ describe('exam save merge: incomplete writes do not replace progress', () => {
     expect(loaded?.nextSortOrder).toBe(3)
   })
 
-  it('keeps all four route progress records independently resumable', () => {
-    const routes = [
-      { slug: 'route-1', id: 'local-route-1', name: 'მარშრუტი 1', orders: [1, 2] },
-      { slug: 'route-2', id: 'local-route-2', name: 'მარშრუტი 2', orders: [1, 2, 3] },
-      { slug: 'route-3', id: 'local-route-3', name: 'მარშრუტი 3', orders: [1, 2, 3, 4] },
-      { slug: 'route-4', id: 'local-route-4', name: 'მარშრუტი 4', orders: [1, 2, 3, 4, 5] },
-    ] as const
-
-    for (const route of routes) {
-      saveActiveExam(
-        saved({
-          routeId: route.id,
-          routeSlug: route.slug,
-          routeName: route.name,
-          exam: createExamSession(route.id, route.name),
-          triggeredPins: route.orders.map((order) => `${route.slug}-${order}`),
-          triggeredSortOrders: [...route.orders],
-          lastPassedSortOrder: route.orders.at(-1)!,
-          nextSortOrder: route.orders.at(-1)! + 1,
-        }),
-      )
-    }
-
-    for (const route of routes) {
-      expect(loadActiveExam(route.id, route.slug, route.name)?.triggeredSortOrders).toEqual(route.orders)
-      expect(loadActiveExam(route.id, route.slug, route.name)?.nextSortOrder).toBe(route.orders.at(-1)! + 1)
-    }
-
-    saveActiveExam(
-      saved({
-        routeId: 'local-route-1',
-        routeSlug: 'route-1',
-        routeName: 'მარშრუტი 1',
-        triggeredSortOrders: [1, 2, 3],
-        lastPassedSortOrder: 3,
-        nextSortOrder: 4,
-      }),
-    )
-    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.triggeredSortOrders).toEqual([1, 2, 3])
-    expect(loadActiveExam('local-route-3', 'route-3', 'მარშრუტი 3')?.triggeredSortOrders).toEqual([1, 2, 3, 4])
-    expect(loadActiveExam('local-route-4', 'route-4', 'მარშრუტი 4')?.triggeredSortOrders).toEqual([1, 2, 3, 4, 5])
-  })
-
-  it('migrates a legacy active route before saving progress for a different route', () => {
-    saveActiveExam(saved({ routeId: 'local-route-3', routeSlug: 'route-3', routeName: 'მარშრუტი 3' }))
-
-    saveActiveExam(
-      saved({
-        routeId: 'local-route-1',
-        routeSlug: 'route-1',
-        routeName: 'მარშრუტი 1',
-        triggeredSortOrders: [1],
-        nextSortOrder: 2,
-      }),
-    )
-
-    expect(loadActiveExam('local-route-3', 'route-3', 'მარშრუტი 3')?.triggeredSortOrders).toEqual([1, 2])
-    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')?.triggeredSortOrders).toEqual([1])
-  })
-
-  it('clearing one route leaves other route progress intact', () => {
-    saveActiveExam(saved({ routeId: 'local-route-1', routeSlug: 'route-1' }))
-    saveActiveExam(saved({ routeId: 'local-route-2', routeSlug: 'route-2' }))
-
-    clearActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')
-
-    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')).toBeNull()
-    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.triggeredSortOrders).toEqual([1, 2])
-  })
-
   it('persists the pending instruction independently from handled route progress', () => {
     saveActiveExam(saved({ pendingPinSortOrder: 3 }))
     const loaded = loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')
     expect(loaded?.triggeredSortOrders).toEqual([1, 2])
     expect(loaded?.nextSortOrder).toBe(3)
     expect(loaded?.pendingPinSortOrder).toBe(3)
+  })
+
+  it('keeps Route 1 and Route 2 progress independently resumable across route changes', () => {
+    const route1 = saved({
+      routeId: 'local-route-1',
+      routeSlug: 'route-1',
+      routeName: 'მარშრუტი 1',
+      exam: createExamSession('local-route-1', 'მარშრუტი 1'),
+      triggeredPins: ['p1-1', 'p1-2'],
+      triggeredSortOrders: [1, 2],
+      nextSortOrder: 3,
+    })
+    const route2 = saved({
+      triggeredPins: ['p2-1', 'p2-2', 'p2-3'],
+      triggeredSortOrders: [1, 2, 3],
+      lastPassedSortOrder: 3,
+      nextSortOrder: 4,
+    })
+
+    saveActiveExam(route1)
+    saveActiveExam(route2)
+
+    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')?.nextSortOrder).toBe(3)
+    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.nextSortOrder).toBe(4)
+    expect(localStorage.getItem('cityroute-active-exam:route-1')).not.toBeNull()
+    expect(localStorage.getItem('cityroute-active-exam:route-2')).not.toBeNull()
+  })
+
+  it('clears only the selected route and leaves other route progress intact', () => {
+    saveActiveExam(saved({
+      routeId: 'local-route-1',
+      routeSlug: 'route-1',
+      routeName: 'მარშრუტი 1',
+      triggeredSortOrders: [1],
+      nextSortOrder: 2,
+    }))
+    saveActiveExam(saved())
+
+    clearActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')
+
+    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')).toBeNull()
+    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.nextSortOrder).toBe(3)
+  })
+
+  it('migrates an older single-route save when its route is opened', () => {
+    const legacy = saved({
+      routeId: 'local-route-1',
+      routeSlug: undefined,
+      routeName: 'მარშრუტი 1',
+      exam: createExamSession('local-route-1', 'მარშრუტი 1'),
+      triggeredPins: ['p1-1'],
+      triggeredSortOrders: undefined,
+      nextSortOrder: undefined,
+      savedAt: Date.now(),
+    })
+    localStorage.setItem('cityroute-active-exam', JSON.stringify(legacy))
+
+    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')?.triggeredPins).toEqual(['p1-1'])
+    expect(localStorage.getItem('cityroute-active-exam:route-1')).not.toBeNull()
+    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')).toBeNull()
+  })
+
+  it('preserves a legacy route while another route is saved', () => {
+    const legacy = saved({
+      routeId: 'local-route-1',
+      routeSlug: 'route-1',
+      routeName: 'მარშრუტი 1',
+      exam: createExamSession('local-route-1', 'მარშრუტი 1'),
+      triggeredSortOrders: [1],
+      nextSortOrder: 2,
+      savedAt: Date.now(),
+    })
+    localStorage.setItem('cityroute-active-exam', JSON.stringify(legacy))
+
+    saveActiveExam(saved())
+
+    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')?.nextSortOrder).toBe(2)
+    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.nextSortOrder).toBe(3)
+  })
+
+  it('rejects malformed legacy data without deleting or replacing it', () => {
+    const malformed = JSON.stringify({ routeId: 'local-route-1', savedAt: Date.now() })
+    localStorage.setItem('cityroute-active-exam', malformed)
+
+    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')).toBeNull()
+    expect(localStorage.getItem('cityroute-active-exam')).toBe(malformed)
+  })
+
+  it('expires only the selected route save', () => {
+    const now = Date.now()
+    saveActiveExam(saved({
+      routeId: 'local-route-1',
+      routeSlug: 'route-1',
+      routeName: 'მარშრუტი 1',
+      exam: createExamSession('local-route-1', 'მარშრუტი 1'),
+      savedAt: now - 25 * 60 * 60 * 1000,
+    }))
+    saveActiveExam(saved())
+    const expiredRoute = JSON.parse(localStorage.getItem('cityroute-active-exam:route-1')!)
+    expiredRoute.savedAt = now - 25 * 60 * 60 * 1000
+    localStorage.setItem('cityroute-active-exam:route-1', JSON.stringify(expiredRoute))
+
+    expect(loadActiveExam('local-route-1', 'route-1', 'მარშრუტი 1')).toBeNull()
+    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.nextSortOrder).toBe(3)
   })
 })

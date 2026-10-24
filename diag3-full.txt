@@ -1,0 +1,168 @@
+﻿
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.3 [39m[90mC:/Users/For Home/Desktop/cityroute-speed-limit-preview[39m
+
+[90mstdout[2m | src/lib/__diag3.test.ts
+[22m[39m🔍 Supabase Config Check: {
+  url: [32m'MISSING'[39m,
+  anonKey: [32m'MISSING'[39m,
+  hasUrl: [33mfalse[39m,
+  hasAnonKey: [33mfalse[39m,
+  isPlaceholder: [90mundefined[39m
+}
+
+[90mstdout[2m | src/lib/__diag3.test.ts[2m > [22m[2mDIAG3[2m > [22m[2mnearest u per pin (no monotonic constraint)
+[22m[39m##### route-1 road=270 #####
+  pin # 1 nearestU=268.5 d=5.1m
+  pin # 2 nearestU=3.0 d=0.5m
+  pin # 3 nearestU=8.0 d=2.4m
+  pin # 4 nearestU=12.0 d=3.6m
+  pin # 5 nearestU=19.4 d=4.8m
+  pin # 6 nearestU=25.0 d=6.4m
+  pin # 7 nearestU=39.0 d=2.1m
+  pin # 8 nearestU=48.0 d=3.1m
+  pin # 9 nearestU=52.0 d=8.1m
+  pin #10 nearestU=57.0 d=7.5m
+  pin #11 nearestU=60.0 d=3.3m
+  pin #12 nearestU=74.0 d=0.6m
+  pin #13 nearestU=82.6 d=1.8m
+  pin #14 nearestU=91.1 d=0.1m
+  pin #15 nearestU=93.2 d=3.0m
+  pin #16 nearestU=98.0 d=2.3m
+  pin #17 nearestU=209.4 d=1.9m
+  pin #18 nearestU=112.1 d=3.1m
+  pin #19 nearestU=117.1 d=3.9m
+  pin #20 nearestU=197.2 d=3.4m
+  pin #21 nearestU=179.0 d=2.2m
+  pin #22 nearestU=165.5 d=3.0m
+  pin #23 nearestU=165.3 d=2.7m
+  pin #24 nearestU=167.0 d=0.7m
+  pin #25 nearestU=198.0 d=4.7m
+  pin #26 nearestU=205.0 d=0.0m
+  pin #27 nearestU=213.1 d=1.4m
+  pin #28 nearestU=220.0 d=6.1m
+  pin #29 nearestU=248.0 d=4.9m
+  pin #30 nearestU=251.0 d=2.2m
+  pin #31 nearestU=256.0 d=3.2m
+  pin #32 nearestU=262.4 d=4.1m
+  pin #33 nearestU=263.0 d=3.6m
+  pin #34 nearestU=267.0 d=4.4m
+  pin #35 nearestU=269.0 d=6.2m
+  monotonicInc=false monotonicDec=false first=268.5 last=269.0
+  road[0] vs lastPin ~Infinitym ; road[end] vs firstPin ~Infinitym
+  road[0]=[41.931477,45.475406] road[end]=[41.93154,45.475194]
+  firstPin=[41.931434,45.475383] lastPin=[41.931488,45.475166]
+##### route-2 road=247 #####
+  pin # 1 nearestU=245.5 d=5.1m
+  pin # 2 nearestU=3.0 d=0.5m
+  pin # 3 nearestU=229.1 d=4.1m
+  pin # 4 nearestU=12.0 d=3.3m
+  pin # 5 nearestU=18.0 d=4.8m
+  pin # 6 nearestU=49.5 d=2.0m
+  pin # 7 nearestU=55.0 d=0.4m
+  pin # 8 nearestU=58.0 d=5.4m
+  pin # 9 nearestU=67.0 d=2.7m
+  pin #10 nearestU=79.2 d=3.4m
+  pin #11 nearestU=81.1 d=3.4m
+  pin #12 nearestU=91.0 d=0.8m
+  pin #13 nearestU=107.0 d=6.8m
+  pin #14 nearestU=120.0 d=3.7m
+  pin #15 nearestU=126.0 d=1.9m
+  pin #16 nearestU=132.0 d=2.2m
+  pin #17 nearestU=144.3 d=2.7m
+  pin #18 nearestU=146.0 d=0.7m
+  pin #19 nearestU=176.0 d=4.7m
+  pin #20 nearestU=186.4 d=1.9m
+  pin #21 nearestU=190.1 d=1.4m
+  pin #22 nearestU=197.0 d=6.1m
+  pin #23 nearestU=225.0 d=4.9m
+  pin #24 nearestU=228.0 d=2.2m
+  pin #25 nearestU=11.9 d=3.2m
+  pin #26 nearestU=239.4 d=4.1m
+  pin #27 nearestU=240.0 d=3.6m
+  pin #28 nearestU=244.0 d=4.4m
+  pin #29 nearestU=246.0 d=6.2m
+  monotonicInc=false monotonicDec=false first=245.5 last=246.0
+  road[0] vs lastPin ~Infinitym ; road[end] vs firstPin ~Infinitym
+  road[0]=[41.931477,45.475406] road[end]=[41.93154,45.475194]
+  firstPin=[41.931434,45.475383] lastPin=[41.931488,45.475166]
+##### route-3 road=356 #####
+  pin # 1 nearestU=354.5 d=5.1m
+  pin # 2 nearestU=2.6 d=0.5m
+  pin # 3 nearestU=8.0 d=2.4m
+  pin # 4 nearestU=11.0 d=3.6m
+  pin # 5 nearestU=18.0 d=6.6m
+  pin # 6 nearestU=150.2 d=3.4m
+  pin # 7 nearestU=302.9 d=1.0m
+  pin # 8 nearestU=186.0 d=5.1m
+  pin # 9 nearestU=193.2 d=6.6m
+  pin #10 nearestU=204.0 d=0.1m
+  pin #11 nearestU=258.0 d=1.4m
+  pin #12 nearestU=254.7 d=2.6m
+  pin #13 nearestU=225.5 d=2.1m
+  pin #14 nearestU=277.3 d=5.1m
+  pin #15 nearestU=26.0 d=5.4m
+  pin #16 nearestU=57.0 d=0.2m
+  pin #17 nearestU=72.0 d=4.8m
+  pin #18 nearestU=75.0 d=1.1m
+  pin #19 nearestU=92.0 d=0.9m
+  pin #20 nearestU=110.0 d=3.7m
+  pin #21 nearestU=121.3 d=1.8m
+  pin #22 nearestU=131.0 d=8.8m
+  pin #23 nearestU=134.0 d=0.5m
+  pin #24 nearestU=144.0 d=3.7m
+  pin #25 nearestU=332.2 d=4.9m
+  pin #26 nearestU=335.0 d=2.2m
+  pin #27 nearestU=341.0 d=3.2m
+  pin #28 nearestU=348.5 d=4.1m
+  pin #29 nearestU=349.0 d=3.6m
+  pin #30 nearestU=353.0 d=4.4m
+  pin #31 nearestU=355.0 d=6.2m
+  monotonicInc=false monotonicDec=false first=354.5 last=355.0
+  road[0] vs lastPin ~Infinitym ; road[end] vs firstPin ~Infinitym
+  road[0]=[41.931477,45.475406] road[end]=[41.93154,45.475194]
+  firstPin=[41.931434,45.475383] lastPin=[41.931488,45.475166]
+##### route-4 road=236 #####
+  pin # 1 nearestU=234.5 d=5.1m
+  pin # 2 nearestU=2.3 d=0.4m
+  pin # 3 nearestU=8.0 d=2.4m
+  pin # 4 nearestU=11.0 d=3.6m
+  pin # 5 nearestU=18.0 d=6.6m
+  pin # 6 nearestU=24.0 d=3.4m
+  pin # 7 nearestU=41.1 d=1.0m
+  pin # 8 nearestU=54.4 d=5.2m
+  pin # 9 nearestU=61.2 d=6.6m
+  pin #10 nearestU=158.1 d=2.9m
+  pin #11 nearestU=95.0 d=5.3m
+  pin #12 nearestU=100.5 d=1.6m
+  pin #13 nearestU=107.1 d=0.7m
+  pin #14 nearestU=114.5 d=9.0m
+  pin #15 nearestU=118.0 d=6.8m
+  pin #16 nearestU=131.0 d=3.7m
+  pin #17 nearestU=137.0 d=1.9m
+  pin #18 nearestU=143.0 d=2.2m
+  pin #19 nearestU=69.0 d=0.6m
+  pin #20 nearestU=154.0 d=0.6m
+  pin #21 nearestU=163.2 d=10.0m
+  pin #22 nearestU=179.0 d=0.9m
+  pin #23 nearestU=186.0 d=2.2m
+  pin #24 nearestU=190.0 d=4.8m
+  pin #25 nearestU=195.0 d=2.9m
+  pin #26 nearestU=214.2 d=4.9m
+  pin #27 nearestU=217.0 d=2.2m
+  pin #28 nearestU=222.0 d=3.2m
+  pin #29 nearestU=228.5 d=4.1m
+  pin #30 nearestU=229.0 d=3.6m
+  pin #31 nearestU=233.0 d=4.4m
+  pin #32 nearestU=235.0 d=6.2m
+  monotonicInc=false monotonicDec=false first=234.5 last=235.0
+  road[0] vs lastPin ~Infinitym ; road[end] vs firstPin ~Infinitym
+  road[0]=[41.931477,45.475406] road[end]=[41.93154,45.475194]
+  firstPin=[41.931434,45.475383] lastPin=[41.931488,45.475166]
+
+ [32m✓[39m src/lib/__diag3.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 19[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m   Start at [22m 18:15:07
+[2m   Duration [22m 2.63s[2m (environment 56%, setup 21%, transform 14%, import 8%, worker 1%, tests 1%)[22m
+

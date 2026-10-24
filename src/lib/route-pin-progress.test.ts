@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { clearActiveExam } from '@/lib/exam-persistence'
 import { nextSortOrder } from '@/lib/route-resume'
-import { loadRoutePinProgress, saveRoutePinProgress } from './route-pin-progress'
+import {
+  clearRoutePinProgress,
+  loadRoutePinProgress,
+  saveRoutePinProgress,
+} from './route-pin-progress'
 
 const ROUTES = ['route-1', 'route-2', 'route-3', 'route-4'].map((slug) => {
   const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
@@ -42,5 +46,16 @@ describe('route PIN progress is independent from the active session', () => {
 
     expect(loadRoutePinProgress(route1.slug)).toEqual([1, 2, 3])
     expect(loadRoutePinProgress(route2.slug)).toEqual([1, 2])
+  })
+
+  it('clears only the explicitly restarted route progress', () => {
+    const [route1, route2] = ROUTES
+    saveRoutePinProgress(route1.slug, [1, 2])
+    saveRoutePinProgress(route2.slug, [1, 2, 3])
+
+    clearRoutePinProgress(route1.slug)
+
+    expect(loadRoutePinProgress(route1.slug)).toBeNull()
+    expect(loadRoutePinProgress(route2.slug)).toEqual([1, 2, 3])
   })
 })

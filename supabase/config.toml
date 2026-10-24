@@ -1,0 +1,2 @@
+[functions.payment-webhook-bog]
+verify_jwt = false

@@ -2,8 +2,8 @@ import type { PinRow, RouteWithPins } from '@/types/database'
 import tbilisiTestRoad from '@/data/test-route-tbilisi-road.json'
 
 /**
- * Standalone GPS test city, local only. Not an exam-agency route and not stored in Supabase:
- * no agency start/finish point, no Telavi data. The road trace follows OSM streets between the pins.
+ * Standalone GPS test city, enabled only in local development and Vercel Preview.
+ * It is not an exam-agency route and is never stored in Supabase.
  */
 const ROUTE_ID = 'local-test-tbilisi'
 
@@ -42,9 +42,10 @@ export const LOCAL_TBILISI_TEST_ROUTE: RouteWithPins = {
   pins,
 }
 
-export function applyLocalTbilisiTestPin(routes: RouteWithPins[]): RouteWithPins[] {
-  return [
-    ...routes.filter((route) => route.slug !== LOCAL_TBILISI_TEST_ROUTE.slug),
-    LOCAL_TBILISI_TEST_ROUTE,
-  ]
+export function applyLocalTbilisiTestPin(
+  routes: RouteWithPins[],
+  enabled = true,
+): RouteWithPins[] {
+  const officialRoutes = routes.filter((route) => route.slug !== LOCAL_TBILISI_TEST_ROUTE.slug)
+  return enabled ? [...officialRoutes, LOCAL_TBILISI_TEST_ROUTE] : officialRoutes
 }

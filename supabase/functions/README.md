@@ -1,162 +1,68 @@
-# CityRoute Payment Edge Functions
+# CityRoute BOG Payments (Preview)
 
-Supabase Edge Functions for handling TBC and BOG bank payment integrations.
+The Preview payment flow is locked to Bank of Georgia's Sandbox API. It uses the bank-hosted checkout page; CityRoute never collects card data. Premium is activated only after a signed callback or an authenticated return check fetches the authoritative receipt from BOG and confirms the amount, currency, and order IDs.
 
 ## Functions
 
-### 1. payment-initialize
-Creates payment with TBC or BOG bank and returns payment URL.
-- **Endpoint**: `/functions/v1/payment-initialize`
-- **Method**: POST
-- **Auth**: Required (user token)
-- **Body**: 
-  ```json
-  {
-    "provider": "tbc" | "bog",
-    "amount": 99
-  }
-  ```
+### `payment-initialize`
 
-### 2. payment-webhook-tbc
-Receives callbacks from TBC Bank when payment status changes.
-- **Endpoint**: `/functions/v1/payment-webhook-tbc`
-- **Method**: POST
-- **Auth**: None (called by TBC)
-- **Body**: TBC callback payload with `PaymentId`
+Authenticated `POST /functions/v1/payment-initialize` with:
 
-### 3. payment-webhook-bog
-Receives callbacks from Bank of Georgia when payment status changes.
-- **Endpoint**: `/functions/v1/payment-webhook-bog`
-- **Method**: POST
-- **Auth**: None (called by BOG)
-- **Body**: BOG callback payload with `order_id`
-
-### 4. payment-verify
-Verifies payment status after user returns from bank page.
-- **Endpoint**: `/functions/v1/payment-verify?paymentId=xxx&provider=tbc`
-- **Method**: GET
-- **Auth**: None (public endpoint)
-- **Query Params**: `paymentId`, `provider`
-
-## Deployment
-
-### Prerequisites
-1. Install Supabase CLI: https://supabase.com/docs/guides/cli
-2. Link to your project: `supabase link --project-ref your-project-ref`
-
-### Environment Variables
-Create `.env` file in `supabase/functions/`:
-
-```bash
-# Supabase
-SUPABASE_URL=https://your-project-ref.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
-# TBC Bank
-TBC_API_KEY=your-tbc-api-key
-TBC_CLIENT_ID=your-tbc-client-id
-TBC_CLIENT_SECRET=your-tbc-client-secret
-
-# Bank of Georgia
-BOG_CLIENT_ID=your-bog-client-id
-BOG_SECRET_KEY=your-bog-secret-key
-
-# App URL
-APP_URL=https://cityroute.vercel.app
+```json
+{
+  "provider": "bog",
+  "deviceSlots": 1
+}
 ```
 
-### Deploy All Functions
+The server accepts `deviceSlots` 1 or 2 and derives 99 GEL or 179 GEL. It also requires a client-generated UUID `requestId`, retained in tab-scoped session storage until the bank return. Retries reuse that ID; the server derives a stable, user-scoped BOG idempotency key and merchant order ID. BOG and the database both reject duplicate payment creation for that request.
 
-```bash
-# From project root
-cd supabase/functions
+### `payment-webhook-bog`
 
-# Deploy all functions
-supabase functions deploy payment-initialize
-supabase functions deploy payment-webhook-tbc
-supabase functions deploy payment-webhook-bog
-supabase functions deploy payment-verify
-```
+The public callback endpoint is configured with `verify_jwt = false` because BOG cannot send a Supabase user JWT. It verifies BOG's `Callback-Signature` against the exact raw request body before parsing it, then fetches the receipt directly from BOG. Invalid signatures, order IDs, amounts, or currencies cannot activate Premium.
 
-### Set Environment Variables
+The callback verifier uses BOG's Sandbox-specific public key from the Sandbox callback documentation. Do not replace it with the Production key. Repeated or stale callback notifications are safe: the handler fetches the current bank receipt, and the database locks the payment row and ignores duplicate or backward status transitions.
 
-```bash
-# Set secrets for all functions
-supabase secrets set --env-file .env
-```
+### `payment-verify`
 
-## Bank Configuration
+Authenticated `GET /functions/v1/payment-verify?merchantPaymentId=<merchant_order_id>&provider=bog`
 
-### TBC Bank
-1. Register at https://developers.tbcbank.ge/
-2. Create developer app to get API key
-3. Register as E-Commerce merchant to get client_id and client_secret
-4. Add callback URL in merchant dashboard: `https://your-project-ref.supabase.co/functions/v1/payment-webhook-tbc`
-5. Whitelist IPs: 193.104.20.44, 193.104.20.45, 185.52.80.44, 185.52.80.45
+The payment return page sends the merchant order ID known before redirect. The function requires the signed-in owner, retrieves their stored transaction, fetches the order receipt from BOG, validates it, and records the verified status. A browser redirect by itself never activates Premium.
 
-### Bank of Georgia
-1. Register at https://api.bog.ge/
-2. Create OAuth2 application to get client_id and secret_key
-3. Add callback URL: `https://your-project-ref.supabase.co/functions/v1/payment-webhook-bog`
+### Status and refund behavior
 
-## Database Migration
+- `completed` activates Premium only after receipt verification.
+- `rejected` is shown as a failed payment; a returned `cancelled`/`canceled` status is shown as cancellation. BOG's documented receipt statuses do not list a dedicated cancellation status, so its fail-return URL only displays an uncompleted-checkout hint while the server verifies the receipt. Redirect parameters never change the stored payment state or activate Premium.
+- `refunded_partially` is recorded distinctly and never activates access. If the transaction had already activated Premium, its existing expiry and device slots are preserved; no proportional refund-to-time rule is configured.
+- `refunded` is recorded without changing profile access. The refund requires manual entitlement review; it does not automatically grant, extend, or revoke a subscription.
+- Known in-progress statuses remain pending. An unrecognized bank status is stored as processing, displayed as unknown, and never activates Premium.
 
-Run the payment transactions migration:
+## Preview setup
 
-```sql
--- In Supabase SQL Editor
--- Run: supabase/migrations/002_payment_transactions.sql
-```
+Configure these as **Supabase Preview Edge Function secrets**, not Vercel browser variables:
 
-This creates:
-- `payment_transactions` table
-- RPC functions for payment management
-- Indexes for performance
+- `BOG_CLIENT_KEY` — the bank-issued `client_id` value. `BOG_CLIENT_ID` is also accepted for existing Preview configuration.
+- `BOG_SECRET_KEY` — the bank-issued `client_secret` value; server-side only.
+- `APP_URL` — the HTTPS Vercel Preview origin used for the return URL.
+- Supabase provides `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to Edge Functions.
 
-## Testing
+The current functions use the Sandbox-only endpoints documented by BOG:
 
-### Local Development
+- OAuth: `https://oauth2-sandbox.bog.ge/auth/realms/bog/protocol/openid-connect/token`
+- Orders and receipts: `https://api-sandbox.bog.ge`
+- Checkout: only `https://payment-sandbox.bog.ge`
 
-```bash
-# Start Supabase locally
-supabase start
+The local migration files are not applied by this change. Migration 011 preserves known `premium`, `nav`, `panel`, and `full` plan labels, aborts on unknown labels, and aborts rather than dropping multi-column CHECK constraints. It still drops simple checks on `subscription_plan`, drops the `profiles_update_own` policy, and revokes direct profile updates from `anon` and `authenticated`; verify any external profile-edit paths first. The current client does not have a confirmed feature mapping for the old `nav`/`panel`/`full` values, so preserving the labels alone does not resolve their runtime entitlement mapping.
 
-# Serve functions locally
-supabase functions serve --env-file .env
+Migration 012 stacks a verified 30-day purchase after a still-valid active subscription. It checks for duplicate BOG idempotency and merchant IDs before adding unique indexes and aborts on unexpected payment-status CHECK constraints or values. These checks were not run against a database. Review the Preview database and migration history before applying. Refund status is transaction-only pending manual entitlement review. Do not apply either migration without reviewing the Preview impact and confirming profile-update RPC coverage.
 
-# Test payment initialization
-curl -X POST http://localhost:54321/functions/v1/payment-initialize \
-  -H "Authorization: Bearer YOUR_USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"provider":"tbc","amount":99}'
-```
+After approval and only in Preview, migrations must be applied in numeric order. Register `https://<preview-project-ref>.supabase.co/functions/v1/payment-webhook-bog` as the callback URL for the **Sandbox merchant**. Do not use live credentials or endpoints in Preview.
 
-### Production Testing
+This repository change does not configure remote Supabase secrets, apply migrations, register the bank callback, or deploy Edge Functions. Those Preview setup steps are required for end-to-end payment testing.
 
-Use TBC/BOG sandbox environments for testing before going live.
+## Official BOG references
 
-## Monitoring
-
-View function logs:
-
-```bash
-# Real-time logs
-supabase functions logs payment-initialize --follow
-
-# Specific time range
-supabase functions logs payment-webhook-tbc --since 1h
-```
-
-## Security
-
-- Edge functions run in isolated Deno runtime
-- Service role key has full database access (use carefully)
-- Webhook endpoints verify payment status with bank APIs
-- All payment status updates require bank verification
-
-## Support
-
-- TBC Docs: https://developers.tbcbank.ge/docs/checkout-overview
-- BOG Docs: https://api.bog.ge/docs/en/payments/introduction
-- Supabase Edge Functions: https://supabase.com/docs/guides/functions
+- [Authentication](https://api.bog.ge/docs/en/payments/authentication.md)
+- [Order request](https://api.bog.ge/docs/en/sandbox/payments/standard-process/create-order.md)
+- [Payment details](https://api.bog.ge/docs/en/payments/standard-process/get-payment-details.md)
+- [Callback signature](https://api.bog.ge/docs/en/payments/standard-process/callback.md)

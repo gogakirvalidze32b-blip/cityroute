@@ -95,6 +95,10 @@ export type Database = {
         Args: { chosen: string }
         Returns: Json
       }
+      select_subscription_package: {
+        Args: { p_device_slots: number }
+        Returns: Json
+      }
     }
     Enums: Record<string, never>
     CompositeTypes: Record<string, never>

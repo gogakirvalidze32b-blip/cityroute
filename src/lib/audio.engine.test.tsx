@@ -91,7 +91,7 @@ function installFakes(b: Behaviour = {}, ctxState: 'running' | 'suspended-hang' 
     configurable: true,
     value: { speak, cancel: vi.fn(), getVoices: () => [], addEventListener: vi.fn() },
   })
-  return { created, sources, gains, compressors, filters, resume, speak }
+  return { created, sources, gains, compressors, filters, resume, speak, behaviour: b }
 }
 
 async function freshEngine() {
@@ -106,6 +106,7 @@ describe('AudioEngine', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
   })
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
@@ -139,7 +140,7 @@ describe('AudioEngine', () => {
     expect(f.speak).not.toHaveBeenCalled()
   })
 
-  it('uses one 2x gain and peak compressor for every voice without opening the EQ graph', async () => {
+  it('uses one shared gain graph for every voice without opening the EQ graph', async () => {
     const f = installFakes()
     const ctorSpy = vi.fn()
     const Base = (globalThis as unknown as { AudioContext: new () => object }).AudioContext
@@ -168,18 +169,19 @@ describe('AudioEngine', () => {
     expect(f.speak).not.toHaveBeenCalled()
   })
 
-  it('applies the safe per-file 2x gain without overlapping or replaying audio', async () => {
+  it('applies safe per-file loudness gain without overlapping or replaying audio', async () => {
     const f = installFakes()
     const engine = await freshEngine()
     const quietUrl = '/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav'
     const loudUrl = '/audio/points/300 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ.wav'
-    const expectedQuietGain = safeVoiceGain(quietUrl, 2)
-    const expectedLoudGain = safeVoiceGain(loudUrl, 2)
+    const expectedQuietGain = safeVoiceGain(quietUrl, 4)
+    const expectedLoudGain = safeVoiceGain(loudUrl, 4)
     const onEnded = vi.fn()
     engine.setVolume(0.5)
 
     expect(await engine.playDetailed(quietUrl, 'quiet-pin', 'text', { onEnded })).toBe('played')
     expect(f.gains[0].gain.value).toBeCloseTo(expectedQuietGain)
+    expect(expectedQuietGain).toBeGreaterThan(2)
     expect(f.created[0].volume).toBe(0.5)
     expect(await engine.playDetailed(loudUrl, 'next-pin', 'text')).toBe('busy')
     expect(f.created).toHaveLength(1)
@@ -188,6 +190,7 @@ describe('AudioEngine', () => {
 
     expect(await engine.playDetailed(loudUrl, 'next-pin', 'text')).toBe('played')
     expect(f.gains[0].gain.value).toBeCloseTo(expectedLoudGain)
+    expect(expectedLoudGain).toBeGreaterThan(2)
     expect(f.created).toHaveLength(2)
     expect(f.created.every((audio) => audio.playbackRate === 1)).toBe(true)
   })
@@ -307,6 +310,25 @@ describe('AudioEngine', () => {
     expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('played')
   })
 
+  it('times out a stuck playback, releases busy state, and allows the same PIN to retry', async () => {
+    vi.useFakeTimers()
+    const f = installFakes({ playNeverResolves: true })
+    const engine = await freshEngine()
+    const onFailure = vi.fn()
+    const request = engine.playDetailed('/audio/a.wav', 'p1', 't', { onFailure })
+    await vi.advanceTimersByTimeAsync(12_000)
+
+    await expect(request).resolves.toBe('failed')
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(engine.isBusy()).toBe(false)
+    expect(f.created[0].pause).toHaveBeenCalled()
+    expect(engine.getDiagnostics().map((entry) => entry.reason)).toContain('playback-timeout')
+
+    f.behaviour.playNeverResolves = false
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't')).toBe('played')
+    expect(engine.isBusy()).toBe(true)
+  })
+
   it('does not let a stale media callback clear or fail a newer playback', async () => {
     const f = installFakes()
     const engine = await freshEngine()
@@ -363,9 +385,9 @@ describe('AudioEngine', () => {
     expect(f2.speak).not.toHaveBeenCalled()
   })
 
-  it('keeps 2x gain while preserving media volume and playback rate', async () => {
+  it('keeps the 4x normalization ceiling while preserving media volume and playback rate', async () => {
     const mod = await import('./audio')
-    expect(mod.VOICE_GAIN).toBe(2)
+    expect(mod.VOICE_GAIN).toBe(4)
     expect(mod.VOICE_VOLUME).toBe(1)
     expect(mod.VOICE_PLAYBACK_RATE).toBe(1)
   })

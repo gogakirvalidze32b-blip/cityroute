@@ -20,6 +20,7 @@ vi.mock('@/context/AuthContext', () => ({
 vi.mock('@/hooks/useExamLayoutMode', () => ({ useExamLayoutMode: () => 'desktop' as const }))
 const audioAttempts = vi.hoisted(() => ({
   failures: [] as Array<() => void>,
+  autoEnd: true,
 }))
 vi.mock('@/lib/audio', () => ({
   audioEngine: {
@@ -174,10 +175,12 @@ describe('standalone test city „ტესტი — თბილისი“',
     localStorage.clear()
     playDetailed.mockReset()
     audioAttempts.failures = []
+    audioAttempts.autoEnd = true
     playDetailed.mockImplementation((_url, _pinId, _instruction, options) => {
       if (options?.onFailure) {
         audioAttempts.failures.push(() => options.onFailure('media-error'))
       }
+      if (audioAttempts.autoEnd) options?.onEnded?.()
       return Promise.resolve('played')
     })
     gps.onFix = null
@@ -255,6 +258,7 @@ describe('standalone test city „ტესტი — თბილისი“',
   })
 
   it('retries a delayed audio error at most three times and persists rollback for the PIN', async () => {
+    audioAttempts.autoEnd = false
     await startAtPin1()
     await driveTo(1)
 
@@ -263,7 +267,7 @@ describe('standalone test city „ტესტი — თბილისი“',
       await act(async () => {
         audioAttempts.failures[attempt]!()
       })
-      await settle()
+      await settle(attempt < 2 ? 550 * 2 ** attempt : 20)
 
       if (attempt < 2) {
         expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredPins).not.toContain(pin(1).id)

@@ -1,4 +1,6 @@
 export const VOICE_PEAK_CEILING_DBFS = -3
+export const VOICE_TARGET_RMS_DBFS = -27
+const UNPROFILED_VOICE_GAIN = 2
 
 export type VoiceFileLevel = {
   activeRmsDbfs: number
@@ -49,8 +51,9 @@ function audioFilename(url: string): string | null {
 export function safeVoiceGain(url: string, requestedGain: number): number {
   const filename = audioFilename(url)
   const levels = filename ? VOICE_LEVELS_BY_FILE[filename] : undefined
-  if (!levels) return requestedGain
+  if (!levels) return Math.min(requestedGain, UNPROFILED_VOICE_GAIN)
 
+  const loudnessGain = 10 ** ((VOICE_TARGET_RMS_DBFS - levels.activeRmsDbfs) / 20)
   const peakSafeGain = 10 ** ((VOICE_PEAK_CEILING_DBFS - levels.peakDbfs) / 20)
-  return Math.min(requestedGain, peakSafeGain)
+  return Math.min(requestedGain, loudnessGain, peakSafeGain)
 }

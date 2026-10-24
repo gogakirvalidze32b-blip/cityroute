@@ -8,7 +8,6 @@ import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { PlanSelectionPage } from '@/pages/PlanSelectionPage'
 import { PaymentReturnPage } from '@/pages/PaymentReturnPage'
-import { DemoPreviewPage } from '@/pages/DemoPreviewPage'
 import { PrivacyPolicyPage } from '@/pages/PrivacyPolicyPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { RoutePage } from '@/pages/RoutePage'
@@ -28,10 +27,16 @@ export default function App() {
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/debug-login" element={<DebugLoginPage />} />
           <Route path="/payment/return" element={<PaymentReturnPage />} />
-          <Route path="/demo-preview" element={<DemoPreviewPage />} />
+          <Route path="/demo-preview" element={<Navigate to="/choose-plan" replace />} />
           <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
           <Route path="/support" element={<SupportChatPage />} />
           <Route path="/support-admin" element={<SupportAdminPage />} />
+          {import.meta.env.DEV && (
+            <>
+              <Route path="/premium-preview/trial" element={<PlanSelectionPage previewMode="trial" />} />
+              <Route path="/premium-preview/expired" element={<PlanSelectionPage previewMode="expired" />} />
+            </>
+          )}
           <Route element={<ProtectedRoute />}>
             <Route path="/choose-plan" element={<PlanSelectionPage />} />
             <Route element={<PlanGate />}>

@@ -1,60 +1,100 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
+import { useAuth } from '@/context/AuthContext'
+import { clearBogPaymentRequestIds } from '@/lib/bog-payment-request'
 import { getSupabase } from '@/lib/supabase'
 
-type PaymentStatus = 'checking' | 'success' | 'failed' | 'pending'
+type PaymentStatus =
+  | 'checking'
+  | 'success'
+  | 'failed'
+  | 'pending'
+  | 'cancelled'
+  | 'refunded'
+  | 'refunded_partially'
+  | 'unknown'
 
 export function PaymentReturnPage() {
   const [searchParams] = useSearchParams()
   const [status, setStatus] = useState<PaymentStatus>('checking')
   const [message, setMessage] = useState<string>('')
+  const { refreshProfile } = useAuth()
 
   useEffect(() => {
+    clearBogPaymentRequestIds()
     const paymentId = searchParams.get('paymentId') || searchParams.get('order_id')
+    const merchantPaymentId = searchParams.get('merchantPaymentId')
+    const paymentLookup = merchantPaymentId
+      ? { merchantPaymentId }
+      : paymentId
+        ? { paymentId }
+        : null
     const provider = searchParams.get('provider')
+    const returnedWithoutCompletion = searchParams.get('checkout') === 'not-completed'
+    let active = true
 
-    if (!paymentId || !provider) {
+    if (!paymentLookup || provider !== 'bog') {
       setStatus('failed')
-      setMessage('გადახდის ინფორმაცია არ მოიძებნა')
-      return
+      setMessage('საქართველოს ბანკის გადახდის ინფორმაცია ვერ მოიძებნა')
+    } else {
+      void (async () => {
+        try {
+          const supabase = getSupabase()
+          const query = new URLSearchParams({ ...paymentLookup, provider: 'bog' })
+          const { data, error } = await supabase.functions.invoke(`payment-verify?${query.toString()}`, {
+            method: 'GET',
+          })
+          if (error) throw error
+          if (!active) return
+
+          if (data.statusIsUnknown) {
+            setStatus('unknown')
+            setMessage(`ბანკის პასუხია „${String(data.bankStatus)}“. Premium არ გააქტიურებულა; მოგვიანებით გადაამოწმე.`)
+          } else if (data.status === 'success') {
+            await refreshProfile()
+            if (!active) return
+            setStatus('success')
+            setMessage('გადახდა ბანკმა დაადასტურა. Premium გამოწერა გააქტიურებულია.')
+          } else if (data.status === 'refunded_partially') {
+            await refreshProfile()
+            if (!active) return
+            setStatus('refunded_partially')
+            setMessage('თანხის ნაწილი დაბრუნებულია. Premium წვდომა შენარჩუნებულია.')
+          } else if (data.status === 'refunded') {
+            await refreshProfile()
+            if (!active) return
+            setStatus('refunded')
+            setMessage('ბანკმა თანხის სრული დაბრუნება დაადასტურა. Premium-ის წვდომა უცვლელია, სანამ მხარდაჭერა გადახედავს გამოწერას.')
+          } else if (data.status === 'cancelled') {
+            setStatus('cancelled')
+            setMessage('გადახდა გაუქმდა. Premium არ გააქტიურებულა.')
+          } else if (data.status === 'pending' || data.status === 'processing') {
+            if (returnedWithoutCompletion) {
+              setStatus('cancelled')
+              setMessage('გადახდის გვერდი დასრულდა გადახდის გარეშე. ბანკის საბოლოო სტატუსი ჯერ არ დადასტურებულა; Premium არ გააქტიურებულა.')
+            } else {
+              setStatus('pending')
+              setMessage('გადახდა მუშავდება... Premium გააქტიურდება ბანკის დადასტურების შემდეგ.')
+            }
+          } else if (data.status === 'failed') {
+            setStatus('failed')
+            setMessage('ბანკმა გადახდა უარყო. Premium არ გააქტიურებულა.')
+          } else {
+            setStatus('failed')
+            setMessage('გადახდა ვერ დადასტურდა. Premium არ გააქტიურებულა.')
+          }
+        } catch (error) {
+          console.error('Payment verification error:', error)
+          if (!active) return
+          setStatus('failed')
+          setMessage('გადახდის შემოწმება ვერ მოხერხდა. Premium არ გააქტიურებულა.')
+        }
+      })()
     }
 
-    // Verify payment status
-    verifyPayment(paymentId, provider as 'tbc' | 'bog')
-  }, [searchParams])
-
-  async function verifyPayment(paymentId: string, provider: 'tbc' | 'bog') {
-    try {
-      const supabase = getSupabase()
-
-      // Call Supabase Edge Function to verify payment
-      const { data, error } = await supabase.functions.invoke('payment-verify', {
-        body: {},
-        method: 'GET',
-      })
-
-      // Build query string manually since Supabase client doesn't support query params well
-      const verifyUrl = `${(supabase.functions as unknown as { _url: string })._url}/payment-verify?paymentId=${paymentId}&provider=${provider}`
-      const response = await fetch(verifyUrl)
-      const result = await response.json()
-
-      if (result.status === 'success') {
-        setStatus('success')
-        setMessage('გადახდა წარმატებით შესრულდა! თქვენი პრემიუმ გამოწერა გააქტიურებულია.')
-      } else if (result.status === 'pending') {
-        setStatus('pending')
-        setMessage('გადახდა მუშავდება... გთხოვთ დაელოდოთ.')
-      } else {
-        setStatus('failed')
-        setMessage('გადახდა ვერ შესრულდა. გთხოვთ სცადოთ თავიდან.')
-      }
-    } catch (error) {
-      console.error('Payment verification error:', error)
-      setStatus('failed')
-      setMessage('გადახდის შემოწმება ვერ მოხერხდა')
-    }
-  }
+    return () => { active = false }
+  }, [searchParams, refreshProfile])
 
   return (
     <div className="page payment-return-page">
@@ -87,6 +127,50 @@ export function PaymentReturnPage() {
             <div className="payment-status-icon pending">⏱️</div>
             <h1>გადახდა მუშავდება</h1>
             <p className="muted">{message}</p>
+            <Link to="/" className="secondary-button">
+              მთავარ გვერდზე დაბრუნება
+            </Link>
+          </>
+        )}
+
+        {status === 'unknown' && (
+          <>
+            <div className="payment-status-icon pending">⚠️</div>
+            <h1>გადახდის სტატუსი უცნობია</h1>
+            <p className="muted">{message}</p>
+            <Link to="/" className="secondary-button">
+              მთავარ გვერდზე დაბრუნება
+            </Link>
+          </>
+        )}
+
+        {status === 'cancelled' && (
+          <>
+            <div className="payment-status-icon failed">↩️</div>
+            <h1>გადახდა გაუქმდა</h1>
+            <p className="error-text">{message}</p>
+            <Link to="/" className="primary-button">
+              თავიდან ცდა
+            </Link>
+          </>
+        )}
+
+        {status === 'refunded_partially' && (
+          <>
+            <div className="payment-status-icon success">ℹ️</div>
+            <h1>ნაწილობრივი დაბრუნება</h1>
+            <p className="success-text">{message}</p>
+            <Link to="/" className="primary-button">
+              მარშრუტებზე გადასვლა →
+            </Link>
+          </>
+        )}
+
+        {status === 'refunded' && (
+          <>
+            <div className="payment-status-icon failed">↩️</div>
+            <h1>გადახდა დაბრუნებულია</h1>
+            <p className="error-text">{message}</p>
             <Link to="/" className="secondary-button">
               მთავარ გვერდზე დაბრუნება
             </Link>
