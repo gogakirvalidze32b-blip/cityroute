@@ -52,7 +52,6 @@ import { createSpeedTracker, gpsToLatLng, resolveExamSpeedKmh, resolveHeading } 
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
 import {
   AUDIO_HEADING_TOLERANCE_DEG,
-  AUDIO_MAX_ATTEMPTS,
   AUDIO_TRIGGER_DISTANCE_M,
   audioHeadingOk,
   canTriggerRoute3Pin12,
@@ -183,8 +182,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [pendingPinSortOrder, setPendingPinSortOrderState] = useState<number | null>(
     savedState?.pendingPinSortOrder ?? null,
   )
-  const [audioRecoveryRequired, setAudioRecoveryRequired] = useState(false)
-  const [audioManualRetryVersion, setAudioManualRetryVersion] = useState(0)
   /** After mid-route დასრულება, summary offers გაგრძელება using kept localStorage progress. */
   const [summaryCanContinue, setSummaryCanContinue] = useState(false)
   const resumePendingRef = useRef(false)
@@ -231,7 +228,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   )
   // Audio catch-up bookkeeping (closest approach per PIN, failed-playback attempts). Not persisted.
   const pinApproachRef = useRef<Map<string, number>>(new Map())
-  const audioAttemptsRef = useRef<Map<string, number>>(new Map())
   const pendingPinSortOrderRef = useRef<number | null>(savedState?.pendingPinSortOrder ?? null)
   const audioAttemptInFlightRef = useRef(false)
   const audioRetryTimerRef = useRef<number | null>(null)
@@ -250,7 +246,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const setPendingPinSortOrder = useCallback((sortOrder: number | null) => {
     pendingPinSortOrderRef.current = sortOrder
     setPendingPinSortOrderState(sortOrder)
-    if (sortOrder === null) setAudioRecoveryRequired(false)
   }, [])
 
   const polyline = route.polyline as LatLng[]
@@ -376,7 +371,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         audioRetryTimerRef.current = null
       }
       audioAttemptInFlightRef.current = false
-      audioAttemptsRef.current.clear()
       pinApproachRef.current.clear()
       setPendingPinSortOrder(null)
     }
@@ -832,7 +826,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       phase !== 'active' ||
       !features.routeAudio ||
       pendingPinSortOrder === null ||
-      audioRecoveryRequired ||
       finishInProgressRef.current
     ) return
 
@@ -846,25 +839,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       !finishInProgressRef.current &&
       pendingPinSortOrderRef.current === target.sort_order
 
-    const scheduleRetry = (countsAsFailure: boolean) => {
+    const scheduleRetry = () => {
       if (!isCurrent() || audioRetryTimerRef.current !== null) return
-      const key = `${route.slug}:${target.sort_order}`
-      const previousAttempts = audioAttemptsRef.current.get(key) ?? 0
-      const attempts = countsAsFailure ? previousAttempts + 1 : previousAttempts
-      if (countsAsFailure) audioAttemptsRef.current.set(key, attempts)
-      if (countsAsFailure && attempts >= AUDIO_MAX_ATTEMPTS) {
-        console.error('[AUDIO] PIN voice failed repeatedly; waiting for manual retry', target.sort_order)
-        setAudioRecoveryRequired(true)
-        return
-      }
-      const delay = Math.min(AUDIO_RETRY_BASE_MS * 2 ** Math.min(Math.max(attempts - 1, 0), 3), AUDIO_RETRY_MAX_MS)
       audioRetryTimerRef.current = window.setTimeout(() => {
         audioRetryTimerRef.current = null
         void attemptPlayback()
-      }, delay)
+      }, AUDIO_RETRY_BASE_MS)
     }
 
-    const completePin = () => {
+    const completePin = (voicePlayed: boolean) => {
       if (!isCurrent()) return
       audioAttemptInFlightRef.current = false
       const currentPin = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order) ?? target
@@ -885,8 +868,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       }
 
       pinApproachRef.current.delete(currentPin.id)
-      audioAttemptsRef.current.delete(`${route.slug}:${currentPin.sort_order}`)
-      setLastSpoken(currentPin.instruction_ka)
+      if (voicePlayed) setLastSpoken(currentPin.instruction_ka)
       setPendingPinSortOrder(null)
       saveNowRef.current?.()
     }
@@ -894,7 +876,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     const attemptPlayback = async () => {
       if (!isCurrent() || audioAttemptInFlightRef.current) return
       if (audioEngine.isBusy()) {
-        scheduleRetry(false)
+        scheduleRetry()
         return
       }
 
@@ -904,12 +886,21 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         if (settled) return
         settled = true
         audioAttemptInFlightRef.current = false
-        scheduleRetry(reason !== null)
+        if (reason !== null) {
+          console.warn(
+            '[AUDIO] Skipping unavailable PIN voice and continuing navigation',
+            target.sort_order,
+            reason,
+          )
+          completePin(false)
+          return
+        }
+        scheduleRetry()
       }
       const completed = () => {
         if (settled) return
         settled = true
-        completePin()
+        completePin(true)
       }
 
       const currentTarget = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order)
@@ -917,17 +908,26 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         audioAttemptInFlightRef.current = false
         return
       }
-      const status = await audioEngine.playDetailed(
-        currentTarget.audio_url,
-        currentTarget.id,
-        currentTarget.instruction_ka,
-        { onEnded: completed, onFailure: failed },
-      )
-      if (status === 'failed') failed('play-rejected')
-      else if (status === 'busy' || status === 'cancelled') failed(null)
-      else if (status === 'duplicate') {
-        audioAttemptInFlightRef.current = false
-        scheduleRetry(false)
+      try {
+        const status = await audioEngine.playDetailed(
+          currentTarget.audio_url,
+          currentTarget.id,
+          currentTarget.instruction_ka,
+          { onEnded: completed, onFailure: failed },
+        )
+        if (status === 'failed') failed('play-rejected')
+        else if (status === 'busy' || status === 'cancelled') failed(null)
+        else if (status === 'duplicate') {
+          audioAttemptInFlightRef.current = false
+          scheduleRetry()
+        }
+      } catch (error) {
+        console.warn(
+          '[AUDIO] PIN playback threw; continuing navigation',
+          target.sort_order,
+          error,
+        )
+        failed('play-rejected')
       }
     }
 
@@ -953,7 +953,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         audioRetryTimerRef.current = null
       }
     }
-  }, [pendingPinSortOrder, phase, features.routeAudio, route.slug, voicePins, audioRecoveryRequired, audioManualRetryVersion, setPendingPinSortOrder])
+  }, [pendingPinSortOrder, phase, features.routeAudio, route.slug, voicePins, setPendingPinSortOrder])
 
   const handleError = useCallback((errorId: string) => {
     setExam((prev) => recordExamError(prev, errorId, false))
@@ -977,7 +977,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     route3Pin12RoadURef.current = null
-    audioAttemptsRef.current = new Map()
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       handledOrdersRef.current = handled
@@ -1224,7 +1223,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setExam(createExamSession(route.id, route.name_ka))
     triggeredRef.current = pinIdsForOrders(sortedPins, handled)
     pinApproachRef.current = new Map()
-    audioAttemptsRef.current = new Map()
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = handled
     resumedSlugRef.current = null
@@ -1325,37 +1323,6 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
                 onClick={restartPreview}
               >
                 თავიდან დაწყება
-              </button>
-            </div>
-          )}
-
-          {audioRecoveryRequired && pendingPinSortOrder !== null && (
-            <div
-              role="alert"
-              style={{
-                position: 'relative',
-                zIndex: 20,
-                margin: '0.5rem',
-                padding: '0.75rem',
-                borderRadius: '8px',
-                background: '#fff7ed',
-                border: '2px solid #f97316',
-              }}
-            >
-              <p style={{ margin: 0, fontWeight: 600 }}>
-                PIN #{pendingPinSortOrder}-ის აუდიო ვერ ჩაირთო. PIN გამოტოვებული არ არის.
-              </p>
-              <button
-                type="button"
-                className="nav-start-btn"
-                style={{ marginTop: '0.5rem' }}
-                onClick={() => {
-                  audioAttemptsRef.current.delete(`${route.slug}:${pendingPinSortOrder}`)
-                  setAudioRecoveryRequired(false)
-                  setAudioManualRetryVersion((version) => version + 1)
-                }}
-              >
-                აუდიოს ხელახლა ცდა
               </button>
             </div>
           )}

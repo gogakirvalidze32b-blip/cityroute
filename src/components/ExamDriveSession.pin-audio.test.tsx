@@ -298,8 +298,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
   })
 
-  it('keeps a rejected instruction pending and retries automatically without another GPS fix', async () => {
-    vi.useFakeTimers()
+  it('passes a PIN when playback is rejected and continues without waiting for another retry', async () => {
     h.playStatus = 'failed'
     h.autoEnd = false
     await emit(190)
@@ -308,25 +307,18 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       await Promise.resolve()
     })
     expect(played()).toEqual(['pin-1'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(1)
-
-    h.playStatus = 'played'
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500)
-    })
-    expect(played()).toEqual(['pin-1', 'pin-1'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
-
-    await act(async () => {
-      h.playOptions[1]?.onEnded?.()
-    })
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)
+
+    h.playStatus = 'played'
+    h.autoEnd = true
+    await emit(382)
+    expect(played()).toEqual(['pin-1', 'pin-2'])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
   })
 
-  it('does not complete a pin on delayed playback failure and retries the same pin', async () => {
-    vi.useFakeTimers()
+  it('completes a failed PIN once despite repeated GPS and delayed audio callbacks', async () => {
     h.autoEnd = false
     await emit(182)
     expect(played()).toEqual(['pin-1'])
@@ -335,71 +327,66 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(onFailure).toBeTypeOf('function')
     await act(async () => {
       onFailure?.('media-error')
+      h.playOptions[0]?.onEnded?.()
+      onFailure?.('playback-timeout')
     })
 
     const saved = loadActiveExam(route.id, route.slug, route.name_ka)
-    expect(saved?.triggeredSortOrders).toEqual([])
-    expect(saved?.nextSortOrder).toBe(1)
-    expect(saved?.pendingPinSortOrder).toBe(1)
+    expect(saved?.triggeredSortOrders).toEqual([1])
+    expect(saved?.nextSortOrder).toBe(2)
+    expect(saved?.pendingPinSortOrder).toBeNull()
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500)
-    })
-    expect(played()).toEqual(['pin-1', 'pin-1'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+    h.autoEnd = true
+    await emit(382)
+    expect(played()).toEqual(['pin-1', 'pin-2'])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
   })
 
-  it('pauses after three delayed failures and keeps the PIN available for manual retry', async () => {
-    vi.useFakeTimers()
+  it('passes a PIN with no audio URL and starts the following PIN', async () => {
+    cleanup()
+    localStorage.clear()
+    h.playStatus = 'failed'
     h.autoEnd = false
-    await emit(182)
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const onFailure = h.playOptions[attempt]?.onFailure
-      expect(onFailure).toBeTypeOf('function')
-      await act(async () => {
-        onFailure?.('media-error')
-        if (attempt < 2) {
-          await vi.advanceTimersByTimeAsync(attempt === 0 ? 500 : 1000)
-        }
-      })
+    const missingAudioRoute = {
+      ...route,
+      pins: route.pins.map((pin, index) => index === 0 ? { ...pin, audio_url: null } : pin),
     }
-    expect(played()).toEqual(['pin-1', 'pin-1', 'pin-1'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
-    expect(screen.getByRole('alert').textContent).toContain('PIN გამოტოვებული არ არის')
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam: createExamSession(route.id, route.name_ka),
+      userPos: [BASE_LAT, 45.4],
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 1000,
+      triggeredPins: [],
+      savedAt: Date.now(),
+    })
+    render(<ExamDriveSession route={missingAudioRoute} />)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(8000)
-    })
-    expect(played()).toHaveLength(3)
+    await emit(182)
 
-    h.playStatus = 'played'
-    fireEvent.click(screen.getByRole('button', { name: 'აუდიოს ხელახლა ცდა' }))
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(played()).toEqual(['pin-1', 'pin-1', 'pin-1', 'pin-1'])
-    await act(async () => {
-      h.playOptions[3]?.onEnded?.()
-    })
+    expect(vi.mocked(audioEngine.playDetailed).mock.calls[0]?.[0]).toBeNull()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
   })
 
-  it('retries the same pending PIN after a playback timeout', async () => {
-    vi.useFakeTimers()
+  it('passes the pending PIN after a playback timeout', async () => {
     h.autoEnd = false
     await emit(182)
     expect(played()).toEqual(['pin-1'])
 
     await act(async () => {
       h.playOptions[0]?.onFailure?.('playback-timeout')
-      await vi.advanceTimersByTimeAsync(500)
     })
-    expect(played()).toEqual(['pin-1', 'pin-1'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+    expect(played()).toEqual(['pin-1'])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
   })
 
   it('ignores a delayed failure callback after the session unmounts', async () => {

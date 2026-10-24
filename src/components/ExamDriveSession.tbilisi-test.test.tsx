@@ -257,27 +257,24 @@ describe('standalone test city „ტესტი — თბილისი“',
     expectCompleted()
   })
 
-  it('retries a delayed audio error at most three times and persists rollback for the PIN', async () => {
+  it('continues to the next PIN after a delayed audio error without double-completing', async () => {
     audioAttempts.autoEnd = false
     await startAtPin1()
     await driveTo(1)
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-      expect(audioAttempts.failures[attempt]).toBeTypeOf('function')
-      await act(async () => {
-        audioAttempts.failures[attempt]!()
-      })
-      await settle(attempt < 2 ? 550 * 2 ** attempt : 20)
+    expect(audioAttempts.failures[0]).toBeTypeOf('function')
+    await act(async () => {
+      audioAttempts.failures[0]!()
+      audioAttempts.failures[0]!()
+    })
 
-      if (attempt < 2) {
-        expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredPins).not.toContain(pin(1).id)
-        expect(nextOrder()).toBe(1)
-        await driveTo(1)
-      }
-    }
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
+    expect(nextOrder()).toBe(2)
 
-    await driveTo(1)
-    expect(playedOrders()).toEqual([1, 1, 1])
+    await driveTo(2)
+    expect(playedOrders()).toEqual([1, 2])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
   })
 
   it('ignores a delayed audio error from a prior mounted session', async () => {

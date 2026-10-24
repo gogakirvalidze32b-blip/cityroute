@@ -653,6 +653,37 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(loadActiveExam(route2.id, route2.slug, route2.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
   })
 
+  it('keeps completed Route 2 progress when entering Route 3 midway in the same mounted session', async () => {
+    const route2 = routeBySlug('route-2')
+    const route3 = routeBySlug('route-3')
+    const view = await startAtPin1(route2)
+
+    for (const pin of sorted(route2)) {
+      await driveTo(route2, pin.sort_order)
+    }
+    const completedRoute2Orders = sorted(route2).map((pin) => pin.sort_order)
+    expect(loadRoutePinProgress(route2.slug)).toEqual(completedRoute2Orders)
+
+    playDetailed.mockClear()
+    const savedRoute3Orders = Array.from({ length: 10 }, (_, index) => index + 1)
+    saveRoutePinProgress(route3.slug, savedRoute3Orders)
+    gps.once = fix(route3, 1)
+    view.rerender(<ExamDriveSession route={route3} />)
+    await settle()
+    await pressStart()
+
+    expect(nextOrder()).toBe(11)
+    expect(loadRoutePinProgress(route2.slug)).toEqual(completedRoute2Orders)
+    expect(loadRoutePinProgress(route3.slug)).toEqual(savedRoute3Orders)
+
+    await driveTo(route3, 1)
+    expect(playDetailed).not.toHaveBeenCalled()
+    await driveTo(route3, 11)
+    expect(playedOrders(route3)).toEqual([11])
+    expect(loadRoutePinProgress(route3.slug)).toEqual([...savedRoute3Orders, 11])
+    expect(loadRoutePinProgress(route2.slug)).toEqual(completedRoute2Orders)
+  })
+
   it('route 2 PIN #3 stays quiet at the agency exit and plays at its later road position', async () => {
     const route = routeBySlug('route-2')
     const road = route2Road as [number, number][]
