@@ -234,6 +234,41 @@ describe('Telavi field-test routes keep strict progress and resume on production
     }
   })
 
+  it('keeps PIN 1 completed when a stale active save is restored after a route switch', async () => {
+    const route1 = routeBySlug('route-1')
+    const route2 = routeBySlug('route-2')
+    const view = await startAtPin1(route2)
+
+    saveRoutePinProgress(route1.slug, [1])
+    saveActiveExam({
+      routeId: route1.id,
+      routeSlug: route1.slug,
+      routeName: route1.name_ka,
+      phase: 'active',
+      exam: createExamSession(route1.id, route1.name_ka),
+      userPos: [route1.pins[0].lat, route1.pins[0].lng],
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 1000,
+      triggeredPins: [],
+      triggeredSortOrders: [],
+      lastPassedSortOrder: null,
+      nextSortOrder: 1,
+      savedAt: Date.now(),
+    })
+
+    gps.once = fix(route1, 1)
+    view.rerender(<ExamDriveSession route={route1} />)
+    await settle()
+
+    expect(nextOrder()).toBe(2)
+    await driveTo(route1, 1)
+    expect(playedOrders(route1)).toEqual([])
+    await driveTo(route1, 2)
+    expect(playedOrders(route1)).toEqual([2])
+    expect(nextOrder()).toBe(3)
+  })
+
   it('route 1 resumes by sort order; pin 1 is counted by GPS (session-start voice is muted)', async () => {
     const route = routeBySlug('route-1')
     const first = await startAtPin1(route)

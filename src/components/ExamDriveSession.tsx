@@ -97,6 +97,17 @@ function initialHandledOrders(
   return orders === 'invalid' ? null : orders
 }
 
+function restoredHandledOrders(
+  saved: SavedExamState,
+  pins: readonly PinRow[],
+  routeSlug: string,
+): Set<number> | null {
+  const savedOrders = initialHandledOrders(saved, pins, routeSlug)
+  const routeOrders = loadRoutePinProgress(routeSlug)
+  if (savedOrders === null && !routeOrders?.length) return null
+  return mostAdvancedPinProgress(pins, routeOrders, savedOrders)
+}
+
 function mostAdvancedPinProgress(
   pins: readonly PinRow[],
   ...candidates: Array<Iterable<number> | null | undefined>
@@ -428,7 +439,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (saved) {
       if (resumedSlugRef.current !== route.slug) {
         resumedSlugRef.current = route.slug
-        triggeredRef.current = new Set(saved.triggeredPins)
+        const restoredOrders = FIELD_TEST_SLUGS.has(route.slug)
+          ? restoredHandledOrders(saved, sortedPins, route.slug)
+          : null
+        triggeredRef.current = restoredOrders
+          ? pinIdsForOrders(sortedPins, restoredOrders)
+          : new Set(saved.triggeredPins)
         const restoredAudio = restoreAudioQueue(
           sortedPins,
           saved.pendingPinSortOrder,
@@ -448,20 +464,21 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setGpsStarted(true)
         setDriveView(features.mapNav ? 'map' : 'panel')
         if (FIELD_TEST_SLUGS.has(route.slug)) {
-          handledOrdersRef.current = initialHandledOrders(saved, sortedPins, route.slug)
-          const resolution = resolveExamResume(saved, sortedPins, route.slug)
-          if (resolution.status === 'resume') {
-            resumePendingRef.current = resolution.handledOrders === null
-            if (resolution.handledOrders) {
-              const orders = persistMostAdvancedPinProgress(resolution.handledOrders)
-              handledOrdersRef.current = new Set(orders)
-              triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
-              const progress = nextSortOrder(sortedPins, handledOrdersRef.current)
-              setNextPin(sortedPins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
-              setRouteComplete(sortedPins.length > 0 && progress.nextSortOrder === null)
-            }
-          } else if (resolution.status === 'pending') {
-            resumePendingRef.current = true
+          handledOrdersRef.current = restoredOrders
+          if (restoredOrders) {
+            const orders = persistMostAdvancedPinProgress(restoredOrders)
+            handledOrdersRef.current = orders
+            triggeredRef.current = pinIdsForOrders(sortedPins, orders)
+            const progress = nextSortOrder(sortedPins, orders)
+            setNextPin(sortedPins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
+            setRouteComplete(sortedPins.length > 0 && progress.nextSortOrder === null)
+            resumePendingRef.current = false
+          } else {
+            const resolution = resolveExamResume(saved, sortedPins, route.slug)
+            handledOrdersRef.current = initialHandledOrders(saved, sortedPins, route.slug)
+            resumePendingRef.current =
+              resolution.status === 'pending' ||
+              (resolution.status === 'resume' && resolution.handledOrders === null)
           }
         }
         console.log('🔄 Resuming saved exam session', route.slug)
@@ -1076,15 +1093,21 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (savedState) {
       console.log('🔄 Resuming active session - not calling startSession()')
       if (FIELD_TEST_SLUGS.has(route.slug)) {
-        const resolution = resolveExamResume(savedState, voicePins, route.slug)
-        if (resolution.status === 'resume' && resolution.handledOrders) {
-          const orders = persistMostAdvancedPinProgress(resolution.handledOrders)
+        const restoredOrders = restoredHandledOrders(savedState, voicePins, route.slug)
+        if (restoredOrders) {
+          const orders = persistMostAdvancedPinProgress(restoredOrders)
           handledOrdersRef.current = orders
           triggeredRef.current = pinIdsForOrders(voicePins, handledOrdersRef.current)
           const progress = nextSortOrder(voicePins, orders)
           setNextPin(voicePins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
           setRouteComplete(voicePins.length > 0 && progress.nextSortOrder === null)
           resumePendingRef.current = false
+        } else {
+          const resolution = resolveExamResume(savedState, voicePins, route.slug)
+          if (resolution.status === 'pending' ||
+            (resolution.status === 'resume' && resolution.handledOrders === null)) {
+            resumePendingRef.current = true
+          }
         }
       }
       if (phase !== 'active') setPhase('active')
@@ -1190,7 +1213,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function applySavedProgress(saved: SavedExamState) {
-    triggeredRef.current = new Set(saved.triggeredPins)
+    const restoredOrders = FIELD_TEST_SLUGS.has(route.slug)
+      ? restoredHandledOrders(saved, pinsRef.current, route.slug)
+      : null
+    triggeredRef.current = restoredOrders
+      ? pinIdsForOrders(pinsRef.current, restoredOrders)
+      : new Set(saved.triggeredPins)
     const restoredAudio = restoreAudioQueue(
       pinsRef.current,
       saved.pendingPinSortOrder,
@@ -1209,9 +1237,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setElapsedMs(examElapsedMsNow(saved))
     setGpsStarted(true)
     if (FIELD_TEST_SLUGS.has(route.slug)) {
-      const resolution = resolveExamResume(saved, pinsRef.current, route.slug)
-      if (resolution.status === 'resume' && resolution.handledOrders) {
-        const orders = persistMostAdvancedPinProgress(resolution.handledOrders)
+      if (restoredOrders) {
+        const orders = persistMostAdvancedPinProgress(restoredOrders)
         handledOrdersRef.current = orders
         triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrdersRef.current)
         const progress = nextSortOrder(pinsRef.current, orders)
@@ -1219,8 +1246,11 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         setRouteComplete(pinsRef.current.length > 0 && progress.nextSortOrder === null)
         resumePendingRef.current = false
       } else {
+        const resolution = resolveExamResume(saved, pinsRef.current, route.slug)
         handledOrdersRef.current = initialHandledOrders(saved, pinsRef.current, route.slug)
-        resumePendingRef.current = resolution.status === 'pending' || resolution.status === 'resume'
+        resumePendingRef.current =
+          resolution.status === 'pending' ||
+          (resolution.status === 'resume' && resolution.handledOrders === null)
       }
     }
     resumedSlugRef.current = route.slug
