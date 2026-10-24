@@ -104,8 +104,15 @@ function restoredHandledOrders(
 ): Set<number> | null {
   const savedOrders = initialHandledOrders(saved, pins, routeSlug)
   const routeOrders = loadRoutePinProgress(routeSlug)
-  if (savedOrders === null && !routeOrders?.length) return null
-  return mostAdvancedPinProgress(pins, routeOrders, savedOrders)
+  const savedPinIds = ordersForIds(saved.triggeredPins, pins, routeSlug)
+  const hasRecoverableProgress =
+    Boolean(savedOrders?.size) ||
+    Boolean(routeOrders?.length) ||
+    savedPinIds.orders.size > 0
+
+  if (!hasRecoverableProgress && savedPinIds.unknown.length > 0) return null
+  if (savedOrders === null && !routeOrders?.length && savedPinIds.orders.size === 0) return null
+  return mostAdvancedPinProgress(pins, routeOrders, savedOrders, savedPinIds.orders)
 }
 
 function mostAdvancedPinProgress(
