@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+  BOG_PRODUCTION_CALLBACK_PUBLIC_KEY,
+  BOG_PRODUCTION_CONFIGURATION,
+  BOG_PRODUCTION_TOKEN_URL,
+  BOG_PRODUCTION_API_URL,
   BOG_SANDBOX_CALLBACK_PUBLIC_KEY,
   BOG_SANDBOX_API_URL,
   BOG_SANDBOX_TOKEN_URL,
@@ -10,6 +14,7 @@ import {
   createBogIdempotencyKey,
   createBogOrder,
   getBogOrderDetails,
+  isBogPaymentUrl,
   mapBogPaymentStatus,
   toPersistedBogPaymentStatus,
   verifyBogCallbackSignature,
@@ -24,12 +29,78 @@ const migration012 = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/012_bog_verified_payment_activation.sql'),
   'utf8',
 )
+const sandboxIsolationPatch = readFileSync(
+  resolve(process.cwd(), 'supabase/patches/bog_sandbox_payment_isolation.sql'),
+  'utf8',
+)
+const productionInitializer = readFileSync(
+  resolve(process.cwd(), 'supabase/functions/payment-initialize-production/index.ts'),
+  'utf8',
+)
+const productionVerifier = readFileSync(
+  resolve(process.cwd(), 'supabase/functions/payment-verify-production/index.ts'),
+  'utf8',
+)
+const productionCallback = readFileSync(
+  resolve(process.cwd(), 'supabase/functions/payment-webhook-bog-production/index.ts'),
+  'utf8',
+)
 
 beforeAll(() => {
   vi.stubGlobal('crypto', webcrypto)
 })
 
+it('keeps SQL bank-status mapping aligned with the Edge Function allowlist', () => {
+  const bankStatuses: Record<string, string> = {
+    completed: 'success',
+    rejected: 'failed',
+    refunded: 'refunded',
+    refunded_partially: 'refunded_partially',
+    created: 'pending',
+    cancelled: 'cancelled',
+    canceled: 'cancelled',
+    processing: 'processing',
+    auth_requested: 'processing',
+    blocked: 'processing',
+    partial_completed: 'processing',
+    refund_requested: 'processing',
+  }
+
+  for (const [bankStatus, expected] of Object.entries(bankStatuses)) {
+    expect(mapBogPaymentStatus(bankStatus)).toBe(expected)
+    expect(sandboxIsolationPatch).toMatch(new RegExp(`when '${bankStatus}' then '${expected}'`))
+  }
+  expect(sandboxIsolationPatch).toMatch(/else null\s+end;\s+if v_expected_status is null then/i)
+  expect(mapBogPaymentStatus('unexpected_bank_status')).toBe('unknown')
+})
+
 describe('BOG sandbox payment helpers', () => {
+  it('uses the documented Live API endpoints and keeps the checkout host isolated', () => {
+    expect(BOG_PRODUCTION_TOKEN_URL).toBe(
+      'https://oauth2.bog.ge/auth/realms/bog/protocol/openid-connect/token',
+    )
+    expect(BOG_PRODUCTION_API_URL).toBe('https://api.bog.ge')
+    expect(BOG_PRODUCTION_CONFIGURATION.checkoutHost).toBe('payment.bog.ge')
+    expect(isBogPaymentUrl('https://payment.bog.ge/?order_id=order-1', BOG_PRODUCTION_CONFIGURATION)).toBe(true)
+    expect(isBogPaymentUrl('https://payment-sandbox.bog.ge/?order_id=order-1', BOG_PRODUCTION_CONFIGURATION)).toBe(false)
+    expect(BOG_PRODUCTION_CALLBACK_PUBLIC_KEY).toContain(
+      'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu4RUyAw3+CdkS3ZNILQh',
+    )
+  })
+
+  it('routes Live payments through the existing Production ledger and verified Premium RPC', () => {
+    expect(productionInitializer).toMatch(/create_bog_payment_transaction/)
+    expect(productionInitializer).not.toMatch(/bog_sandbox_payment_transactions/)
+    expect(productionVerifier).toMatch(/from\('payment_transactions'\)/)
+    expect(productionVerifier).toMatch(/rpc\('update_payment_status'/)
+    expect(productionVerifier).toMatch(/p_provider:\s*'bog'/)
+    expect(productionCallback).toMatch(/from\('payment_transactions'\)/)
+    expect(productionCallback).toMatch(/rpc\('update_payment_status'/)
+    expect(productionCallback).toMatch(/BOG_PRODUCTION_CALLBACK_PUBLIC_KEY/)
+    expect(productionCallback).toMatch(/verifyBogCallbackSignature\(\s*rawBody,\s*req\.headers\.get\('Callback-Signature'\),\s*BOG_PRODUCTION_CALLBACK_PUBLIC_KEY/s)
+    expect(productionCallback).not.toMatch(/bog_sandbox_payment_transactions/)
+  })
+
   it('preserves known legacy plan labels and fails on unknown labels instead of rewriting them', () => {
     expect(migration011).not.toMatch(
       /update\s+public\.profiles\s+set\s+subscription_plan\s*=\s*'premium'\s+where\s+subscription_plan\s+is\s+not\s+null/i,
@@ -67,6 +138,142 @@ describe('BOG sandbox payment helpers', () => {
     expect(migration012).not.toMatch(/p_status = 'refunded_partially'\s+and v_current_status <> 'success'/i)
   })
 
+  it('keeps Sandbox payment records and RPCs isolated from production entitlements', () => {
+    expect(sandboxIsolationPatch).toMatch(/create table if not exists public\.bog_sandbox_payment_transactions/i)
+    expect(sandboxIsolationPatch).toMatch(/create or replace function public\.create_bog_sandbox_payment_transaction/i)
+    expect(sandboxIsolationPatch).toMatch(/create or replace function public\.update_bog_sandbox_payment_status/i)
+    expect(sandboxIsolationPatch).toMatch(/revoke all on public\.bog_sandbox_payment_transactions from anon, authenticated/i)
+    expect(sandboxIsolationPatch).not.toMatch(/update\s+public\.profiles/i)
+    expect(sandboxIsolationPatch).toMatch(/subscription_activated', false/i)
+  })
+
+  it('limits Sandbox transaction creation to the service role and hardens definer search paths', () => {
+    expect(sandboxIsolationPatch).toMatch(
+      /create or replace function public\.create_bog_sandbox_payment_transaction\(\s*p_user_id uuid,/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /if auth\.role\(\) is distinct from 'service_role' then\s+raise exception 'Only the service role can create Sandbox payment transactions'/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /drop function if exists public\.create_bog_sandbox_payment_transaction\(text, text, uuid, numeric, text, jsonb\);/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /revoke execute on function public\.create_bog_sandbox_payment_transaction\(uuid, text, text, uuid, numeric, text, jsonb\)\s+from public, anon, authenticated/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /grant execute on function public\.create_bog_sandbox_payment_transaction\(uuid, text, text, uuid, numeric, text, jsonb\)\s+to service_role/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /revoke execute on function public\.set_bog_sandbox_payment_updated_at\(\)\s+from public, anon, authenticated/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /grant execute on function public\.set_bog_sandbox_payment_updated_at\(\)\s+to service_role/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /revoke execute on function public\.update_bog_sandbox_payment_status\(text, text, text, jsonb\)\s+from public, anon, authenticated/i,
+    )
+    expect(sandboxIsolationPatch).toMatch(
+      /grant execute on function public\.update_bog_sandbox_payment_status\(text, text, text, jsonb\)\s+to service_role/i,
+    )
+    expect(sandboxIsolationPatch).not.toMatch(/set search_path = public/i)
+    expect(sandboxIsolationPatch.match(/set search_path = pg_catalog/gi)).toHaveLength(3)
+  })
+
+  it('rejects unknown bank statuses and duplicate Sandbox identifiers safely', () => {
+    expect(sandboxIsolationPatch).toMatch(/payment_id text not null unique/i)
+    expect(sandboxIsolationPatch).toMatch(/merchant_payment_id text not null unique/i)
+    expect(sandboxIsolationPatch).toMatch(/unique \(user_id, idempotency_key\)/i)
+    expect(sandboxIsolationPatch).toMatch(/if p_amount is null then\s+raise exception 'Payment amount is required'/i)
+    expect(sandboxIsolationPatch).toMatch(/on conflict do nothing\s+returning id into transaction_id/i)
+    expect(sandboxIsolationPatch).toMatch(/if not found then\s+raise exception 'Sandbox payment ID, merchant ID, or idempotency key already exists'/i)
+    expect(sandboxIsolationPatch).toMatch(/existing\.payment_id is distinct from p_payment_id/i)
+    expect(sandboxIsolationPatch).toMatch(/existing\.merchant_payment_id is distinct from p_merchant_payment_id/i)
+    expect(sandboxIsolationPatch).toMatch(/existing\.metadata->>'device_slots' is distinct from p_metadata->>'device_slots'/i)
+    expect(sandboxIsolationPatch).toMatch(/else null\s+end;\s+if v_expected_status is null then\s+raise exception 'Unsupported BOG Sandbox bank status'/i)
+
+    const unknownOrder = {
+      order_id: 'order-123',
+      external_order_id: 'cr-test-id',
+      order_status: { key: 'bank_added_new_status' },
+      purchase_units: { request_amount: '99', currency_code: 'GEL' },
+    }
+    expect(() => verifyBogOrderDetails(unknownOrder, {
+      orderId: 'order-123',
+      externalOrderId: 'cr-test-id',
+      amount: 99,
+      currency: 'GEL',
+    })).toThrow('unsupported order status')
+    expect(() => toPersistedBogPaymentStatus('unknown')).toThrow('unsupported BOG payment status')
+  })
+
+  it('matches the complete SQL and Edge Function Sandbox transition matrix', () => {
+    const statuses = [
+      'pending',
+      'processing',
+      'success',
+      'failed',
+      'cancelled',
+      'refunded',
+      'refunded_partially',
+    ] as const
+    const allowed: Record<string, readonly string[]> = {
+      pending: ['processing', 'success', 'failed', 'cancelled', 'refunded', 'refunded_partially'],
+      processing: ['success', 'failed', 'cancelled', 'refunded', 'refunded_partially'],
+      success: ['refunded', 'refunded_partially'],
+      failed: [],
+      cancelled: [],
+      refunded: [],
+      refunded_partially: ['refunded'],
+    }
+
+    for (const current of statuses) {
+      for (const next of statuses) {
+        if (current === next) {
+          expect(canApplyBogPaymentStatus(current, next)).toBe(current === 'refunded_partially')
+        } else if (allowed[current].includes(next)) {
+          expect(canApplyBogPaymentStatus(current, next)).toBe(true)
+        } else {
+          expect(() => canApplyBogPaymentStatus(current, next)).toThrow('Invalid BOG payment status transition')
+        }
+      }
+    }
+
+    expect(sandboxIsolationPatch).toMatch(/v_current_status = 'pending' and p_status in \(\s*'processing', 'success', 'failed', 'cancelled', 'refunded', 'refunded_partially'/i)
+    expect(sandboxIsolationPatch).toMatch(/v_current_status = 'processing' and p_status in \(\s*'success', 'failed', 'cancelled', 'refunded', 'refunded_partially'/i)
+    expect(sandboxIsolationPatch).toMatch(/v_current_status = 'success' and p_status in \('refunded', 'refunded_partially'\)/i)
+    expect(sandboxIsolationPatch).toMatch(/v_current_status = 'refunded_partially' and p_status = 'refunded'/i)
+    expect(sandboxIsolationPatch).toMatch(
+      /v_current_status = 'refunded_partially' and p_status = 'refunded_partially' then[\s\S]*?v_refund_amount < v_previous_refund_amount[\s\S]*?metadata = coalesce\(metadata, '\{\}'::jsonb\) \|\| coalesce\(p_metadata, '\{\}'::jsonb\)/i,
+    )
+  })
+
+  it('routes BOG Sandbox functions only through the isolated payment table and RPC', () => {
+    const initialize = readFileSync(
+      resolve(process.cwd(), 'supabase/functions/payment-initialize/index.ts'),
+      'utf8',
+    )
+    const verify = readFileSync(
+      resolve(process.cwd(), 'supabase/functions/payment-verify/index.ts'),
+      'utf8',
+    )
+    const callback = readFileSync(
+      resolve(process.cwd(), 'supabase/functions/payment-webhook-bog/index.ts'),
+      'utf8',
+    )
+    expect(initialize).toMatch(/create_bog_sandbox_payment_transaction/)
+    expect(initialize).toMatch(/adminClient\.rpc\('create_bog_sandbox_payment_transaction'/)
+    expect(initialize).toMatch(/p_user_id:\s*user\.id/)
+    expect(initialize).toMatch(/SUPABASE_SERVICE_ROLE_KEY/)
+    expect(initialize).toMatch(/req\.headers\.get\('Origin'\)\s*!==\s*appUrl\.origin/)
+    expect(initialize).toMatch(/!appUrl\.hostname\.endsWith\('\.vercel\.app'\)/)
+    expect(verify).toMatch(/bog_sandbox_payment_transactions/)
+    expect(verify).toMatch(/update_bog_sandbox_payment_status/)
+    expect(callback).toMatch(/bog_sandbox_payment_transactions/)
+    expect(callback).toMatch(/update_bog_sandbox_payment_status/)
+    expect(verify).not.toMatch(/from\('payment_transactions'\)/)
+    expect(callback).not.toMatch(/from\('payment_transactions'\)/)
+  })
+
   it('creates a sandbox order using official payload and redirects only to BOG sandbox', async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'sandbox-token' }), { status: 200 }))
@@ -102,6 +309,38 @@ describe('BOG sandbox payment helpers', () => {
       purchase_units: { currency: 'GEL', total_amount: 179 },
       redirect_urls: {
         success: 'https://cityroute-preview.vercel.app/payment/return?provider=bog&merchantPaymentId=cr-test-id',
+      },
+    })
+  })
+
+  it('creates Production orders only through the documented Live endpoints and checkout host', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'live-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'live-order-123',
+        _links: { redirect: { href: 'https://payment.bog.ge/?order_id=live-order-123' } },
+      }), { status: 201 }))
+
+    const order = await createBogOrder({
+      credentials: { clientKey: 'live-client-id', secretKey: 'live-secret-key' },
+      idempotencyKey: 'd0a3f04b-42f6-4ab1-999b-0cf8d90b1947',
+      merchantPaymentId: 'cr-live-id',
+      deviceSlots: 1,
+      amount: 99,
+      callbackUrl: 'https://project.supabase.co/functions/v1/payment-webhook-bog-production',
+      successUrl: 'https://cityroute.ge/payment/return?provider=bog-production',
+      failUrl: 'https://cityroute.ge/payment/return?provider=bog-production&checkout=not-completed',
+    }, fetcher, BOG_PRODUCTION_CONFIGURATION)
+
+    expect(order.paymentId).toBe('live-order-123')
+    expect(order.paymentUrl).toBe('https://payment.bog.ge/?order_id=live-order-123')
+    expect(fetcher.mock.calls[0][0]).toBe(BOG_PRODUCTION_TOKEN_URL)
+    expect(fetcher.mock.calls[1][0]).toBe(`${BOG_PRODUCTION_API_URL}/payments/v1/ecommerce/orders`)
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toMatchObject({
+      external_order_id: 'cr-live-id',
+      purchase_units: { currency: 'GEL', total_amount: 99 },
+      redirect_urls: {
+        success: 'https://cityroute.ge/payment/return?provider=bog-production',
       },
     })
   })
@@ -151,7 +390,7 @@ describe('BOG sandbox payment helpers', () => {
     expect(mapBogPaymentStatus('refunded')).toBe('refunded')
     expect(mapBogPaymentStatus('refunded_partially')).toBe('refunded_partially')
     expect(mapBogPaymentStatus('unknown-status')).toBe('unknown')
-    expect(toPersistedBogPaymentStatus('unknown')).toBe('processing')
+    expect(() => toPersistedBogPaymentStatus('unknown')).toThrow('unsupported BOG payment status')
   })
 
   it('uses the documented Sandbox callback key rather than the Production callback key', () => {
@@ -170,17 +409,17 @@ describe('BOG sandbox payment helpers', () => {
     expect(await createBogIdempotencyKey('user-1', 'other-request')).not.toBe(first)
   })
 
-  it('does not reapply duplicate or stale callbacks and permits refund transitions', () => {
+  it('treats exact duplicate callbacks as no-op and rejects invalid transitions', () => {
     expect(canApplyBogPaymentStatus('pending', 'pending')).toBe(false)
-    expect(canApplyBogPaymentStatus('success', 'processing')).toBe(false)
+    expect(() => canApplyBogPaymentStatus('success', 'processing')).toThrow('Invalid BOG payment status transition')
     expect(canApplyBogPaymentStatus('success', 'refunded_partially')).toBe(true)
     expect(canApplyBogPaymentStatus('refunded_partially', 'refunded')).toBe(true)
-    expect(canApplyBogPaymentStatus('refunded', 'success')).toBe(false)
-    expect(canApplyBogPaymentStatus('failed', 'processing')).toBe(false)
-    expect(canApplyBogPaymentStatus('cancelled', 'failed')).toBe(false)
+    expect(() => canApplyBogPaymentStatus('refunded', 'success')).toThrow('Invalid BOG payment status transition')
+    expect(() => canApplyBogPaymentStatus('failed', 'processing')).toThrow('Invalid BOG payment status transition')
+    expect(() => canApplyBogPaymentStatus('cancelled', 'failed')).toThrow('Invalid BOG payment status transition')
     expect(canApplyBogPaymentStatus('pending', 'cancelled')).toBe(true)
     expect(canApplyBogPaymentStatus('pending', 'failed')).toBe(true)
-    expect(canApplyBogPaymentStatus('failed', 'success')).toBe(true)
+    expect(() => canApplyBogPaymentStatus('failed', 'success')).toThrow('Invalid BOG payment status transition')
   })
 
   it('requires the bank order ID, external ID, amount, and GEL currency to match', () => {

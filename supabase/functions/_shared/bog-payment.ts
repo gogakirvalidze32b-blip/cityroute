@@ -2,6 +2,10 @@ export const BOG_SANDBOX_TOKEN_URL =
   'https://oauth2-sandbox.bog.ge/auth/realms/bog/protocol/openid-connect/token'
 export const BOG_SANDBOX_API_URL = 'https://api-sandbox.bog.ge'
 export const BOG_SANDBOX_CHECKOUT_HOST = 'payment-sandbox.bog.ge'
+export const BOG_PRODUCTION_TOKEN_URL =
+  'https://oauth2.bog.ge/auth/realms/bog/protocol/openid-connect/token'
+export const BOG_PRODUCTION_API_URL = 'https://api.bog.ge'
+export const BOG_PRODUCTION_CHECKOUT_HOST = 'payment.bog.ge'
 
 export const BOG_SANDBOX_CALLBACK_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqczfAuhtxw2iF68kS0Hy
@@ -12,6 +16,34 @@ GyzploVV0NflhwBGeWnvQANUQGr87gsP5k2JG1z5EwnMybJQ7i3XT726rJMaV6QW
 sY5hP72Mtv1I1zL2d9FXm9FWOzbpcXCyxuEBXvqqOHzogri8C7KRRYKyk97Ri7D6
 8wIDAQAB
 -----END PUBLIC KEY-----`
+
+export const BOG_PRODUCTION_CALLBACK_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu4RUyAw3+CdkS3ZNILQh
+zHI9Hemo+vKB9U2BSabppkKjzjjkf+0Sm76hSMiu/HFtYhqWOESryoCDJoqffY0Q
+1VNt25aTxbj068QNUtnxQ7KQVLA+pG0smf+EBWlS1vBEAFbIas9d8c9b9sSEkTrr
+TYQ90WIM8bGB6S/KLVoT1a7SnzabjoLc5Qf/SLDG5fu8dH8zckyeYKdRKSBJKvhx
+tcBuHV4f7qsynQT+f2UYbESX/TLHwT5qFWZDHZ0YUOUIvb8n7JujVSGZO9/+ll/g
+4ZIWhC1MlJgPObDwRkRd8NFOopgxMcMsDIZIoLbWKhHVq67hdbwpAq9K9WMmEhPn
+PwIDAQAB
+-----END PUBLIC KEY-----`
+
+export type BogApiConfiguration = {
+  tokenUrl: string
+  apiUrl: string
+  checkoutHost: string
+}
+
+export const BOG_SANDBOX_CONFIGURATION: BogApiConfiguration = {
+  tokenUrl: BOG_SANDBOX_TOKEN_URL,
+  apiUrl: BOG_SANDBOX_API_URL,
+  checkoutHost: BOG_SANDBOX_CHECKOUT_HOST,
+}
+
+export const BOG_PRODUCTION_CONFIGURATION: BogApiConfiguration = {
+  tokenUrl: BOG_PRODUCTION_TOKEN_URL,
+  apiUrl: BOG_PRODUCTION_API_URL,
+  checkoutHost: BOG_PRODUCTION_CHECKOUT_HOST,
+}
 
 export type BogCredentials = {
   clientKey: string
@@ -62,8 +94,9 @@ export type VerifiedBogOrder = {
 export async function getBogAccessToken(
   credentials: BogCredentials,
   fetcher: typeof fetch = fetch,
+  configuration: BogApiConfiguration = BOG_SANDBOX_CONFIGURATION,
 ): Promise<string> {
-  const response = await fetcher(BOG_SANDBOX_TOKEN_URL, {
+  const response = await fetcher(configuration.tokenUrl, {
     method: 'POST',
     headers: {
       Authorization: `Basic ${btoa(`${credentials.clientKey}:${credentials.secretKey}`)}`,
@@ -73,12 +106,12 @@ export async function getBogAccessToken(
   })
 
   if (!response.ok) {
-    throw new Error(`BOG sandbox authentication failed (${response.status})`)
+    throw new Error(`BOG payment authentication failed (${response.status})`)
   }
 
   const result: { access_token?: unknown } = await response.json()
   if (typeof result.access_token !== 'string' || !result.access_token) {
-    throw new Error('BOG sandbox returned no access token')
+    throw new Error('BOG payment API returned no access token')
   }
   return result.access_token
 }
@@ -106,10 +139,11 @@ export async function createBogOrder(
     failUrl: string
   },
   fetcher: typeof fetch = fetch,
+  configuration: BogApiConfiguration = BOG_SANDBOX_CONFIGURATION,
 ): Promise<{ paymentId: string; paymentUrl: string }> {
-  const accessToken = await getBogAccessToken(input.credentials, fetcher)
+  const accessToken = await getBogAccessToken(input.credentials, fetcher, configuration)
   const description = `CityRoute Premium — ${input.deviceSlots} მანქანა, 30 დღე`
-  const response = await fetcher(`${BOG_SANDBOX_API_URL}/payments/v1/ecommerce/orders`, {
+  const response = await fetcher(`${configuration.apiUrl}/payments/v1/ecommerce/orders`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -140,7 +174,7 @@ export async function createBogOrder(
   })
 
   if (!response.ok) {
-    throw new Error(`BOG sandbox order creation failed (${response.status})`)
+    throw new Error(`BOG payment order creation failed (${response.status})`)
   }
 
   const result: {
@@ -152,8 +186,8 @@ export async function createBogOrder(
     ? result._links.redirect.href
     : ''
 
-  if (!paymentId || !isBogSandboxPaymentUrl(paymentUrl)) {
-    throw new Error('BOG sandbox returned an invalid order or checkout URL')
+  if (!paymentId || !isBogPaymentUrl(paymentUrl, configuration)) {
+    throw new Error('BOG returned an invalid order or checkout URL')
   }
   return { paymentId, paymentUrl }
 }
@@ -162,22 +196,30 @@ export async function getBogOrderDetails(
   credentials: BogCredentials,
   orderId: string,
   fetcher: typeof fetch = fetch,
+  configuration: BogApiConfiguration = BOG_SANDBOX_CONFIGURATION,
 ): Promise<BogOrderDetails> {
-  const accessToken = await getBogAccessToken(credentials, fetcher)
+  const accessToken = await getBogAccessToken(credentials, fetcher, configuration)
   const response = await fetcher(
-    `${BOG_SANDBOX_API_URL}/payments/v1/receipt/${encodeURIComponent(orderId)}`,
+    `${configuration.apiUrl}/payments/v1/receipt/${encodeURIComponent(orderId)}`,
     { headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } },
   )
   if (!response.ok) {
-    throw new Error(`BOG sandbox order lookup failed (${response.status})`)
+    throw new Error(`BOG payment order lookup failed (${response.status})`)
   }
   return await response.json()
 }
 
 export function isBogSandboxPaymentUrl(value: string): boolean {
+  return isBogPaymentUrl(value, BOG_SANDBOX_CONFIGURATION)
+}
+
+export function isBogPaymentUrl(
+  value: string,
+  configuration: BogApiConfiguration,
+): boolean {
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' && url.hostname === BOG_SANDBOX_CHECKOUT_HOST
+    return url.protocol === 'https:' && url.hostname === configuration.checkoutHost
   } catch {
     return false
   }
@@ -251,6 +293,10 @@ export function verifyBogOrderDetails(
   if (typeof bankStatus !== 'string') {
     throw new Error('BOG returned an invalid order status')
   }
+  const status = mapBogPaymentStatus(bankStatus)
+  if (status === 'unknown') {
+    throw new Error('BOG returned an unsupported order status')
+  }
 
   const bankRefundAmount = order.purchase_units?.refund_amount
   const refundAmount = typeof bankRefundAmount === 'number' || typeof bankRefundAmount === 'string'
@@ -270,7 +316,7 @@ export function verifyBogOrderDetails(
   }
 
   return {
-    status: mapBogPaymentStatus(bankStatus),
+    status,
     transactionId: typeof order.payment_detail?.transaction_id === 'string'
       ? order.payment_detail.transaction_id
       : null,
@@ -311,26 +357,54 @@ export function mapBogPaymentStatus(status: string): BogPaymentStatus {
 export function toPersistedBogPaymentStatus(
   status: BogPaymentStatus,
 ): PersistedBogPaymentStatus {
-  return status === 'unknown' ? 'processing' : status
+  if (status === 'unknown') {
+    throw new Error('Cannot persist an unsupported BOG payment status')
+  }
+  return status
 }
 
 export function canApplyBogPaymentStatus(
   currentStatus: string,
   nextStatus: PersistedBogPaymentStatus,
 ): boolean {
-  if (currentStatus === nextStatus || currentStatus === 'refunded') return false
-  if (currentStatus === 'refunded_partially' && nextStatus !== 'refunded') return false
   if (
-    currentStatus === 'success' &&
-    nextStatus !== 'refunded' &&
-    nextStatus !== 'refunded_partially'
-  ) return false
-  if (
-    (currentStatus === 'failed' || currentStatus === 'cancelled') &&
-    (nextStatus === 'pending' ||
-      nextStatus === 'processing' ||
-      nextStatus === 'failed' ||
-      nextStatus === 'cancelled')
-  ) return false
+    ![
+      'pending',
+      'processing',
+      'success',
+      'failed',
+      'cancelled',
+      'refunded',
+      'refunded_partially',
+    ].includes(currentStatus)
+  ) {
+    throw new Error('Stored BOG payment status is invalid')
+  }
+  if (currentStatus === nextStatus) {
+    return currentStatus === 'refunded_partially'
+  }
+
+  let allowed = false
+  switch (currentStatus) {
+    case 'pending':
+      allowed = true
+      break
+    case 'processing':
+      allowed = nextStatus !== 'pending' && nextStatus !== 'processing'
+      break
+    case 'success':
+      allowed = nextStatus === 'refunded' || nextStatus === 'refunded_partially'
+      break
+    case 'refunded_partially':
+      allowed = nextStatus === 'refunded'
+      break
+    case 'failed':
+    case 'cancelled':
+    case 'refunded':
+      break
+  }
+  if (!allowed) {
+    throw new Error(`Invalid BOG payment status transition: ${currentStatus} -> ${nextStatus}`)
+  }
   return true
 }

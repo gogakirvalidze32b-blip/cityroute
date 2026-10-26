@@ -15,13 +15,21 @@ const h = vi.hoisted(() => ({
       | 'refunded_partially',
     statusIsUnknown: false,
     bankStatus: 'created',
+    sandbox: false,
   },
   invoke: vi.fn(async () => ({ data: h.result, error: null })),
+  fetch: vi.fn(async () => new Response(JSON.stringify(h.result), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })),
   refreshProfile: vi.fn(async () => {}),
 }))
 
 vi.mock('@/lib/supabase', () => ({
-  getSupabase: () => ({ functions: { invoke: h.invoke } }),
+  getSupabase: () => ({
+    auth: { getSession: async () => ({ data: { session: { access_token: 'user-access-token' } } }) },
+    functions: { invoke: h.invoke },
+  }),
 }))
 
 vi.mock('@/context/AuthContext', () => ({
@@ -44,8 +52,14 @@ function renderReturnPage(
 
 describe('BOG payment return', () => {
   beforeEach(() => {
-    h.result = { status: 'pending', statusIsUnknown: false, bankStatus: 'created' }
+    h.result = { status: 'pending', statusIsUnknown: false, bankStatus: 'created', sandbox: false }
     h.invoke.mockClear()
+    h.fetch.mockClear()
+    h.fetch.mockImplementation(async () => new Response(JSON.stringify(h.result), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', h.fetch)
     h.refreshProfile.mockClear()
     h.invoke.mockImplementation(async () => ({ data: h.result, error: null }))
   })
@@ -75,6 +89,28 @@ describe('BOG payment return', () => {
       'payment-verify?paymentId=bog-order-1&provider=bog',
       { method: 'GET' },
     )
+  })
+
+  it('verifies Production BOG returns through the Production verifier and refreshes Premium', async () => {
+    h.result = { ...h.result, status: 'success', sandbox: false }
+    renderReturnPage('bog-production', 'merchantPaymentId=cr-live-order')
+
+    expect(await screen.findByText(/ბანკმა დაადასტურა/)).toBeTruthy()
+    await waitFor(() => expect(h.refreshProfile).toHaveBeenCalledOnce())
+    expect(h.fetch).toHaveBeenCalledWith(
+      '/api/payments/bog/verify?merchantPaymentId=cr-live-order&provider=bog',
+      { headers: { Authorization: 'Bearer user-access-token' } },
+    )
+    expect(h.invoke).not.toHaveBeenCalled()
+  })
+
+  it('reports Sandbox success without refreshing or claiming Premium was activated', async () => {
+    h.result = { ...h.result, status: 'success', sandbox: true }
+    renderReturnPage()
+
+    expect(await screen.findByText(/Sandbox ტესტ-გადახდა ბანკმა დაადასტურა/)).toBeTruthy()
+    expect(screen.getByText(/სატესტო გადახდა Premium წვდომას არ ააქტიურებს/)).toBeTruthy()
+    expect(h.refreshProfile).not.toHaveBeenCalled()
   })
 
   it('verifies a return using the merchant order ID assigned before the bank order exists', async () => {
