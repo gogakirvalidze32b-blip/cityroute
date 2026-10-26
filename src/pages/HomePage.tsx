@@ -128,11 +128,16 @@ export function HomePage() {
           {profile?.subscription_plan && ' · '}
           {routeSourceLabel(source)}
         </p>
+        {onTrial && (
+          <Link to="/choose-plan" className="home-plan-link">
+            გადახდაზე გადასვლა
+          </Link>
+        )}
         <SupportButton />
+        <SupportFooterLinks />
         <button type="button" className="home-signout" onClick={() => void signOut()}>
           გასვლა
         </button>
-        <SupportFooterLinks />
       </footer>
     </div>
   )
