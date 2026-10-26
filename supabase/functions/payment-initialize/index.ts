@@ -1,6 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { createBogIdempotencyKey, createBogOrder } from '../_shared/bog-payment.ts'
+import { createBogIdempotencyKey, createBogOrder, isProductionSupabaseProject } from '../_shared/bog-payment.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')
@@ -29,6 +29,9 @@ serve(async (req) => {
       !BOG_CLIENT_KEY || !BOG_SECRET_KEY || !APP_URL
     ) {
       return jsonResponse({ error: 'Preview BOG payment is not fully configured' }, 503)
+    }
+    if (isProductionSupabaseProject(SUPABASE_URL)) {
+      return jsonResponse({ error: 'BOG Sandbox payments cannot use the Production Supabase project' }, 503)
     }
 
     const appUrl = new URL(APP_URL)

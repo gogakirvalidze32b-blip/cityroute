@@ -31,7 +31,7 @@ export default function App() {
           <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
           <Route path="/support" element={<SupportChatPage />} />
           <Route path="/support-admin" element={<SupportAdminPage />} />
-          {import.meta.env.DEV && (
+          {(import.meta.env.DEV || import.meta.env.VERCEL_ENV === 'preview') && (
             <>
               <Route path="/premium-preview/trial" element={<PlanSelectionPage previewMode="trial" />} />
               <Route path="/premium-preview/expired" element={<PlanSelectionPage previewMode="expired" />} />

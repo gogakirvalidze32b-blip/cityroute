@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import {
   canApplyBogPaymentStatus,
   getBogOrderDetails,
+  isProductionSupabaseProject,
   toPersistedBogPaymentStatus,
   verifyBogOrderDetails,
 } from '../_shared/bog-payment.ts'
@@ -29,6 +30,9 @@ serve(async (req) => {
       !BOG_CLIENT_KEY || !BOG_SECRET_KEY
     ) {
       return jsonResponse({ error: 'Preview BOG verification is not configured' }, 503)
+    }
+    if (isProductionSupabaseProject(SUPABASE_URL)) {
+      return jsonResponse({ error: 'BOG Sandbox verification cannot use the Production Supabase project' }, 503)
     }
 
     const authorization = req.headers.get('Authorization')

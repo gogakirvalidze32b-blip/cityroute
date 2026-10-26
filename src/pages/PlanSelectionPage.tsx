@@ -4,14 +4,15 @@ import { PaymentButton } from '@/components/PaymentButton'
 import { SupportFooterLinks } from '@/components/support/SupportLinks'
 import { useAuth } from '@/context/AuthContext'
 import { calculatePrice } from '@/data/subscription-plans'
-import { accessLabel } from '@/types/database'
+import { accessLabel, isAccessActive } from '@/types/database'
+import { getBogSandboxPaymentBlockReason } from '@/lib/bog-sandbox'
 import './subscription-page.css'
 
 const VEHICLE_OPTIONS = [1, 2] as const
 type PreviewMode = 'trial' | 'expired'
 
 export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode } = {}) {
-  const { user, loading, hasAccess, needsPlanSelection, profile, selectPackage } = useAuth()
+  const { user, loading, hasAccess, needsPlanSelection, profile, deviceBlocked, selectPackage } = useAuth()
   const [deviceSlots, setDeviceSlots] = useState<1 | 2>(profile?.device_slots === 2 ? 2 : 1)
   const [error, setError] = useState<string | null>(null)
   const [previewNotice, setPreviewNotice] = useState<string | null>(null)
@@ -33,7 +34,12 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
   }
 
   const price = calculatePrice('premium', deviceSlots)
-  const trialActive = previewMode ? previewMode === 'trial' : profile?.subscription_status === 'trial' && hasAccess
+  const trialActive = previewMode
+    ? previewMode === 'trial'
+    : profile?.subscription_status === 'trial' && isAccessActive(profile)
+  const paymentBlockReason = isPreview
+    ? 'Sandbox გადახდა ხელმისაწვდომი გახდება ცალკე Preview Supabase-ის კონფიგურაციის შემდეგ.'
+    : getBogSandboxPaymentBlockReason()
 
   async function continueWithTrial() {
     if (isPreview) {
@@ -75,7 +81,7 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
                 <strong>უფასო Trial აქტიურია</strong>
                 <p>
                   {previewMode === 'trial'
-                    ? 'ვიზუალური დემო · Trial რეგისტრაციის შემდეგ ითვლება'
+                    ? 'დემო Trial · რეალური წვდომა ანგარიშის სტატუსზეა დამოკიდებული'
                     : profile
                       ? accessLabel(profile)
                       : 'Trial რეგისტრაციისას დაიწყო'}
@@ -96,6 +102,12 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
                 </p>
               </div>
             </div>
+          )}
+
+          {!isPreview && deviceBlocked && (
+            <p className="subscription-error" role="alert">
+              Trial აქტიურია, მაგრამ ეს მოწყობილობა დაბლოკილია: {deviceBlocked}
+            </p>
           )}
 
           <ul className="subscription-benefits">
@@ -181,9 +193,14 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
 
                 <PaymentButton
                   deviceSlots={deviceSlots}
-                  disabled={!profile}
+                  disabled={!profile || Boolean(paymentBlockReason)}
                   onError={setError}
                 />
+                {paymentBlockReason && (
+                  <p className="subscription-disclaimer" role="status">
+                    {paymentBlockReason}
+                  </p>
+                )}
               </>
             )}
             {isPreview && (
@@ -195,6 +212,9 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
                 <button type="button" className="payment-button" disabled>
                   გადახდა — {price} ₾
                 </button>
+                <p className="subscription-disclaimer" role="status">
+                  {paymentBlockReason}
+                </p>
               </>
             )}
             {!isPreview && (

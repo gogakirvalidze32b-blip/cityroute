@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PlanSelectionPage } from './PlanSelectionPage'
 
 const h = vi.hoisted(() => ({
@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   user: { id: 'user-1' } as { id: string } | null,
   hasAccess: true,
   needsPlanSelection: true,
+  deviceBlocked: null as string | null,
   profile: null as null | {
     id: string
     subscription_status: 'trial' | 'expired'
@@ -35,10 +36,13 @@ function renderPage() {
 
 describe('Premium selection and payment offer', () => {
   beforeEach(() => {
+    vi.stubEnv('VERCEL_ENV', 'preview')
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://sandbox-project.supabase.co')
     h.loading = false
     h.user = { id: 'user-1' }
     h.hasAccess = true
     h.needsPlanSelection = true
+    h.deviceBlocked = null
     h.profile = {
       id: 'user-1',
       subscription_status: 'trial',
@@ -48,6 +52,10 @@ describe('Premium selection and payment offer', () => {
     }
     h.selectPackage.mockReset()
     h.selectPackage.mockResolvedValue(null)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   it('updates the single payment button to the selected package price', () => {
@@ -102,6 +110,27 @@ describe('Premium selection and payment offer', () => {
     expect(screen.getByText(/გადახდის დადასტურების შემდეგ/)).toBeTruthy()
   })
 
+  it('keeps the active Trial visible when this device is blocked and routes the user to packages', () => {
+    h.hasAccess = false
+    h.deviceBlocked = 'ეს ანგარიში სხვა მანქანაზეა მიბმული'
+
+    renderPage()
+
+    expect(screen.getByText('უფასო Trial აქტიურია')).toBeTruthy()
+    expect(screen.getByText(/საცდელი: .*დარჩა/)).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain(h.deviceBlocked)
+    expect(screen.getByRole('button', { name: 'გადახდა — 99 ₾' })).toBeTruthy()
+  })
+
+  it('disables Sandbox payment when Preview points at Production Supabase', () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://tuylbbdhvfcobxynwtnt.supabase.co')
+
+    renderPage()
+
+    expect(screen.getByRole('button', { name: 'გადახდა — 99 ₾' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('status').textContent).toContain('Production Supabase')
+  })
+
   it('renders selectable packages and one disabled payment button in the visual preview', () => {
     h.user = null
     h.profile = null
@@ -134,7 +163,8 @@ describe('Premium selection and payment offer', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('ვიზუალური დემო · Trial რეგისტრაციის შემდეგ ითვლება')).toBeTruthy()
+    expect(screen.getByText('დემო Trial · რეალური წვდომა ანგარიშის სტატუსზეა დამოკიდებული')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('ცალკე Preview Supabase')
     expect(screen.queryByRole('button', { name: '24-საათიანი უფასო Trial' })).toBeNull()
     expect(h.selectPackage).not.toHaveBeenCalled()
     expect(screen.getAllByRole('button', { name: /^გადახდა —/ })).toHaveLength(1)

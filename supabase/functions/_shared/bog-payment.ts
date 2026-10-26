@@ -2,6 +2,16 @@ export const BOG_SANDBOX_TOKEN_URL =
   'https://oauth2-sandbox.bog.ge/auth/realms/bog/protocol/openid-connect/token'
 export const BOG_SANDBOX_API_URL = 'https://api-sandbox.bog.ge'
 export const BOG_SANDBOX_CHECKOUT_HOST = 'payment-sandbox.bog.ge'
+const PRODUCTION_SUPABASE_PROJECT_REF = 'tuylbbdhvfcobxynwtnt'
+
+export function isProductionSupabaseProject(url: string | undefined): boolean {
+  if (!url) return false
+  try {
+    return new URL(url).hostname === `${PRODUCTION_SUPABASE_PROJECT_REF}.supabase.co`
+  } catch {
+    return false
+  }
+}
 
 export const BOG_SANDBOX_CALLBACK_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqczfAuhtxw2iF68kS0Hy
@@ -358,7 +368,7 @@ export function canApplyBogPaymentStatus(
       break
   }
   if (!allowed) {
-    throw new Error(`Invalid BOG payment status transition: ${currentStatus} -> ${nextStatus}`)
+    return false
   }
   return true
 }

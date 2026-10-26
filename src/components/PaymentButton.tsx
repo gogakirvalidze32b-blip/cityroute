@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getSupabase } from '@/lib/supabase'
 import { calculatePrice } from '@/data/subscription-plans'
 import { getOrCreateBogPaymentRequestId } from '@/lib/bog-payment-request'
+import { getBogSandboxPaymentBlockReason } from '@/lib/bog-sandbox'
 
 type PaymentButtonProps = {
   deviceSlots: 1 | 2
@@ -25,6 +26,9 @@ export function PaymentButton({
   async function handlePayment() {
     setLoading(true)
     try {
+      const blockReason = getBogSandboxPaymentBlockReason()
+      if (blockReason) throw new Error(blockReason)
+
       const supabase = getSupabase()
 
       // Get current session

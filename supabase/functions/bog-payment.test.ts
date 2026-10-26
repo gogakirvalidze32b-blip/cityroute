@@ -10,6 +10,7 @@ import {
   createBogIdempotencyKey,
   createBogOrder,
   getBogOrderDetails,
+  isProductionSupabaseProject,
   mapBogPaymentStatus,
   toPersistedBogPaymentStatus,
   verifyBogCallbackSignature,
@@ -35,6 +36,12 @@ beforeAll(() => {
 })
 
 describe('BOG sandbox payment helpers', () => {
+  it('blocks the Production Supabase project from Sandbox payment processing', () => {
+    expect(isProductionSupabaseProject('https://tuylbbdhvfcobxynwtnt.supabase.co')).toBe(true)
+    expect(isProductionSupabaseProject('https://sandbox-project.supabase.co')).toBe(false)
+    expect(isProductionSupabaseProject('not a URL')).toBe(false)
+  })
+
   it('preserves known legacy plan labels and fails on unknown labels instead of rewriting them', () => {
     expect(migration011).not.toMatch(
       /update\s+public\.profiles\s+set\s+subscription_plan\s*=\s*'premium'\s+where\s+subscription_plan\s+is\s+not\s+null/i,

@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext'
 import { SupportFooterLinks } from '@/components/support/SupportLinks'
 
 export function LoginPage() {
-  const { signIn, user, loading } = useAuth()
+  const { signIn, user, loading, hasAccess, needsPlanSelection, deviceBlocked } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(true) // Default: checked
@@ -37,7 +37,10 @@ export function LoginPage() {
     )
   }
 
-  if (user) return <Navigate to="/" replace />
+  if (user) {
+    const needsPlanPage = !hasAccess || needsPlanSelection || Boolean(deviceBlocked)
+    return <Navigate to={needsPlanPage ? '/choose-plan' : '/'} replace />
+  }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()

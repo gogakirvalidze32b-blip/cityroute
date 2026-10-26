@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import {
   getBogOrderDetails,
   canApplyBogPaymentStatus,
+  isProductionSupabaseProject,
   toPersistedBogPaymentStatus,
   verifyBogCallbackSignature,
   verifyBogOrderDetails,
@@ -21,6 +22,9 @@ serve(async (req) => {
   try {
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !BOG_CLIENT_KEY || !BOG_SECRET_KEY) {
       return jsonResponse({ error: 'Preview BOG callback is not configured' }, 503)
+    }
+    if (isProductionSupabaseProject(SUPABASE_URL)) {
+      return jsonResponse({ error: 'BOG Sandbox callbacks cannot use the Production Supabase project' }, 503)
     }
 
     const rawBody = await req.text()
