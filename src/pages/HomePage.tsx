@@ -19,13 +19,8 @@ export function HomePage() {
   const onTrial = profile?.subscription_status === 'trial' && hasAccess
   const [paymentError, setPaymentError] = useState<string | null>(null)
   
-  const deviceSlots = profile?.device_slots ?? 1
+  const deviceSlots = profile?.device_slots === 2 ? 2 : 1
   const monthlyPrice = profile?.subscription_plan ? calculatePrice(profile.subscription_plan, deviceSlots) : 99
-
-  function handlePaymentInitiated(paymentId: string, paymentUrl: string) {
-    console.log('Payment initiated:', paymentId, paymentUrl)
-    // Store payment info if needed
-  }
 
   function handlePaymentError(error: string) {
     setPaymentError(error)
@@ -69,31 +64,18 @@ export function HomePage() {
           </ul>
           {deviceSlots === 2 && (
             <p className="muted" style={{ textAlign: 'center', marginTop: '0.5rem' }}>
-              2 მოწყობილობა · 189 ₾
+              2 მოწყობილობა · 179 ₾
             </p>
           )}
         </div>
 
         <footer className="plan-page__footer">
           <p className="payment-instructions">
-            აირჩიე გადახდის მეთოდი:
+            აირჩიე BOG-ით გადახდა:
           </p>
           {paymentError && <p className="error-text">{paymentError}</p>}
           
-          <div className="payment-buttons">
-            <PaymentButton
-              provider="tbc"
-              amount={monthlyPrice}
-              onPaymentInitiated={handlePaymentInitiated}
-              onError={handlePaymentError}
-            />
-            <PaymentButton
-              provider="bog"
-              amount={monthlyPrice}
-              onPaymentInitiated={handlePaymentInitiated}
-              onError={handlePaymentError}
-            />
-          </div>
+          <PaymentButton deviceSlots={deviceSlots} onError={handlePaymentError} />
 
           <SupportButton />
           <button type="button" className="home-signout" onClick={() => void signOut()}>

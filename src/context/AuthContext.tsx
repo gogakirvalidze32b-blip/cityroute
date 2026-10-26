@@ -126,7 +126,7 @@ type AuthState = {
 
   refreshProfile: () => Promise<void>
 
-  selectPlan: (plan: SubscriptionPlan) => Promise<string | null>
+  selectPlan: (plan: SubscriptionPlan, deviceSlots: 1 | 2) => Promise<string | null>
 
   signUp: (email: string, password: string, fullName: string) => Promise<string | null>
 
@@ -204,7 +204,11 @@ async function bindDevice(): Promise<string | null> {
 
 
 
-async function persistPlan(userId: string, plan: SubscriptionPlan): Promise<string | null> {
+async function persistPlan(
+  userId: string,
+  plan: SubscriptionPlan,
+  deviceSlots: 1 | 2,
+): Promise<string | null> {
 
   writeLocalPlan(userId, plan)
 
@@ -214,15 +218,13 @@ async function persistPlan(userId: string, plan: SubscriptionPlan): Promise<stri
 
   const { error: rpcError } = await supabase.rpc('select_subscription_plan', { chosen: plan })
 
-  if (!rpcError) return null
-
-
-
   const { error: updateError } = await supabase
 
     .from('profiles')
 
-    .update({ subscription_plan: plan })
+    .update(rpcError
+      ? { subscription_plan: plan, device_slots: deviceSlots }
+      : { device_slots: deviceSlots })
 
     .eq('id', userId)
 
@@ -546,15 +548,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const selectPlan = useCallback(
 
-    async (plan: SubscriptionPlan) => {
+    async (plan: SubscriptionPlan, deviceSlots: 1 | 2) => {
 
       if (!session?.user) return 'ჯერ შედი ანგარიშში'
 
-      const err = await persistPlan(session.user.id, plan)
+      const err = await persistPlan(session.user.id, plan, deviceSlots)
 
       if (err) return err
 
-      setProfile((prev) => (prev ? { ...prev, subscription_plan: plan } : prev))
+      setProfile((prev) => (prev
+        ? { ...prev, subscription_plan: plan, device_slots: deviceSlots }
+        : prev))
 
       await refreshProfile()
 
@@ -665,5 +669,4 @@ export function usePlanFeatures() {
   return useAuth().features
 
 }
-
 

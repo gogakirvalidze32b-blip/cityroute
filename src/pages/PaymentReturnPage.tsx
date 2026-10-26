@@ -1,60 +1,65 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
+import { useAuth } from '@/context/AuthContext'
 import { getSupabase } from '@/lib/supabase'
 
-type PaymentStatus = 'checking' | 'success' | 'failed' | 'pending'
+type PaymentStatus = 'checking' | 'success' | 'failed' | 'pending' | 'cancelled'
 
 export function PaymentReturnPage() {
   const [searchParams] = useSearchParams()
   const [status, setStatus] = useState<PaymentStatus>('checking')
-  const [message, setMessage] = useState<string>('')
+  const [message, setMessage] = useState('')
+  const { refreshProfile } = useAuth()
 
   useEffect(() => {
-    const paymentId = searchParams.get('paymentId') || searchParams.get('order_id')
     const provider = searchParams.get('provider')
+    const merchantPaymentId = searchParams.get('merchantPaymentId')
+    let active = true
 
-    if (!paymentId || !provider) {
+    if (provider !== 'bog-production' || !merchantPaymentId) {
       setStatus('failed')
-      setMessage('გადახდის ინფორმაცია არ მოიძებნა')
-      return
+      setMessage('საქართველოს ბანკის გადახდის ინფორმაცია ვერ მოიძებნა')
+    } else {
+      void (async () => {
+        try {
+          const supabase = getSupabase()
+          const { data: { session } } = await supabase.auth.getSession()
+          if (!session) throw new Error('Authentication is required')
+          const query = new URLSearchParams({ provider: 'bog', merchantPaymentId })
+          const response = await fetch(`/api/payments/bog/verify?${query.toString()}`, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          })
+          const result: { status?: string; error?: string } = await response.json()
+          if (!response.ok) throw new Error(result.error || 'Payment verification failed')
+          if (!active) return
+
+          if (result.status === 'success') {
+            await refreshProfile()
+            if (!active) return
+            setStatus('success')
+            setMessage('გადახდა ბანკმა დაადასტურა. Premium გამოწერა გააქტიურებულია.')
+          } else if (result.status === 'pending' || result.status === 'processing') {
+            setStatus('pending')
+            setMessage('გადახდა მუშავდება. Premium გააქტიურდება მხოლოდ ბანკის დადასტურების შემდეგ.')
+          } else if (result.status === 'cancelled') {
+            setStatus('cancelled')
+            setMessage('გადახდა გაუქმდა. Premium არ გააქტიურებულა.')
+          } else {
+            setStatus('failed')
+            setMessage('ბანკმა გადახდა ვერ დაადასტურა. Premium არ გააქტიურებულა.')
+          }
+        } catch (error) {
+          console.error('Payment verification error:', error)
+          if (!active) return
+          setStatus('failed')
+          setMessage('გადახდის შემოწმება ვერ მოხერხდა. Premium არ გააქტიურებულა.')
+        }
+      })()
     }
 
-    // Verify payment status
-    verifyPayment(paymentId, provider as 'tbc' | 'bog')
-  }, [searchParams])
-
-  async function verifyPayment(paymentId: string, provider: 'tbc' | 'bog') {
-    try {
-      const supabase = getSupabase()
-
-      // Call Supabase Edge Function to verify payment
-      const { data, error } = await supabase.functions.invoke('payment-verify', {
-        body: {},
-        method: 'GET',
-      })
-
-      // Build query string manually since Supabase client doesn't support query params well
-      const verifyUrl = `${(supabase.functions as unknown as { _url: string })._url}/payment-verify?paymentId=${paymentId}&provider=${provider}`
-      const response = await fetch(verifyUrl)
-      const result = await response.json()
-
-      if (result.status === 'success') {
-        setStatus('success')
-        setMessage('გადახდა წარმატებით შესრულდა! თქვენი პრემიუმ გამოწერა გააქტიურებულია.')
-      } else if (result.status === 'pending') {
-        setStatus('pending')
-        setMessage('გადახდა მუშავდება... გთხოვთ დაელოდოთ.')
-      } else {
-        setStatus('failed')
-        setMessage('გადახდა ვერ შესრულდა. გთხოვთ სცადოთ თავიდან.')
-      }
-    } catch (error) {
-      console.error('Payment verification error:', error)
-      setStatus('failed')
-      setMessage('გადახდის შემოწმება ვერ მოხერხდა')
-    }
-  }
+    return () => { active = false }
+  }, [searchParams, refreshProfile])
 
   return (
     <div className="page payment-return-page">
@@ -86,6 +91,17 @@ export function PaymentReturnPage() {
           <>
             <div className="payment-status-icon pending">⏱️</div>
             <h1>გადახდა მუშავდება</h1>
+            <p className="muted">{message}</p>
+            <Link to="/" className="secondary-button">
+              მთავარ გვერდზე დაბრუნება
+            </Link>
+          </>
+        )}
+
+        {status === 'cancelled' && (
+          <>
+            <div className="payment-status-icon failed">↩️</div>
+            <h1>გადახდა გაუქმდა</h1>
             <p className="muted">{message}</p>
             <Link to="/" className="secondary-button">
               მთავარ გვერდზე დაბრუნება

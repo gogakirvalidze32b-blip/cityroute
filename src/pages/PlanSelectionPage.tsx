@@ -1,21 +1,22 @@
 ﻿import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
+import { PaymentButton } from '@/components/PaymentButton'
 import { useAuth } from '@/context/AuthContext'
-import { type SubscriptionPlan, calculatePrice } from '@/data/subscription-plans'
+import { calculatePrice } from '@/data/subscription-plans'
 import { useEffect, useState } from 'react'
 
 export function PlanSelectionPage() {
   const { user, loading, hasAccess, needsPlanSelection, profile, selectPlan } = useAuth()
-  const [selected, setSelected] = useState<SubscriptionPlan>(profile?.subscription_plan ?? 'premium')
-  const [deviceSlots, setDeviceSlots] = useState(profile?.device_slots ?? 1)
+  const [deviceSlots, setDeviceSlots] = useState<1 | 2>(profile?.device_slots === 2 ? 2 : 1)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (profile?.subscription_plan) setSelected(profile.subscription_plan)
-    if (profile?.device_slots) setDeviceSlots(profile.device_slots)
-  }, [profile?.subscription_plan, profile?.device_slots])
+    if (profile?.device_slots === 1 || profile?.device_slots === 2) {
+      setDeviceSlots(profile.device_slots)
+    }
+  }, [profile?.device_slots])
 
   if (!loading && !user) return <Navigate to="/login" replace />
   if (!loading && user && !hasAccess) return <Navigate to="/" replace />
@@ -25,8 +26,21 @@ export function PlanSelectionPage() {
   const totalPrice = calculatePrice(chosen, deviceSlots)
 
   async function onContinue() {
-    // Start 24-hour trial with selected device slots
-    navigate('/')
+    setSubmitting(true)
+    setError(null)
+    try {
+      const selectError = await selectPlan('premium', deviceSlots)
+      if (selectError) {
+        setError(selectError)
+        return
+      }
+      navigate('/')
+    } catch (selectError) {
+      console.error('Premium trial selection failed:', selectError)
+      setError('პაკეტის შენახვა ვერ მოხერხდა. სცადე თავიდან.')
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -58,7 +72,7 @@ export function PlanSelectionPage() {
           >
             <span className="device-btn__icon">🚗🚗</span>
             <strong>2 მანქანა</strong>
-            <span className="device-btn__price">189 ₾/თვე</span>
+            <span className="device-btn__price">179 ₾/თვე</span>
           </button>
         </div>
         <p className="device-selector__note">1 ანგარიში (ერთი ემაილი) = მაქსიმუმ {deviceSlots} მოწყობილობა</p>
@@ -78,6 +92,8 @@ export function PlanSelectionPage() {
 
       <footer className="plan-page__footer">
         {error && <p className="error-text">{error}</p>}
+        <PaymentButton deviceSlots={deviceSlots} onError={setError} />
+        <p className="muted">ან გააგრძელე 24-საათიანი საცდელი პერიოდით:</p>
         <button type="button" className="primary plan-page__cta premium-cta" disabled={submitting} onClick={() => void onContinue()}>
           {submitting ? 'ინახება...' : '🚀 24 საათიანი უფასო წვდომის დაწყება'}
         </button>

@@ -43,7 +43,7 @@ export function planName(plan: SubscriptionPlan): string {
 }
 
 export function calculatePrice(plan: SubscriptionPlan, deviceSlots: number): number {
-  // Premium pricing: 1 device = 99₾, 2 devices = 189₾ (max 2 devices)
-  if (deviceSlots === 2) return 189
+  // Premium pricing: 1 device = 99₾, 2 devices = 179₾ (max 2 devices)
+  if (deviceSlots === 2) return 179
   return 99
 }
