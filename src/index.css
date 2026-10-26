@@ -468,6 +468,41 @@ button:disabled {
   z-index: 1000;
 }
 
+.route-session-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.route-session-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: #334155;
+  color: #f8fafc;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  touch-action: manipulation;
+}
+
+.route-session-action:hover {
+  background: #475569;
+}
+
+.route-session-actions--floating {
+  position: fixed;
+  z-index: 1100;
+  left: max(0.65rem, env(safe-area-inset-left));
+  bottom: max(0.65rem, env(safe-area-inset-bottom));
+}
+
 .toolbar-title {
   flex: 1;
   text-align: center;
@@ -3312,6 +3347,12 @@ button:disabled {
     min-height: 36px;
     padding: 0.3rem 0.55rem;
     font-size: 0.8rem;
+  }
+
+  .route-session-action {
+    min-height: 36px;
+    padding: 0.3rem 0.45rem;
+    font-size: 0.75rem;
   }
 }
 

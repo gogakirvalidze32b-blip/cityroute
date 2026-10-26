@@ -44,13 +44,14 @@ function CarFullscreenButton({ floating = false }: { floating?: boolean }) {
 
 export function RoutePage() {
   const { slug } = useParams<{ slug: string }>()
-  const { hasAccess, deviceBlocked } = useAuth()
+  const { hasAccess, deviceBlocked, profile, signOut } = useAuth()
   const { routes } = useRoutes()
   const route = useMemo(
     () => selectableRoutes(routes, PREVIEW_TEST_ROUTE_ENABLED).find((r) => r.slug === slug),
     [routes, slug],
   )
   const routeName = route?.name_ka
+  const onTrial = profile?.subscription_status === 'trial' && hasAccess
   const [navPhase, setNavPhase] = useState<NavPhase>(() =>
     slug && hasSavedExamForSlug(slug, routeName) ? 'active' : 'preview',
   )
@@ -65,7 +66,7 @@ export function RoutePage() {
     }
   }, [slug, routeName, navPhase])
 
-  if (deviceBlocked || !hasAccess) return <Navigate to="/" replace />
+  if (deviceBlocked || !hasAccess) return <Navigate to="/choose-plan" replace />
 
   if (!route) {
     return (
@@ -99,7 +100,38 @@ export function RoutePage() {
           </div>
 
           <span className="tag tag--exam">გამოცდა</span>
+          <div className="route-session-actions">
+            {onTrial && (
+              <Link to="/choose-plan" className="route-session-action">
+                პაკეტები / გადახდა
+              </Link>
+            )}
+            <button
+              type="button"
+              className="route-session-action"
+              onClick={() => void signOut()}
+            >
+              გასვლა
+            </button>
+          </div>
           <CarFullscreenButton />
+        </div>
+      )}
+
+      {(driving || navPhase === 'summary') && (
+        <div className="route-session-actions route-session-actions--floating">
+          {onTrial && (
+            <Link to="/choose-plan" className="route-session-action">
+              პაკეტები / გადახდა
+            </Link>
+          )}
+          <button
+            type="button"
+            className="route-session-action"
+            onClick={() => void signOut()}
+          >
+            გასვლა
+          </button>
         </div>
       )}
 
