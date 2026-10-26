@@ -4,6 +4,7 @@ import { createBogIdempotencyKey, createBogOrder } from '../_shared/bog-payment.
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 const BOG_CLIENT_KEY = Deno.env.get('BOG_CLIENT_KEY') ?? Deno.env.get('BOG_CLIENT_ID')
 const BOG_SECRET_KEY = Deno.env.get('BOG_SECRET_KEY')
 const APP_URL = Deno.env.get('APP_URL')
@@ -24,7 +25,8 @@ serve(async (req) => {
 
   try {
     if (
-      !SUPABASE_URL || !SUPABASE_ANON_KEY || !BOG_CLIENT_KEY || !BOG_SECRET_KEY || !APP_URL
+      !SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY ||
+      !BOG_CLIENT_KEY || !BOG_SECRET_KEY || !APP_URL
     ) {
       return jsonResponse({ error: 'Preview BOG payment is not fully configured' }, 503)
     }
@@ -34,8 +36,15 @@ serve(async (req) => {
     if (appUrl.protocol !== 'https:' || supabaseUrl.protocol !== 'https:') {
       return jsonResponse({ error: 'Preview app and Supabase URLs must use HTTPS' }, 503)
     }
-    if (appUrl.hostname === 'cityroute.ge' || appUrl.hostname === 'www.cityroute.ge') {
+    if (
+      appUrl.hostname === 'cityroute.ge' ||
+      appUrl.hostname === 'www.cityroute.ge' ||
+      !appUrl.hostname.endsWith('.vercel.app')
+    ) {
       return jsonResponse({ error: 'Sandbox payments cannot return to the Production site' }, 503)
+    }
+    if (req.headers.get('Origin') !== appUrl.origin) {
+      return jsonResponse({ error: 'Sandbox payments are available only from the configured Preview site' }, 403)
     }
 
     const authorization = req.headers.get('Authorization')
@@ -89,7 +98,11 @@ serve(async (req) => {
       failUrl: failUrl.toString(),
     })
 
-    const { error: transactionError } = await userClient.rpc('create_bog_payment_transaction', {
+    const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    const { error: transactionError } = await adminClient.rpc('create_bog_sandbox_payment_transaction', {
+      p_user_id: user.id,
       p_payment_id: payment.paymentId,
       p_merchant_payment_id: merchantPaymentId,
       p_idempotency_key: idempotencyKey,

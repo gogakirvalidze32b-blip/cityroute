@@ -41,9 +41,8 @@ serve(async (req) => {
       auth: { persistSession: false, autoRefreshToken: false },
     })
     const { data: transaction, error: transactionError } = await admin
-      .from('payment_transactions')
+      .from('bog_sandbox_payment_transactions')
       .select('payment_id, merchant_payment_id, amount, currency, status')
-      .eq('provider', 'bog')
       .eq('payment_id', callback.body.order_id)
       .maybeSingle()
 
@@ -68,8 +67,7 @@ serve(async (req) => {
       return jsonResponse({ success: true, duplicateOrStale: true }, 200)
     }
 
-    const { error: updateError } = await admin.rpc('update_payment_status', {
-      p_provider: 'bog',
+    const { error: updateError } = await admin.rpc('update_bog_sandbox_payment_status', {
       p_payment_id: transaction.payment_id,
       p_status: persistedStatus,
       p_transaction_id: verified.transactionId,

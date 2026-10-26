@@ -55,9 +55,8 @@ serve(async (req) => {
       auth: { persistSession: false, autoRefreshToken: false },
     })
     let transactionQuery = admin
-      .from('payment_transactions')
+      .from('bog_sandbox_payment_transactions')
       .select('payment_id, merchant_payment_id, amount, currency, status')
-      .eq('provider', 'bog')
       .eq('user_id', user.id)
     transactionQuery = paymentId
       ? transactionQuery.eq('payment_id', paymentId)
@@ -83,8 +82,7 @@ serve(async (req) => {
     const persistedStatus = toPersistedBogPaymentStatus(verified.status)
     let status = transaction.status
     if (canApplyBogPaymentStatus(transaction.status, persistedStatus)) {
-      const { error: updateError } = await admin.rpc('update_payment_status', {
-        p_provider: 'bog',
+      const { error: updateError } = await admin.rpc('update_bog_sandbox_payment_status', {
         p_payment_id: transaction.payment_id,
         p_status: persistedStatus,
         p_transaction_id: verified.transactionId,
@@ -101,9 +99,8 @@ serve(async (req) => {
       if (updateError) throw updateError
 
       const { data: updatedTransaction, error: updatedTransactionError } = await admin
-        .from('payment_transactions')
+        .from('bog_sandbox_payment_transactions')
         .select('status')
-        .eq('provider', 'bog')
         .eq('payment_id', transaction.payment_id)
         .maybeSingle()
       if (updatedTransactionError) throw updatedTransactionError
@@ -113,6 +110,7 @@ serve(async (req) => {
 
     return jsonResponse({
       status,
+      sandbox: true,
       statusIsUnknown: verified.status === 'unknown',
       bankStatus: verified.bankStatus,
       transactionId: verified.transactionId,

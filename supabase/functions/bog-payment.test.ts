@@ -16,6 +16,11 @@ import {
   verifyBogOrderDetails,
 } from './_shared/bog-payment'
 
+const sandboxIsolationPatch = readFileSync(
+  resolve(process.cwd(), 'supabase/patches/bog_sandbox_payment_isolation.sql'),
+  'utf8',
+)
+
 const migration011 = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/011_premium_packages_and_access_safety.sql'),
   'utf8',
@@ -151,7 +156,7 @@ describe('BOG sandbox payment helpers', () => {
     expect(mapBogPaymentStatus('refunded')).toBe('refunded')
     expect(mapBogPaymentStatus('refunded_partially')).toBe('refunded_partially')
     expect(mapBogPaymentStatus('unknown-status')).toBe('unknown')
-    expect(toPersistedBogPaymentStatus('unknown')).toBe('processing')
+    expect(() => toPersistedBogPaymentStatus('unknown')).toThrow('unsupported BOG payment status')
   })
 
   it('uses the documented Sandbox callback key rather than the Production callback key', () => {
@@ -180,7 +185,28 @@ describe('BOG sandbox payment helpers', () => {
     expect(canApplyBogPaymentStatus('cancelled', 'failed')).toBe(false)
     expect(canApplyBogPaymentStatus('pending', 'cancelled')).toBe(true)
     expect(canApplyBogPaymentStatus('pending', 'failed')).toBe(true)
-    expect(canApplyBogPaymentStatus('failed', 'success')).toBe(true)
+    expect(canApplyBogPaymentStatus('failed', 'success')).toBe(false)
+  })
+
+  it('rejects unknown receipt statuses and never updates entitlements in Sandbox SQL', () => {
+    const expected = {
+      orderId: 'order-123',
+      externalOrderId: 'cr-test-id',
+      amount: 99,
+      currency: 'GEL',
+    }
+    expect(() => verifyBogOrderDetails({
+      order_id: expected.orderId,
+      external_order_id: expected.externalOrderId,
+      order_status: { key: 'unknown-bank-status' },
+      purchase_units: { request_amount: '99', currency_code: 'GEL' },
+    }, expected)).toThrow('unsupported order status')
+
+    expect(sandboxIsolationPatch).toMatch(/create table if not exists public\.bog_sandbox_payment_transactions/i)
+    expect(sandboxIsolationPatch).toMatch(/create or replace function public\.create_bog_sandbox_payment_transaction\(\s*p_user_id uuid,/i)
+    expect(sandboxIsolationPatch).toMatch(/create or replace function public\.update_bog_sandbox_payment_status\(\s*p_payment_id text,/i)
+    expect(sandboxIsolationPatch).not.toMatch(/update\s+public\.profiles/i)
+    expect(sandboxIsolationPatch).toMatch(/subscription_activated', false/i)
   })
 
   it('requires the bank order ID, external ID, amount, and GEL currency to match', () => {

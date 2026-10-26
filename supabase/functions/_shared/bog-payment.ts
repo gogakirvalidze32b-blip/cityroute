@@ -251,6 +251,10 @@ export function verifyBogOrderDetails(
   if (typeof bankStatus !== 'string') {
     throw new Error('BOG returned an invalid order status')
   }
+  const status = mapBogPaymentStatus(bankStatus)
+  if (status === 'unknown') {
+    throw new Error('BOG returned an unsupported order status')
+  }
 
   const bankRefundAmount = order.purchase_units?.refund_amount
   const refundAmount = typeof bankRefundAmount === 'number' || typeof bankRefundAmount === 'string'
@@ -270,7 +274,7 @@ export function verifyBogOrderDetails(
   }
 
   return {
-    status: mapBogPaymentStatus(bankStatus),
+    status,
     transactionId: typeof order.payment_detail?.transaction_id === 'string'
       ? order.payment_detail.transaction_id
       : null,
@@ -311,26 +315,50 @@ export function mapBogPaymentStatus(status: string): BogPaymentStatus {
 export function toPersistedBogPaymentStatus(
   status: BogPaymentStatus,
 ): PersistedBogPaymentStatus {
-  return status === 'unknown' ? 'processing' : status
+  if (status === 'unknown') {
+    throw new Error('Cannot persist an unsupported BOG payment status')
+  }
+  return status
 }
 
 export function canApplyBogPaymentStatus(
   currentStatus: string,
   nextStatus: PersistedBogPaymentStatus,
 ): boolean {
-  if (currentStatus === nextStatus || currentStatus === 'refunded') return false
-  if (currentStatus === 'refunded_partially' && nextStatus !== 'refunded') return false
-  if (
-    currentStatus === 'success' &&
-    nextStatus !== 'refunded' &&
-    nextStatus !== 'refunded_partially'
-  ) return false
-  if (
-    (currentStatus === 'failed' || currentStatus === 'cancelled') &&
-    (nextStatus === 'pending' ||
-      nextStatus === 'processing' ||
-      nextStatus === 'failed' ||
-      nextStatus === 'cancelled')
-  ) return false
+  if (![
+    'pending',
+    'processing',
+    'success',
+    'failed',
+    'cancelled',
+    'refunded',
+    'refunded_partially',
+  ].includes(currentStatus)) {
+    throw new Error('Stored BOG payment status is invalid')
+  }
+  if (currentStatus === nextStatus) return currentStatus === 'refunded_partially'
+
+  let allowed = false
+  switch (currentStatus) {
+    case 'pending':
+      allowed = true
+      break
+    case 'processing':
+      allowed = nextStatus !== 'pending' && nextStatus !== 'processing'
+      break
+    case 'success':
+      allowed = nextStatus === 'refunded' || nextStatus === 'refunded_partially'
+      break
+    case 'refunded_partially':
+      allowed = nextStatus === 'refunded'
+      break
+    case 'failed':
+    case 'cancelled':
+    case 'refunded':
+      break
+  }
+  if (!allowed) {
+    throw new Error(`Invalid BOG payment status transition: ${currentStatus} -> ${nextStatus}`)
+  }
   return true
 }
