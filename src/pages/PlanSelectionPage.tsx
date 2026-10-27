@@ -77,6 +77,14 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
     }
   }
 
+  function continueToRoutes() {
+    if (needsPlanSelection) {
+      void continueWithTrial()
+      return
+    }
+    navigate('/', { replace: true })
+  }
+
   async function handleSignOut() {
     setError(null)
     try {
@@ -126,6 +134,28 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
                       : 'ანგარიშის გამოწერის მონაცემები ვერ ჩაიტვირთა'}
                 </p>
               </div>
+            </div>
+          )}
+          {trialActive && !isPreview && !deviceBlocked && (
+            <div className="subscription-trial-actions">
+              <button
+                type="button"
+                className="subscription-trial-action subscription-trial-action--primary"
+                disabled={trialSubmitting}
+                onClick={() => void continueWithTrial()}
+              >
+                {trialSubmitting ? 'ინახება...' : 'Trial ვერსიაზე გადასვლა'}
+                {!trialSubmitting && <span aria-hidden="true">→</span>}
+              </button>
+              <button
+                type="button"
+                className="subscription-trial-action"
+                disabled={trialSubmitting}
+                onClick={continueToRoutes}
+              >
+                მარშრუტებზე გადასვლა
+                <span aria-hidden="true">→</span>
+              </button>
             </div>
           )}
           {((!isPreview && deviceBlocked) || (isPreview && previewMode === 'blocked-trial')) && (
