@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { ExamDriveSession } from './ExamDriveSession'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
@@ -200,6 +200,6 @@ describe('GPS gap: expected PIN passed between two fixes (component)', () => {
     expect(playedOrders(route)).toHaveLength(before)
     busy.mockImplementation(() => false)
     await sendFix(fixAt(route, 3, 130, t + 9000))
-    expect(playedOrders(route).slice(before)).toEqual([3])
+    await waitFor(() => expect(playedOrders(route).slice(before)).toEqual([3]))
   })
 })

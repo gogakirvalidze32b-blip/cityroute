@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { PaymentButton } from '@/components/PaymentButton'
 import { SupportFooterLinks } from '@/components/support/SupportLinks'
 import { useAuth } from '@/context/AuthContext'
@@ -253,6 +253,11 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
         კითხვები გაქვს? მოგვწერე: <a href="mailto:support@cityroute.ge">support@cityroute.ge</a>
       </p>
       <div className="subscription-bottom-links"><SupportFooterLinks /></div>
+      {!isPreview && user && trialActive && (
+        <Link to="/" className="subscription-back-link">
+          მარშრუტებზე დაბრუნება
+        </Link>
+      )}
       {!isPreview && user && (
         <div className="subscription-signout-wrap">
           <button

@@ -313,6 +313,19 @@
 .subscription-disclaimer { color: #a8c0ca; }
 .subscription-bottom-links { color: #b6cbd4; }
 .subscription-bottom-links a { color: #8fe6dc; }
+.subscription-back-link {
+  display: block;
+  width: fit-content;
+  margin: 12px auto;
+  color: #8fe6dc;
+  text-align: center;
+  text-decoration: none;
+}
+.subscription-back-link:hover { text-decoration: underline; }
+.subscription-back-link:focus-visible {
+  outline: 3px solid rgba(75, 229, 209, .72);
+  outline-offset: 3px;
+}
 .subscription-support { margin: 0 auto 12px; padding: 0 16px; color: #b6cbd4; text-align: center; font-size: 13px; }
 .subscription-support a { color: #5be2d0; text-decoration: none; }
 .subscription-support a:hover { text-decoration: underline; }

@@ -120,6 +120,26 @@ describe('Premium selection and payment offer', () => {
     expect(screen.queryByRole('button', { name: '12-საათიანი უფასო Trial' })).toBeNull()
   })
 
+  it('lets an active trial user return to routes from plan selection', () => {
+    h.hasAccess = true
+    h.needsPlanSelection = false
+    h.profile = {
+      id: 'user-1',
+      subscription_status: 'trial',
+      trial_started_at: new Date(Date.now() - 1000).toISOString(),
+      subscription_expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+      subscription_plan: 'premium',
+      device_slots: 1,
+    }
+
+    renderPage('/choose-plan?earlyPayment=1')
+
+    const backToRoutes = screen.getByRole('link', { name: 'მარშრუტებზე დაბრუნება' })
+    expect(backToRoutes.getAttribute('href')).toBe('/')
+    fireEvent.click(backToRoutes)
+    expect(screen.getByText('ROUTE_HOME')).toBeTruthy()
+  })
+
   it('signs out from the bottom of the plan selection page', async () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'გამოსვლა' }))
