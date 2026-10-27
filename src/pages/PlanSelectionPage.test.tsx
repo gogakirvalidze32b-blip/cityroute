@@ -102,11 +102,11 @@ describe('Premium selection and payment offer', () => {
     expect(await screen.findByText('ROUTE_HOME')).toBeTruthy()
   })
 
-  it('shows trial and routes shortcuts below the active trial status and uses the existing trial flow', async () => {
+  it('shows only the routes shortcut below the active trial status and uses the existing trial flow', async () => {
     renderPage()
 
-    expect(screen.getByRole('button', { name: 'Trial ვერსიაზე გადასვლა' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Trial ვერსიაზე გადასვლა' }))
+    expect(screen.queryByRole('button', { name: 'Trial ვერსიაზე გადასვლა' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'მარშრუტებზე გადასვლა' }))
 
     await waitFor(() => expect(h.selectPackage).toHaveBeenCalledWith(1))
     expect(await screen.findByText('ROUTE_HOME')).toBeTruthy()
@@ -148,26 +148,6 @@ describe('Premium selection and payment offer', () => {
     expect(screen.queryByRole('button', { name: '12-საათიანი უფასო Trial' })).toBeNull()
   })
 
-  it('lets an active trial user return to routes from plan selection', () => {
-    h.hasAccess = true
-    h.needsPlanSelection = false
-    h.profile = {
-      id: 'user-1',
-      subscription_status: 'trial',
-      trial_started_at: new Date(Date.now() - 1000).toISOString(),
-      subscription_expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-      subscription_plan: 'premium',
-      device_slots: 1,
-    }
-
-    renderPage('/choose-plan?earlyPayment=1')
-
-    const backToRoutes = screen.getByRole('link', { name: 'მარშრუტებზე დაბრუნება' })
-    expect(backToRoutes.getAttribute('href')).toBe('/')
-    fireEvent.click(backToRoutes)
-    expect(screen.getByText('ROUTE_HOME')).toBeTruthy()
-  })
-
   it('signs out from the bottom of the plan selection page', async () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: 'გამოსვლა' }))
@@ -184,7 +164,6 @@ describe('Premium selection and payment offer', () => {
     expect(screen.getByText('უფასო Trial აქტიურია')).toBeTruthy()
     expect(screen.getByText(/Trial-ს ჯერ კიდევ დარჩენილი დრო აქვს, მაგრამ ეს მოწყობილობა დაბლოკილია/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: '12-საათიანი უფასო Trial' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Trial ვერსიაზე გადასვლა' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'მარშრუტებზე გადასვლა' })).toBeNull()
     expect(screen.getByRole('button', { name: 'გადახდა — 99 ₾' })).toBeTruthy()
   })
