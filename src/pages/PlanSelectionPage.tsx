@@ -1,23 +1,34 @@
 import { useState } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { PaymentButton } from '@/components/PaymentButton'
 import { SupportFooterLinks } from '@/components/support/SupportLinks'
 import { useAuth } from '@/context/AuthContext'
 import { calculatePrice } from '@/data/subscription-plans'
-import { accessLabel } from '@/types/database'
+import { accessLabel, trialExpiresAt } from '@/types/database'
 import './subscription-page.css'
 
 const VEHICLE_OPTIONS = [1, 2] as const
-type PreviewMode = 'trial' | 'expired'
+type PreviewMode = 'trial' | 'expired' | 'blocked-trial'
 
 export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode } = {}) {
-  const { user, loading, hasAccess, needsPlanSelection, profile, selectPackage } = useAuth()
+  const {
+    user,
+    loading,
+    hasAccess,
+    needsPlanSelection,
+    profile,
+    deviceBlocked,
+    selectPackage,
+    signOut,
+  } = useAuth()
   const [deviceSlots, setDeviceSlots] = useState<1 | 2>(profile?.device_slots === 2 ? 2 : 1)
   const [error, setError] = useState<string | null>(null)
   const [previewNotice, setPreviewNotice] = useState<string | null>(null)
   const [trialSubmitting, setTrialSubmitting] = useState(false)
+  const location = useLocation()
   const navigate = useNavigate()
   const isPreview = Boolean(previewMode)
+  const earlyPayment = new URLSearchParams(location.search).get('earlyPayment') === '1'
 
   if (loading && !isPreview) {
     return (
@@ -28,12 +39,22 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
   }
 
   if (!isPreview && !user) return <Navigate to="/login" replace />
-  if (!isPreview && hasAccess && profile?.subscription_plan && !needsPlanSelection) {
-    return <Navigate to="/" replace />
-  }
 
   const price = calculatePrice('premium', deviceSlots)
-  const trialActive = previewMode ? previewMode === 'trial' : profile?.subscription_status === 'trial' && hasAccess
+  const trialActive = previewMode
+    ? previewMode !== 'expired'
+    : profile?.subscription_status === 'trial' &&
+      trialExpiresAt(profile) > Date.now()
+
+  if (
+    !isPreview &&
+    hasAccess &&
+    profile?.subscription_plan &&
+    !needsPlanSelection &&
+    !(earlyPayment && trialActive)
+  ) {
+    return <Navigate to="/" replace />
+  }
 
   async function continueWithTrial() {
     if (isPreview) {
@@ -56,6 +77,16 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
     }
   }
 
+  async function handleSignOut() {
+    setError(null)
+    try {
+      await signOut()
+      navigate('/login', { replace: true })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'ანგარიშიდან გასვლა ვერ მოხერხდა')
+    }
+  }
+
   return (
     <main className="subscription-page">
       <div className="subscription-layout">
@@ -70,12 +101,12 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
 
           {trialActive ? (
             <div className="subscription-status subscription-status--trial">
-              <span className="subscription-status__icon" aria-hidden="true">24</span>
+              <span className="subscription-status__icon" aria-hidden="true">12</span>
               <div>
                 <strong>უფასო Trial აქტიურია</strong>
                 <p>
-                  {previewMode === 'trial'
-                    ? 'ვიზუალური დემო · Trial რეგისტრაციის შემდეგ ითვლება'
+                  {previewMode && previewMode !== 'expired'
+                    ? 'ადგილობრივი დემო · 12 სთ სატესტო წვდომა'
                     : profile
                       ? accessLabel(profile)
                       : 'Trial რეგისტრაციისას დაიწყო'}
@@ -96,6 +127,13 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
                 </p>
               </div>
             </div>
+          )}
+          {((!isPreview && deviceBlocked) || (isPreview && previewMode === 'blocked-trial')) && (
+            <p className="subscription-error" role="alert">
+              Trial-ს ჯერ კიდევ დარჩენილი დრო აქვს, მაგრამ ეს მოწყობილობა დაბლოკილია
+              {!isPreview && deviceBlocked ? `: ${deviceBlocked}` : '.'}
+              {' '}მარშრუტებზე წვდომისთვის დაუკავშირდი მხარდაჭერას და მოითხოვე მოწყობილობის განბლოკვა.
+            </p>
           )}
 
           <ul className="subscription-benefits">
@@ -149,19 +187,24 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
               })}
             </div>
 
-            {trialActive && !isPreview && (
+            {trialActive && !earlyPayment && !isPreview && !deviceBlocked && (
               <button
                 type="button"
                 className="subscription-trial-button"
                 disabled={trialSubmitting}
                 onClick={() => void continueWithTrial()}
               >
-                {trialSubmitting ? 'ინახება...' : '24-საათიანი უფასო Trial'}
+                {trialSubmitting ? 'ინახება...' : '12-საათიანი უფასო Trial'}
                 {!trialSubmitting && <span aria-hidden="true">→</span>}
               </button>
             )}
-            {trialActive && !isPreview && (
-              <p className="subscription-trial-copy">უფასო წვდომა 24 საათით, გადახდის გარეშე.</p>
+            {trialActive && !earlyPayment && !isPreview && !deviceBlocked && (
+              <p className="subscription-trial-copy">უფასო წვდომა 12 საათით, გადახდის გარეშე.</p>
+            )}
+            {earlyPayment && trialActive && (
+              <p className="subscription-trial-copy">
+                Trial აქტიურია — გადახდა სურვილისამებრ შეგიძლია ვადის ამოწურვამდე.
+              </p>
             )}
 
             {previewNotice && <p className="subscription-preview-notice" role="status">{previewNotice}</p>}
@@ -186,7 +229,7 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
                 />
               </>
             )}
-            {isPreview && (
+            {isPreview && !trialActive && (
               <>
                 <div className="subscription-total">
                   <span>არჩეული პაკეტი</span>
@@ -210,6 +253,17 @@ export function PlanSelectionPage({ previewMode }: { previewMode?: PreviewMode }
         კითხვები გაქვს? მოგვწერე: <a href="mailto:support@cityroute.ge">support@cityroute.ge</a>
       </p>
       <div className="subscription-bottom-links"><SupportFooterLinks /></div>
+      {!isPreview && user && (
+        <div className="subscription-signout-wrap">
+          <button
+            type="button"
+            className="subscription-signout"
+            onClick={() => void handleSignOut()}
+          >
+            გამოსვლა
+          </button>
+        </div>
+      )}
     </main>
   )
 }

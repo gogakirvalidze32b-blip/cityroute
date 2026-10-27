@@ -34,9 +34,7 @@ import {
 
 } from '@/lib/plan-features'
 
-import type { Profile } from '@/types/database'
-
-import { isAccessActive } from '@/types/database'
+import { isAccessActive, trialExpiresAt, type Profile } from '@/types/database'
 
 
 
@@ -149,6 +147,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileReady, setProfileReady] = useState(false)
 
   const [deviceBlocked, setDeviceBlocked] = useState<string | null>(null)
+
+  const [expiredTrialTimestamp, setExpiredTrialTimestamp] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (profile?.subscription_status !== 'trial') {
+      setExpiredTrialTimestamp(null)
+      return
+    }
+
+    const expiration = trialExpiresAt(profile)
+    const remainingMs = expiration - Date.now()
+    if (remainingMs <= 0) {
+      setExpiredTrialTimestamp(profile.subscription_expires_at)
+      return
+    }
+
+    setExpiredTrialTimestamp(null)
+    const expirationTimestamp = profile.subscription_expires_at
+    const timeoutId = window.setTimeout(() => setExpiredTrialTimestamp(expirationTimestamp), remainingMs)
+    return () => window.clearTimeout(timeoutId)
+  }, [profile?.subscription_status, profile?.subscription_expires_at])
 
 
 
@@ -454,7 +473,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const appReady = !loading && profileReady
 
-  const hasAccess = isAccessActive(profile) && !deviceBlocked
+  const trialExpired = profile?.subscription_status === 'trial' &&
+    expiredTrialTimestamp === profile.subscription_expires_at
+
+  const hasAccess = isAccessActive(profile) && !deviceBlocked && !trialExpired
 
   const needsPlanSelection = Boolean(profile && hasAccess && profileNeedsPlan(profile))
 

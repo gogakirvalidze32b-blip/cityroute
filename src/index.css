@@ -314,6 +314,22 @@ button:disabled {
   text-align: center;
 }
 
+.home-early-payment {
+  padding: 0.55rem 1rem;
+  border: 1px solid #2dd4bf;
+  border-radius: 999px;
+  color: #5eead4;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.home-early-payment:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 3px;
+}
+
 .home-meta {
   margin: 0;
   font-size: 0.8rem;

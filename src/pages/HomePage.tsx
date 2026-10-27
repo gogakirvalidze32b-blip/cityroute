@@ -4,7 +4,7 @@ import { AppBrand } from '@/components/AppBrand'
 import { useAuth } from '@/context/AuthContext'
 import { SupportButton, SupportFooterLinks } from '@/components/support/SupportLinks'
 
-import { accessLabel, routeSourceLabel } from '@/types/database'
+import { accessLabel, isAccessActive, routeSourceLabel } from '@/types/database'
 
 import { useExamLayoutMode } from '@/hooks/useExamLayoutMode'
 import { useRoutes } from '@/hooks/useRoutes'
@@ -19,7 +19,7 @@ export function HomePage() {
   const layoutMode = useExamLayoutMode()
   const onTrial = profile?.subscription_status === 'trial' && hasAccess
 
-  if (deviceBlocked) {
+  if (deviceBlocked && isAccessActive(profile)) {
     return (
       <div className="page center">
         <h1>მოწყობილობა დაბლოკილია</h1>
@@ -69,6 +69,15 @@ export function HomePage() {
 
       <footer className="home-footer">
         {onTrial && profile && <p className="home-trial">{accessLabel(profile)}</p>}
+        {onTrial && (
+          <Link
+            to="/choose-plan?earlyPayment=1"
+            className="home-early-payment"
+            data-testid="home-early-payment"
+          >
+            Premium-ის შეძენა ვადის ამოწურვამდე
+          </Link>
+        )}
         <p className="muted home-meta">
           {!onTrial && profile && accessLabel(profile)}
           {!onTrial && profile && ' · '}

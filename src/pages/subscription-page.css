@@ -155,6 +155,22 @@
 .subscription-error { margin: 0 0 12px; padding: 10px 12px; color: #9c2028; background: #fff1f1; border: 1px solid #f0cacc; border-radius: 8px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .subscription-disclaimer { margin: 12px 0 0; color: #858a94; text-align: center; font-size: 10px; line-height: 1.6; }
 .subscription-bottom-links { padding-bottom: 20px; text-align: center; }
+.subscription-signout-wrap { display: flex; justify-content: center; padding: 0 16px 24px; text-align: center; }
+.subscription-signout {
+  min-width: 140px;
+  min-height: 42px;
+  padding: 9px 18px;
+  color: #d5e7ed;
+  background: #123244;
+  border: 1px solid #326075;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.subscription-signout:hover { color: #fff; background: #194255; border-color: #48cbbb; }
+.subscription-signout:focus-visible { outline: 2px solid #48cbbb; outline-offset: 3px; }
 .subscription-page--center { display: grid; min-height: 100vh; place-items: center; }
 
 @media (max-width: 760px) {

@@ -10,13 +10,25 @@ import { MemoryRouter } from 'react-router-dom'
 import { HomePage } from './HomePage'
 import { detectExamLayoutMode } from '@/hooks/useExamLayoutMode'
 
+const h = vi.hoisted(() => ({
+  profile: {
+    subscription_status: 'active',
+    subscription_plan: 'car_1',
+    device_slots: 1,
+    trial_started_at: new Date(Date.now() - 1000).toISOString(),
+    subscription_expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+  } as null | {
+    subscription_status: 'active' | 'trial'
+    subscription_plan: string | null
+    device_slots: number
+    trial_started_at: string
+    subscription_expires_at: string
+  },
+}))
+
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
-    profile: {
-      subscription_status: 'active',
-      subscription_plan: 'car_1',
-      device_slots: 1,
-    },
+    profile: h.profile,
     hasAccess: true,
     deviceBlocked: null,
     signOut: vi.fn(),
@@ -64,6 +76,13 @@ function renderHome() {
 describe('HomePage outer menu fit (Android landscape)', () => {
   beforeEach(() => {
     cleanup()
+    h.profile = {
+      subscription_status: 'active',
+      subscription_plan: 'car_1',
+      device_slots: 1,
+      trial_started_at: new Date(Date.now() - 1000).toISOString(),
+      subscription_expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+    }
   })
   afterEach(() => {
     cleanup()
@@ -95,6 +114,22 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(screen.queryByText('თბილისი ტესტი')).toBeNull()
     expect(screen.getByRole('button', { name: 'გასვლა' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'მხარდაჭერა' })).toBeTruthy()
+    expect(screen.queryByTestId('home-early-payment')).toBeNull()
+  })
+
+  it('offers early payment only on the active trial route list', () => {
+    h.profile = {
+      subscription_status: 'trial',
+      subscription_plan: 'premium',
+      device_slots: 1,
+      trial_started_at: new Date(Date.now() - 1000).toISOString(),
+      subscription_expires_at: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+    }
+    renderHome()
+
+    const link = screen.getByTestId('home-early-payment')
+    expect(link.getAttribute('href')).toBe('/choose-plan?earlyPayment=1')
+    expect(link.textContent).toContain('ვადის ამოწურვამდე')
   })
 
   it('keeps laptop detection for tall wide desktops', () => {

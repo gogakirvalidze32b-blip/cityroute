@@ -111,9 +111,17 @@ export type PinRow = Database['public']['Tables']['pins']['Row']
 
 export type RouteWithPins = RouteRow & { pins: PinRow[] }
 
+export function trialExpiresAt(profile: Profile): number {
+  const recordedExpiry = new Date(profile.subscription_expires_at).getTime()
+  const twelveHourExpiry = new Date(profile.trial_started_at).getTime() + 12 * 60 * 60 * 1000
+  return Math.min(recordedExpiry, twelveHourExpiry)
+}
+
 export function isAccessActive(profile: Profile | null): boolean {
   if (!profile) return false
-  const expires = new Date(profile.subscription_expires_at).getTime()
+  const expires = profile.subscription_status === 'trial'
+    ? trialExpiresAt(profile)
+    : new Date(profile.subscription_expires_at).getTime()
   if (profile.subscription_status === 'active') return expires > Date.now() || !profile.subscription_expires_at
   if (profile.subscription_status === 'trial') return expires > Date.now()
   return false
@@ -122,7 +130,7 @@ export function isAccessActive(profile: Profile | null): boolean {
 export function accessLabel(profile: Profile | null): string {
   if (!profile) return ''
   if (profile.subscription_status === 'trial') {
-    const ms = new Date(profile.subscription_expires_at).getTime() - Date.now()
+    const ms = trialExpiresAt(profile) - Date.now()
     if (ms <= 0) return 'საცდელი პერიოდი დასრულებულია'
     const h = Math.floor(ms / 3600000)
     const m = Math.floor((ms % 3600000) / 60000)

@@ -31,10 +31,11 @@ export function PaymentReturnPage() {
         ? { paymentId }
         : null
     const provider = searchParams.get('provider')
+    const isProductionPayment = provider === 'bog-production'
     const returnedWithoutCompletion = searchParams.get('checkout') === 'not-completed'
     let active = true
 
-    if (!paymentLookup || provider !== 'bog') {
+    if (!paymentLookup || (provider !== 'bog' && !isProductionPayment)) {
       setStatus('failed')
       setMessage('საქართველოს ბანკის გადახდის ინფორმაცია ვერ მოიძებნა')
     } else {
@@ -42,42 +43,83 @@ export function PaymentReturnPage() {
         try {
           const supabase = getSupabase()
           const query = new URLSearchParams({ ...paymentLookup, provider: 'bog' })
-          const { data, error } = await supabase.functions.invoke(`payment-verify?${query.toString()}`, {
-            method: 'GET',
-          })
-          if (error) throw error
+          let data: {
+            status?: string
+            statusIsUnknown?: boolean
+            bankStatus?: string
+            sandbox?: boolean
+            error?: string
+          } | null
+          if (isProductionPayment) {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) throw new Error('Authentication is required')
+            const response = await fetch(`/api/payments/bog/verify?${query.toString()}`, {
+              headers: { Authorization: `Bearer ${session.access_token}` },
+            })
+            data = await response.json()
+            if (!response.ok) throw new Error(data?.error || 'Payment verification failed')
+          } else {
+            const { data: sandboxData, error } = await supabase.functions.invoke(
+              `payment-verify?${query.toString()}`,
+              { method: 'GET' },
+            )
+            if (error) throw error
+            data = sandboxData
+          }
           if (!active) return
 
-          if (data.statusIsUnknown) {
+          if (data?.statusIsUnknown) {
             setStatus('unknown')
             setMessage(`ბანკის პასუხია „${String(data.bankStatus)}“. Premium არ გააქტიურებულა; მოგვიანებით გადაამოწმე.`)
-          } else if (data.status === 'success') {
-            await refreshProfile()
-            if (!active) return
+          } else if (data?.status === 'success') {
+            if (data.sandbox !== true) {
+              await refreshProfile()
+              if (!active) return
+            }
             setStatus('success')
-            setMessage('გადახდა ბანკმა დაადასტურა. Premium გამოწერა გააქტიურებულია.')
-          } else if (data.status === 'refunded_partially') {
-            await refreshProfile()
-            if (!active) return
+            setMessage(
+              data.sandbox === true
+                ? 'BOG Sandbox ტესტ-გადახდა ბანკმა დაადასტურა. სატესტო გადახდა Premium წვდომას არ ააქტიურებს.'
+                : 'გადახდა ბანკმა დაადასტურა. Premium გამოწერა გააქტიურებულია.',
+            )
+          } else if (data?.status === 'refunded_partially') {
+            if (data.sandbox !== true) {
+              await refreshProfile()
+              if (!active) return
+            }
             setStatus('refunded_partially')
-            setMessage('თანხის ნაწილი დაბრუნებულია. Premium წვდომა შენარჩუნებულია.')
-          } else if (data.status === 'refunded') {
-            await refreshProfile()
-            if (!active) return
+            setMessage(
+              data.sandbox === true
+                ? 'BOG Sandbox-მა სატესტო გადახდის ნაწილობრივი დაბრუნება დაადასტურა. Premium არ გააქტიურებულა.'
+                : 'თანხის ნაწილი დაბრუნებულია. Premium წვდომა შენარჩუნებულია.',
+            )
+          } else if (data?.status === 'refunded') {
+            if (data.sandbox !== true) {
+              await refreshProfile()
+              if (!active) return
+            }
             setStatus('refunded')
-            setMessage('ბანკმა თანხის სრული დაბრუნება დაადასტურა. Premium-ის წვდომა უცვლელია, სანამ მხარდაჭერა გადახედავს გამოწერას.')
-          } else if (data.status === 'cancelled') {
+            setMessage(
+              data.sandbox === true
+                ? 'BOG Sandbox-მა სატესტო გადახდის დაბრუნება დაადასტურა. Premium არ გააქტიურებულა.'
+                : 'ბანკმა თანხის სრული დაბრუნება დაადასტურა. Premium-ის წვდომა უცვლელია, სანამ მხარდაჭერა გადახედავს გამოწერას.',
+            )
+          } else if (data?.status === 'cancelled') {
             setStatus('cancelled')
             setMessage('გადახდა გაუქმდა. Premium არ გააქტიურებულა.')
-          } else if (data.status === 'pending' || data.status === 'processing') {
+          } else if (data?.status === 'pending' || data?.status === 'processing') {
             if (returnedWithoutCompletion) {
               setStatus('cancelled')
               setMessage('გადახდის გვერდი დასრულდა გადახდის გარეშე. ბანკის საბოლოო სტატუსი ჯერ არ დადასტურებულა; Premium არ გააქტიურებულა.')
             } else {
               setStatus('pending')
-              setMessage('გადახდა მუშავდება... Premium გააქტიურდება ბანკის დადასტურების შემდეგ.')
+              setMessage(
+                data.sandbox === true
+                  ? 'BOG Sandbox ტესტ-გადახდა მუშავდება. Premium არ გააქტიურდება.'
+                  : 'გადახდა მუშავდება... Premium გააქტიურდება ბანკის დადასტურების შემდეგ.',
+              )
             }
-          } else if (data.status === 'failed') {
+          } else if (data?.status === 'failed') {
             setStatus('failed')
             setMessage('ბანკმა გადახდა უარყო. Premium არ გააქტიურებულა.')
           } else {
