@@ -1,4 +1,10 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/payments/bog/*.ts": {
+      "includeFiles": "api/_lib/*.ts"
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!audio/).*)",
