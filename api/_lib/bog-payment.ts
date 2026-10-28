@@ -60,7 +60,42 @@ async function getBogAccessToken(credentials: BogCredentials): Promise<string> {
     },
     body: new URLSearchParams({ grant_type: 'client_credentials' }),
   })
-  if (!response.ok) throw new Error(`BOG authentication failed (${response.status})`)
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null)
+    const body =
+      typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+        ? payload
+        : null
+    const knownCodes = new Set([
+      'invalid_request',
+      'invalid_client',
+      'invalid_grant',
+      'unauthorized_client',
+      'unsupported_grant_type',
+      'invalid_scope',
+      'server_error',
+      'temporarily_unavailable',
+    ])
+    const code =
+      body && 'error' in body && typeof body.error === 'string' && knownCodes.has(body.error)
+        ? body.error
+        : 'unrecognized'
+    const description =
+      body && 'error_description' in body && typeof body.error_description === 'string'
+        ? body.error_description
+        : ''
+    let descriptionCategory = 'unclassified'
+    if (/invalid[_ -]?client|client.{0,40}(invalid|failed|rejected)/i.test(description)) {
+      descriptionCategory = 'client authentication rejected'
+    } else if (/unsupported[_ -]?grant[_ -]?type/i.test(description)) {
+      descriptionCategory = 'grant type rejected'
+    } else if (/invalid[_ -]?request|malformed|missing.{0,40}grant[_ -]?type/i.test(description)) {
+      descriptionCategory = 'request format rejected'
+    }
+    throw new Error(
+      `BOG authentication failed (${response.status}; oauth_error=${code}; description=${descriptionCategory})`,
+    )
+  }
   const result: { access_token?: unknown } = await response.json()
   if (typeof result.access_token !== 'string' || !result.access_token) {
     throw new Error('BOG returned no access token')
