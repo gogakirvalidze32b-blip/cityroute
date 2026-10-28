@@ -1,3 +1,7 @@
+import {
+  safeVoiceGain,
+} from './audio-normalization'
+
 /**
  * ხმის სიჩქარე — შეცვალე ეს რიცხვი.
  * 1 = ნორმალური · 0.9 = ოდნავ ნელი · 0.8 = უფრო ნელი · 0.75 = ნელი · 0.7 = ძალიან ნელი · 1.1 = ჩქარი · 1.2 = უფრო ჩქარი
@@ -23,11 +27,8 @@ export const VOICE_LOW_PITCH = (['low'] as VoicePitch[]).includes(VOICE_PITCH)
  */
 export const VOICE_VOLUME = 1
 
-/**
- * Web Audio GainNode multiplier (timbre / pitch / speed unchanged).
- * 1.0 = file level. Use this (not HTML volume) if loudness above 100% is needed.
- */
-export const VOICE_GAIN = 1
+/** Maximum multiplier for measured voice files; per-file normalization may choose less. */
+export const VOICE_GAIN = 4
 
 /** Shared Web Audio graph (one AudioContext for all voice files — mobile browsers cap contexts). */
 type WarmGraph = {
@@ -35,14 +36,23 @@ type WarmGraph = {
   input: AudioNode
 }
 
-/** Loudness only: one gain into the speakers. No EQ, no pitch shift. */
+/** Per-file loudness gain with measured source-peak headroom. No EQ or pitch shift. */
 type LoudGraph = {
   ctx: AudioContext
   gain: GainNode
 }
 
-/** Result of a playback attempt. 'failed' = neither the MP3 nor the TTS fallback could start. */
-export type PlayStatus = 'played' | 'tts' | 'duplicate' | 'failed'
+/** Result of a playback start request. Only original WAV/media URLs are used — never TTS. */
+export type PlayStatus = 'played' | 'duplicate' | 'busy' | 'cancelled' | 'failed'
+
+export type PlaybackFailureReason = 'media-error' | 'play-rejected' | 'playback-timeout'
+
+export type PlayOptions = {
+  /** Called once after the media element reaches its natural end. */
+  onEnded?: () => void
+  /** Called once if a started playback later fails. */
+  onFailure?: (reason: PlaybackFailureReason) => void
+}
 
 export type AudioDiagnostic = {
   at: number
@@ -55,7 +65,8 @@ export type AudioDiagnostic = {
     | 'media-error'
     | 'play-rejected'
     | 'audio-context-not-running'
-    | 'tts-unavailable'
+    | 'gain-unavailable'
+    | 'playback-timeout'
   detail?: string
 }
 
@@ -66,14 +77,25 @@ const RESUME_TIMEOUT_MS = 400
 
 export class AudioEngine {
   private cache = new Map<string, HTMLAudioElement>()
-  private speaking = new Set<string>()
   private playbackRate = VOICE_PLAYBACK_RATE
   private pitch: VoicePitch = VOICE_PITCH
   private volume = VOICE_VOLUME
   private graph: WarmGraph | null = null
   private loud: LoudGraph | null = null
   private wired = new WeakMap<HTMLAudioElement, Promise<boolean>>()
-  private busySince = 0
+  private playbackSequence = 0
+  private activePlayback: {
+    sequence: number
+    pinId: string
+    url: string
+    audio: HTMLAudioElement
+    options: PlayOptions
+    started: boolean
+    failureReason: PlaybackFailureReason | null
+    failureReported: boolean
+    rejectStart: ((reason: Error) => void) | null
+    timeout: ReturnType<typeof setTimeout> | null
+  } | null = null
   private diagnostics: AudioDiagnostic[] = []
 
   setPlaybackRate(rate: number) {
@@ -98,16 +120,16 @@ export class AudioEngine {
 
   private applyRate(audio: HTMLAudioElement) {
     audio.volume = this.volume
+    // Exam voices must always play at the original recorded tempo (1.0x).
+    audio.playbackRate = 1
 
     switch (this.pitch) {
       case 'low':
-        audio.playbackRate = this.playbackRate
         audio.preservesPitch = false
         break
       case 'mid':
       case 'normal':
       default:
-        audio.playbackRate = this.playbackRate
         audio.preservesPitch = true
         break
     }
@@ -116,7 +138,7 @@ export class AudioEngine {
     audio.webkitPreservesPitch = audio.preservesPitch
   }
 
- /** Gain-only graph. Does not filter or change playback rate. */
+ /** Gain graph. Per-file gain is capped below the measured source peak ceiling. */
   private getLoudGraph(): LoudGraph | null {
     if (this.loud) return this.loud
     if (typeof AudioContext === 'undefined') return null
@@ -129,11 +151,17 @@ export class AudioEngine {
       return null
     }
 
-    const gain = ctx.createGain()
-    gain.gain.value = VOICE_GAIN
-    gain.connect(ctx.destination)
-    this.loud = { ctx, gain }
-    return this.loud
+    try {
+      const gain = ctx.createGain()
+      gain.gain.value = VOICE_GAIN
+      gain.connect(ctx.destination)
+      this.loud = { ctx, gain }
+      return this.loud
+    } catch (err) {
+      void Promise.resolve(ctx.close()).catch(() => {})
+      this.report('engine', null, 'audio-context-not-running', err instanceof Error ? err.message : String(err))
+      return null
+    }
   }
 
   /** Builds the shared "mid" EQ graph once. Returns null if Web Audio is unavailable. */
@@ -216,7 +244,7 @@ export class AudioEngine {
    * while audio.play() still "succeeds". In that case we fall back to plain playback.
    */
   /**
-   * 130% loudness through a GainNode. The media element stays at volume 1.
+   * Boosts voice amplitude before a compressor protects speech peaks from clipping.
    * A suspended context is not wired: playback would succeed and stay silent.
    */
   private ensureLoudChain(audio: HTMLAudioElement): Promise<boolean> {
@@ -230,10 +258,19 @@ export class AudioEngine {
       if (!graph) return false
       await this.resumeContext(graph.ctx)
       if (graph.ctx.state !== 'running') return false
+      let source: MediaElementAudioSourceNode | null = null
       try {
-        graph.ctx.createMediaElementSource(audio).connect(graph.gain)
+        source = graph.ctx.createMediaElementSource(audio)
+        source.connect(graph.gain)
         return true
       } catch {
+        if (source) {
+          try {
+            source.connect(graph.ctx.destination)
+          } catch (err) {
+            this.report('engine', null, 'audio-context-not-running', err instanceof Error ? err.message : String(err))
+          }
+        }
         return false
       }
     })()
@@ -274,8 +311,8 @@ export class AudioEngine {
 
   /**
    * Call synchronously from a user gesture (tap on "start", first touch/click).
-   * Starts the AudioContext inside the gesture, wires already-preloaded voices to it
-   * and unlocks speech synthesis, so later PIN voices can play from GPS callbacks.
+   * Starts the AudioContext inside the gesture and wires already-preloaded WAV voices,
+   * so later PIN voices can play from GPS callbacks. Never enables browser TTS.
    */
   unlock(): void {
     if (typeof window === 'undefined') return
@@ -298,21 +335,11 @@ export class AudioEngine {
     } catch {
       /* best effort */
     }
-    try {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.getVoices()
-        const warm = new SpeechSynthesisUtterance('')
-        warm.volume = 0
-        window.speechSynthesis.speak(warm)
-      }
-    } catch {
-      /* best effort */
-    }
   }
 
-  /** True while a voice is playing (with a safety timeout so a stuck state can never block PIN audio). */
+  /** True while the single active voice is playing or being prepared. */
   isBusy(): boolean {
-    return this.speaking.size > 0 && Date.now() - this.busySince < MAX_BUSY_MS
+    return this.activePlayback !== null
   }
 
   getDiagnostics(): readonly AudioDiagnostic[] {
@@ -339,103 +366,181 @@ export class AudioEngine {
     urls.filter(Boolean).forEach((u) => this.preload(u))
   }
 
-  speakText(text: string, pinId: string): boolean {
-    if (this.speaking.has(pinId)) return false
-    if (!text || !('speechSynthesis' in window)) return false
-    const utter = new SpeechSynthesisUtterance(text)
-    utter.lang = 'ka-GE'
-    utter.rate = 1
-    utter.pitch = 1
-    const voice = pickGeorgianVoice()
-    if (voice) utter.voice = voice
-    this.speaking.add(pinId)
-    this.busySince = Date.now()
-    utter.onend = () => this.speaking.delete(pinId)
-    utter.onerror = () => this.speaking.delete(pinId)
-    window.speechSynthesis.speak(utter)
-    return true
+  async play(
+    url: string | null | undefined,
+    pinId: string,
+    _instructionText = '',
+    options?: PlayOptions,
+  ): Promise<boolean> {
+    const status = await this.playDetailed(url, pinId, _instructionText, options)
+    return status === 'played'
   }
 
-  async play(url: string | null | undefined, pinId: string, fallbackText: string): Promise<boolean> {
-    const status = await this.playDetailed(url, pinId, fallbackText)
-    return status === 'played' || status === 'tts'
-  }
-
-  /** Same as play() but tells the caller what happened, so a failed PIN voice can be retried. */
-  async playDetailed(url: string | null | undefined, pinId: string, fallbackText: string): Promise<PlayStatus> {
-    if (this.speaking.has(pinId)) return 'duplicate'
-
-    if (url) {
-      let audio = this.cache.get(url)
-      if (!audio) {
-        audio = new Audio(url)
-        this.cache.set(url, audio)
-      }
-      let fellBackToTts = false
-      try {
-        audio.currentTime = 0
-        this.applyRate(audio)
-        if (this.pitch === 'mid') await this.ensureWarmChain(audio)
-        else await this.ensureLoudChain(audio)
-
-        this.speaking.add(pinId)
-        this.busySince = Date.now()
-        audio.onended = () => this.speaking.delete(pinId)
-        audio.onerror = () => {
-          this.speaking.delete(pinId)
-          this.report(pinId, url, 'media-error', 'code=' + (audio?.error?.code ?? '?'))
-          fellBackToTts = this.speakText(fallbackText, pinId)
-        }
-        await audio.play()
-        return 'played'
-      } catch (err) {
-        if (fellBackToTts) return 'tts'
-        this.speaking.delete(pinId)
-        const name = err instanceof DOMException ? err.name : ''
-        this.report(
-          pinId,
-          url,
-          name === 'NotAllowedError'
-            ? 'autoplay-blocked'
-            : name === 'NotSupportedError'
-              ? 'media-not-supported'
-              : 'play-rejected',
-          err instanceof Error ? err.name + ': ' + err.message : String(err),
-        )
-      }
-    } else {
-      this.report(pinId, null, 'no-audio-url')
+  /**
+   * Plays only the given media URL (original WAV). Never synthesizes speech from text.
+   * Resolves 'played' once playback starts. A failure after start is delivered once
+   * through options.onFailure; stopAll() invalidates the active request.
+   */
+  async playDetailed(
+    url: string | null | undefined,
+    pinId: string,
+    _instructionText = '',
+    options: PlayOptions = {},
+  ): Promise<PlayStatus> {
+    if (this.activePlayback) {
+      return this.activePlayback.pinId === pinId ? 'duplicate' : 'busy'
     }
 
-    if (this.speakText(fallbackText, pinId)) {
-      this.busySince = Date.now()
-      return 'tts'
+    if (!url) {
+      this.report(pinId, null, 'no-audio-url', 'No original WAV mapped for this PIN; not using TTS')
+      console.error('[AUDIO] Missing original WAV for PIN', pinId, '— instruction was not spoken')
+      return 'failed'
     }
-    this.report(pinId, url ?? null, 'tts-unavailable')
-    return 'failed'
+
+    let audio = this.cache.get(url)
+    if (!audio) {
+      audio = new Audio(url)
+      this.cache.set(url, audio)
+    }
+    const playback = {
+      sequence: ++this.playbackSequence,
+      pinId,
+      url,
+      audio,
+      options,
+      started: false,
+      failureReason: null as PlaybackFailureReason | null,
+      failureReported: false,
+      rejectStart: null as ((reason: Error) => void) | null,
+      timeout: null as ReturnType<typeof setTimeout> | null,
+    }
+    this.activePlayback = playback
+
+    const isCurrent = () =>
+      this.activePlayback === playback && this.activePlayback.sequence === playback.sequence
+
+    const clearPlayback = () => {
+      if (playback.timeout !== null) {
+        clearTimeout(playback.timeout)
+        playback.timeout = null
+      }
+      if (isCurrent()) this.activePlayback = null
+    }
+
+    const retireAudio = () => {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      if (this.cache.get(url) === audio) this.cache.delete(url)
+    }
+
+    const finishFailure = (reason: PlaybackFailureReason) => {
+      if (!isCurrent() || playback.failureReported) return
+      playback.failureReason = reason
+      playback.failureReported = true
+      clearPlayback()
+      retireAudio()
+      this.report(
+        pinId,
+        url,
+        reason === 'media-error' ? 'media-error' : 'playback-timeout',
+        reason,
+      )
+      if (playback.started) {
+        options.onFailure?.(reason)
+      } else {
+        playback.rejectStart?.(new Error(reason))
+      }
+    }
+
+    try {
+      audio.currentTime = 0
+      this.applyRate(audio)
+      const gainApplied =
+        this.pitch === 'mid' ? await this.ensureWarmChain(audio) : await this.ensureLoudChain(audio)
+      if (!isCurrent()) return 'cancelled'
+      if (gainApplied && this.pitch !== 'mid' && this.loud) {
+        this.loud.gain.gain.value = safeVoiceGain(url, VOICE_GAIN)
+      }
+      if (!gainApplied) {
+        this.report(pinId, url, 'gain-unavailable', 'Playing at original media level')
+      }
+
+      audio.onended = () => {
+        if (!isCurrent()) return
+        clearPlayback()
+        options.onEnded?.()
+      }
+      audio.onerror = () => {
+        if (!isCurrent()) return
+        console.error('[AUDIO] Original WAV failed for PIN', pinId, '| url:', url)
+        finishFailure('media-error')
+      }
+      playback.timeout = setTimeout(() => finishFailure('playback-timeout'), MAX_BUSY_MS)
+      const startTimeout = new Promise<never>((_resolve, reject) => {
+        playback.rejectStart = reject
+      })
+      await Promise.race([audio.play(), startTimeout])
+      if (!isCurrent()) return 'cancelled'
+      if (playback.failureReason) {
+        clearPlayback()
+        return 'failed'
+      }
+      playback.rejectStart = null
+      if (audio.playbackRate !== 1) {
+        audio.playbackRate = 1
+      }
+      playback.started = true
+      return 'played'
+    } catch (err) {
+      if (!isCurrent()) return playback.failureReported ? 'failed' : 'cancelled'
+      clearPlayback()
+      retireAudio()
+      const name = err instanceof DOMException ? err.name : ''
+      this.report(
+        pinId,
+        url,
+        name === 'NotAllowedError'
+          ? 'autoplay-blocked'
+          : name === 'NotSupportedError'
+            ? 'media-not-supported'
+            : 'play-rejected',
+        err instanceof Error ? err.name + ': ' + err.message : String(err),
+      )
+      console.error(
+        '[AUDIO] Could not play original WAV for PIN',
+        pinId,
+        '| url:',
+        url,
+        '|',
+        err instanceof Error ? err.message : String(err),
+      )
+      return 'failed'
+    }
   }
 
   stopAll() {
-    this.speaking.clear()
+    const playback = this.activePlayback
+    this.playbackSequence++
+    this.activePlayback = null
+    if (playback?.timeout !== null && playback?.timeout !== undefined) {
+      clearTimeout(playback.timeout)
+      playback.timeout = null
+    }
+    playback?.rejectStart?.(new Error('cancelled'))
+    if (playback) playback.rejectStart = null
+    if (playback) {
+      playback.audio.onended = null
+      playback.audio.onerror = null
+      playback.audio.pause()
+      playback.audio.currentTime = 0
+      if (this.cache.get(playback.url) === playback.audio) this.cache.delete(playback.url)
+    }
     this.cache.forEach((a) => {
       a.pause()
       a.currentTime = 0
     })
-    window.speechSynthesis?.cancel()
   }
 }
 
 export const audioEngine = new AudioEngine()
-
-function pickGeorgianVoice(): SpeechSynthesisVoice | null {
-  const voices = window.speechSynthesis.getVoices()
-  return (
-    voices.find((v) => v.lang.toLowerCase().startsWith('ka')) ??
-    voices.find((v) => v.lang.toLowerCase().startsWith('ru')) ??
-    null
-  )
-}
-
-if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-  window.speechSynthesis.addEventListener('voiceschanged', () => pickGeorgianVoice(), { passive: true })
-}

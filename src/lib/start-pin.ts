@@ -64,6 +64,14 @@ function segmentDistanceM(point: LatLng, start: LatLng, end: LatLng): number {
   return Math.hypot(px - bx * t, py - by * t)
 }
 
+function projectToSegment(point: LatLng, start: LatLng, end: LatLng) {
+  const [bx, by] = toXY(end, start)
+  const [px, py] = toXY(point, start)
+  const length2 = bx * bx + by * by
+  const fraction = length2 === 0 ? 0 : Math.max(0, Math.min(1, (px * bx + py * by) / length2))
+  return { fraction, distanceM: Math.hypot(px - bx * fraction, py - by * fraction) }
+}
+
 function nearestSegment(point: LatLng, path: readonly LatLng[]): { index: number; distanceM: number } {
   let best = { index: 0, distanceM: Infinity }
   for (let i = 0; i + 1 < path.length; i++) {
@@ -188,7 +196,76 @@ function bearingOf(from: LatLng, to: LatLng): number {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360
 }
 
-let legPathCache: { pins: readonly StartPinInput[]; trace: readonly LatLng[] | null; paths: LatLng[][] | null } | null = null
+function routeProgressAtFix(position: LatLng, trace: readonly LatLng[], heading: number): number | null {
+  let travelled = 0
+  const candidates: { progress: number; distanceM: number }[] = []
+  for (let i = 0; i + 1 < trace.length; i++) {
+    const start = trace[i]
+    const end = trace[i + 1]
+    const length = distanceToPinMeters(start, end)
+    if (length === 0) continue
+    if (headingMatches(start, end, heading, HEADING_TOLERANCE_DEG)) {
+      const projection = projectToSegment(position, start, end)
+      candidates.push({
+        progress: travelled + projection.fraction * length,
+        distanceM: projection.distanceM,
+      })
+    }
+    travelled += length
+  }
+  const closestDistance = Math.min(...candidates.map((candidate) => candidate.distanceM))
+  if (closestDistance > ON_ROUTE_M) return null
+  const nearStart = distanceToPinMeters(position, trace[0]) <= ON_ROUTE_M
+  const nearEnd = distanceToPinMeters(position, trace[trace.length - 1]) <= ON_ROUTE_M
+  if (nearStart && nearEnd) {
+    return Math.min(
+      ...candidates
+        .filter((candidate) => candidate.distanceM <= closestDistance + 5)
+        .map((candidate) => candidate.progress),
+    )
+  }
+  return candidates.find((candidate) => candidate.distanceM === closestDistance)!.progress
+}
+
+function firstCueTraceDistance(
+  trace: readonly LatLng[],
+  pin: StartPinInput,
+  minimumProgress: number,
+): number {
+  const target = pinAt(pin)
+  const triggerM = resolveTriggerDistanceM(pin.trigger_distance_m)
+  let travelled = 0
+  for (let i = 0; i + 1 < trace.length; i++) {
+    const start = trace[i]
+    const end = trace[i + 1]
+    const length = distanceToPinMeters(start, end)
+    if (length === 0) continue
+    const heading = bearingOf(start, end)
+    for (let distance = 0; distance <= length; distance += 3) {
+      if (travelled + distance < minimumProgress) continue
+      const fraction = distance / length
+      const at: LatLng = [
+        start[0] + (end[0] - start[0]) * fraction,
+        start[1] + (end[1] - start[1]) * fraction,
+      ]
+      if (
+        distanceToPinMeters(at, target) <= triggerM &&
+        headingMatches(at, target, heading, CUE_HEADING_DEG)
+      ) {
+        return travelled + distance
+      }
+    }
+    travelled += length
+  }
+  return Infinity
+}
+
+let legPathCache: {
+  pins: readonly StartPinInput[]
+  trace: readonly LatLng[] | null
+  paths: LatLng[][] | null
+  cueDistances: number[] | null
+} | null = null
 
 function cachedLegPaths(
   pins: readonly StartPinInput[],
@@ -196,9 +273,28 @@ function cachedLegPaths(
   trace: readonly LatLng[] | null,
 ): LatLng[][] | null {
   if (legPathCache?.pins !== pins || legPathCache.trace !== trace) {
-    legPathCache = { pins, trace, paths: legPaths(ordered, trace) }
+    legPathCache = { pins, trace, paths: legPaths(ordered, trace), cueDistances: null }
   }
   return legPathCache.paths
+}
+
+function cachedCueDistances(
+  pins: readonly StartPinInput[],
+  ordered: readonly StartPinInput[],
+  trace: readonly LatLng[],
+): number[] {
+  cachedLegPaths(pins, ordered, trace)
+  if (!legPathCache?.cueDistances) {
+    const cueDistances: number[] = ordered.length > 0 ? [0] : []
+    let minimumProgress = 0
+    for (const pin of ordered.slice(1)) {
+      const cueDistance = firstCueTraceDistance(trace, pin, minimumProgress)
+      cueDistances.push(cueDistance)
+      if (Number.isFinite(cueDistance)) minimumProgress = cueDistance + 3
+    }
+    legPathCache!.cueDistances = cueDistances
+  }
+  return legPathCache.cueDistances
 }
 
 function headingAlongLeg(car: LatLng, leg: readonly LatLng[], heading: number): boolean {
@@ -243,6 +339,18 @@ export function chooseStartPin(
   const leg = (i: number): LatLng[] => paths?.[i] ?? [pinAt(ordered[i]), pinAt(ordered[i + 1])]
 
   const moving = isMovingFix(fix)
+  const traceProgress =
+    moving && roadTrace && roadTrace.length >= 2
+      ? routeProgressAtFix(car, roadTrace, fix.headingDeg as number)
+      : null
+  const cueDistances =
+    traceProgress !== null && roadTrace ? cachedCueDistances(pins, ordered, roadTrace) : null
+  const cueOutOfPass = (index: number) => {
+    if (traceProgress === null || cueDistances === null) return false
+    const cueDistance = cueDistances[index]
+    const triggerM = resolveTriggerDistanceM(ordered[index].trigger_distance_m)
+    return cueDistance < traceProgress - 3 || cueDistance > traceProgress + triggerM * 2 + 10
+  }
   /**
    * Inside pin i's zone and moving: will the driving cue still fire for it? It fires when the car
    * is in the zone and faces the pin, so it must do that now or further along the street.
@@ -271,10 +379,33 @@ export function chooseStartPin(
   // A pin already passed means "on the way to the next pin".
   const inZone = ordered.map((pin, i) => dist[i] <= resolveTriggerDistanceM(pin.trigger_distance_m))
   const atOrders = new Set(ordered.filter((_, i) => inZone[i]).map((pin) => pin.sort_order))
+  const overlappingOrders = ordered.filter((_, i) => inZone[i]).map((pin) => pin.sort_order)
+  const overlappingLastIndex = Math.max(
+    -1,
+    ...overlappingOrders.map((order) => ordered.findIndex((pin) => pin.sort_order === order)),
+  )
+  const nextCueDistance = cueDistances?.[overlappingLastIndex + 1]
+  const nextCueIsNear =
+    traceProgress !== null &&
+    nextCueDistance !== undefined &&
+    nextCueDistance >= traceProgress - 3 &&
+    nextCueDistance <=
+      traceProgress +
+        resolveTriggerDistanceM(ordered[overlappingLastIndex + 1]?.trigger_distance_m) * 2 +
+        10
+  const overlappingPassed =
+    moving &&
+    overlappingOrders.length > 1 &&
+    isConsecutive(overlappingOrders, ordered) &&
+    overlappingLastIndex + 1 < ordered.length &&
+    nextCueIsNear &&
+    overlappingOrders.every((order) =>
+      cueOutOfPass(ordered.findIndex((pin) => pin.sort_order === order)),
+    )
   const atPins: Candidate[] = []
   const unsure: number[] = []
   ordered.forEach((pin, i) => {
-    if (!inZone[i] || i === 0) return
+    if (!inZone[i] || i === 0 || (overlappingPassed && cueOutOfPass(i))) return
     const side = moving ? passedPin(i) : 'ahead'
     if (side !== 'ahead') {
       // The next pin decides for itself when the car is in its zone too.
@@ -288,6 +419,13 @@ export function chooseStartPin(
     if (i + 1 < ordered.length) legs.push(leg(i))
     atPins.push({ order: pin.sort_order, at: true, legs })
   })
+  if (overlappingPassed) {
+    atPins.push({
+      order: ordered[overlappingLastIndex + 1].sort_order,
+      at: false,
+      legs: [leg(overlappingLastIndex)],
+    })
+  }
   if (atOrders.has(ordered[0].sort_order)) {
     return { kind: 'start', sortOrder: ordered[0].sort_order, basis: 'agency' }
   }

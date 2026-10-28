@@ -47,7 +47,7 @@ export function DemoPreviewPage() {
         </div>
 
         <footer className="home-footer">
-          <p className="home-trial">⏱️ საცდელი: 23 საათი 15 წუთი · პრემიუმ · 99 ₾/თვე</p>
+          <p className="home-trial">⏱️ საცდელი: 11 საათი 15 წუთი · პრემიუმ · 99 ₾/თვე</p>
           <p className="muted home-meta">პრემიუმ · თელავი</p>
           <button type="button" className="home-signout">გასვლა</button>
         </footer>
@@ -82,7 +82,7 @@ export function DemoPreviewPage() {
 
         <header className="plan-page__header" style={{ paddingBottom: '1rem' }}>
           <AppBrand centered />
-          <h1 style={{ color: '#fff', fontSize: '1.6rem', margin: '0.75rem 0 0.5rem', fontWeight: 700 }}>24 საათი ამოიწურა</h1>
+          <h1 style={{ color: '#fff', fontSize: '1.6rem', margin: '0.75rem 0 0.5rem', fontWeight: 700 }}>12 საათი ამოიწურა</h1>
           
           <p className="muted plan-page__lead" style={{ 
             color: '#94a3b8', 
@@ -292,7 +292,7 @@ export function DemoPreviewPage() {
               backdropFilter: 'blur(10px)'
             }}>
               <p style={{ margin: 0, fontWeight: 500 }}>
-                {selectedPackage} მოწყობილობა · 24 საათიანი trial უფასოდ
+                {selectedPackage} მოწყობილობა · 12 საათიანი Trial უფასოდ
               </p>
             </div>
           </div>

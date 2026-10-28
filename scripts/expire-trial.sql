@@ -2,7 +2,7 @@
 -- ⏱️ EXPIRE TRIAL - Manually expire user's trial
 -- ============================================
 -- გამოიყენე როცა გინდა trial-ის ამოწურვა კონკრეტულ მომხმარებელზე
--- რომ ნახო "24 საათი ამოიწურა" გვერდი
+-- რომ ნახო "12 საათი ამოიწურა" გვერდი
 
 -- ===== 1. ნახე ყველა აქტიური Trial =====
 SELECT 
@@ -48,7 +48,7 @@ WHERE u.email = 'your.email@example.com';  -- ← ჩაწერე შენ�
 UPDATE profiles
 SET 
   subscription_status = 'trial',
-  subscription_expires_at = NOW() + INTERVAL '24 hours',
+  subscription_expires_at = NOW() + INTERVAL '12 hours',
   trial_started_at = NOW()
 WHERE id = (
   SELECT id FROM auth.users 
@@ -59,7 +59,6 @@ WHERE id = (
 
 -- ===== 4. რა ნახავ აპში =====
 -- თუ trial expired-ია:
---   ✅ "24 საათი ამოიწურა" გვერდი
+--   ✅ "12 საათი ამოიწურა" გვერდი
 --   ✅ პაკეტების არჩევანი (1, 2, 3 მანქანა)
 --   ✅ გადახდის ღილაკი
-

@@ -59,6 +59,8 @@ function calculateDistance(pos1: LatLng, pos2: LatLng): number {
 export class GpsFilter {
   private config: FilterConfig
   private lastReading: GpsReading | null = null
+  /** Why the most recent reading was rejected; null when it was accepted. */
+  lastRejection: string | null = null
 
   constructor(config: Partial<FilterConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
@@ -70,14 +72,18 @@ export class GpsFilter {
    * @returns The reading if valid, null if rejected
    */
   filter(reading: GpsReading): GpsReading | null {
+    this.lastRejection = null
+
     // Check accuracy
     if (reading.accuracy > this.config.maxAccuracyMeters) {
+      this.lastRejection = `poor accuracy (${reading.accuracy.toFixed(1)}m > ${this.config.maxAccuracyMeters}m)`
       console.warn(`GPS: Rejected - poor accuracy (${reading.accuracy.toFixed(1)}m)`)
       return null
     }
 
     // Check speed
     if (reading.speed > this.config.maxSpeedMps) {
+      this.lastRejection = `impossible speed (${reading.speed.toFixed(1)} m/s)`
       console.warn(`GPS: Rejected - impossible speed (${reading.speed.toFixed(1)} m/s)`)
       return null
     }
@@ -88,6 +94,7 @@ export class GpsFilter {
       
       // Check minimum time delta
       if (timeDelta < this.config.minTimeDeltaMs) {
+        this.lastRejection = `too soon (${timeDelta}ms)`
         console.warn(`GPS: Rejected - too soon (${timeDelta}ms)`)
         return null
       }
@@ -98,11 +105,13 @@ export class GpsFilter {
       const impliedSpeed = distance / timeDeltaSec
 
       if (distance > this.config.maxJumpMeters && timeDeltaSec < 2) {
+        this.lastRejection = `jump too large (${distance.toFixed(1)}m in ${timeDeltaSec.toFixed(1)}s)`
         console.warn(`GPS: Rejected - jump too large (${distance.toFixed(1)}m in ${timeDeltaSec.toFixed(1)}s)`)
         return null
       }
 
       if (impliedSpeed > this.config.maxSpeedMps && timeDeltaSec < 2) {
+        this.lastRejection = `implied speed too high (${impliedSpeed.toFixed(1)} m/s)`
         console.warn(`GPS: Rejected - implied speed too high (${impliedSpeed.toFixed(1)} m/s)`)
         return null
       }
@@ -118,6 +127,7 @@ export class GpsFilter {
    */
   reset(): void {
     this.lastReading = null
+    this.lastRejection = null
   }
 
   /**

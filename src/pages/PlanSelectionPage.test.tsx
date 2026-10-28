@@ -28,7 +28,7 @@ vi.mock('@/components/PaymentButton', () => ({
 describe('Premium package selection', () => {
   beforeEach(() => state.selectPlan.mockClear())
 
-  it('saves the selected device slots and preserves the 24-hour trial path', async () => {
+  it('saves the selected device slots and preserves the 12-hour trial path', async () => {
     render(
       <MemoryRouter initialEntries={['/plans']}>
         <Routes>

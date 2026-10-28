@@ -106,8 +106,15 @@ vi.mock('@/components/ExamScoreboard', () => ({
 }))
 
 vi.mock('@/components/ExamSummary', () => ({
-  ExamSummary: ({ onRestart }: { onRestart: () => void }) => (
+  ExamSummary: ({
+    onRestart,
+    onContinue,
+  }: {
+    onRestart: () => void
+    onContinue?: () => void
+  }) => (
     <div data-testid="exam-summary">
+      {onContinue && <button onClick={onContinue}>გაგრძელება</button>}
       <button onClick={onRestart}>დაიწყე თავიდან</button>
     </div>
   ),

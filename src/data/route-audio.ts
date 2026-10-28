@@ -1,14 +1,12 @@
 import type { PinRow } from '@/types/database'
 import {
+  audioPublicUrl,
   matchRoute1InstructionAudio,
   ROUTE_1_SESSION_AUDIO,
   route1VoicePreloadPaths,
 } from '@/data/route-1-voice'
 
-/** Encode Georgian filenames for browser audio URLs. */
-export function audioPublicUrl(relativePath: string): string {
-  return encodeURI(`/audio/${relativePath}`)
-}
+export { audioPublicUrl }
 
 export const EXAM_START_TEXT = 'გთხოვთ დაიწყოთ'
 export const EXAM_FINISH_TEXT = 'ფინიში'
@@ -19,14 +17,18 @@ export const EXAM_FINISH_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.finish)
 export const EXAM_SUCCESS_AUDIO = audioPublicUrl(ROUTE_1_SESSION_AUDIO.success)
 
 /**
- * Explicit audio_url wins; otherwise the instruction text is mapped EXACTLY to a local WAV
- * (see route-1-voice.ts). Returns null when there is no exact file, so TTS reads the text.
+ * Exact instruction → original WAV (see route-1-voice.ts) is the source of truth.
+ * A stale/wrong pin.audio_url must not bypass that map (it previously caused missing
+ * files and browser TTS). Falls back to pin.audio_url only when the map has no entry.
+ * Returns null when no original WAV is known — callers must not synthesize speech.
  */
 export function resolvePinAudioUrl(routeSlug: string, pin: PinRow): string | null {
+  if (pin.instruction_ka) {
+    const mapped = matchRoute1InstructionAudio(pin.instruction_ka, routeSlug)
+    if (mapped) return mapped
+  }
   if (pin.audio_url) return pin.audio_url
-  if (!pin.instruction_ka) return null
-  // Exact instruction -> WAV mapping; null (TTS reads the text) when there is no exact file.
-  return matchRoute1InstructionAudio(pin.instruction_ka, routeSlug)
+  return null
 }
 
 export function enrichPinsWithLocalAudio(routeSlug: string, pins: PinRow[]): PinRow[] {

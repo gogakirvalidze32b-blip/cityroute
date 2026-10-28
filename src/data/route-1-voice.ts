@@ -1,5 +1,14 @@
-function audioPublicUrl(relativePath: string): string {
-  return encodeURI(`/audio/${relativePath}`)
+/**
+ * Build a public /audio/... URL.
+ * Encode each path segment for spaces/Unicode, but keep commas literal (%2C breaks
+ * static file lookup on Vite preview and some hosts — filenames contain ", ").
+ */
+export function audioPublicUrl(relativePath: string): string {
+  const trimmed = relativePath.replace(/^\/+/, '').replace(/^audio\//, '')
+  return `/audio/${trimmed
+    .split('/')
+    .map((seg) => encodeURIComponent(seg).replace(/%2C/gi, ','))
+    .join('/')}`
 }
 
 export const ROUTE_1_SESSION_AUDIO = {
@@ -11,14 +20,17 @@ export const ROUTE_1_SESSION_AUDIO = {
 /**
  * Instruction text -> real WAV file (public/audio/points).
  * Keys are normalized (see normalizeInstruction): commas removed, whitespace collapsed.
- * Source of truth: the final PIN audio audit (126/126 PINs mapped). Do not add fuzzy matching:
+ * Source of truth: the final PIN audio audit (instruction→WAV). Do not add fuzzy matching:
  * a wrong maneuver/order must never fall back to a "similar" file.
  */
 const INSTRUCTION_TO_FILE: Record<string, string> = {
   // Turn now
   'გთხოვთ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ.wav',
-  'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav', // user-directed
+  // Plain right-turn text uses the existing tracked მალე-named WAV (no separate recording).
+  'გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
+  'გთხოვთ იმოძრაოთ პირდაპირ': 'გთხოვთ, იმოძრაოთ პირდაპირ.wav',
   'გთხოვთ შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ': 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
+  'შემდეგ მინიშნებამდე იმოძრავეთ პირდაპირ': 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav',
   // Two maneuvers
   'გთხოვთ მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარჯვნივ და შემდეგ მოუხვიოთ მარცხნივ.wav',
   'გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ': 'გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ.wav',
@@ -32,6 +44,7 @@ const INSTRUCTION_TO_FILE: Record<string, string> = {
   'მალე წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
   // Roundabout, no "soon" word (user-directed: same maneuver, extra word accepted)
   'წრიული მოძრაობისას გთხოვთ იმოძრაოთ პირდაპირ': 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav',
+  'წრიული მოძრაობისას გთხოვთ იმოძრაოთ მარცხნივ': 'წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav',
   'წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ': 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav',
   'წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ': 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.wav',
   // 50 m: no 50 m audio exists, user-directed -> "soon" right
@@ -86,7 +99,7 @@ export function route1VoiceFiles(): string[] {
 
 /**
  * Exact instruction text -> WAV URL. Returns null when no exact mapping exists
- * (caller falls back to TTS; no fuzzy/"similar" file is ever used).
+ * (caller must not synthesize speech; no fuzzy/"similar" file is ever used).
  */
 export function matchInstructionAudio(instruction: string, routeSlug?: string): string | null {
   const key = normalizeInstruction(instruction)

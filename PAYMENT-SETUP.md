@@ -136,7 +136,7 @@ This creates:
 ### Step 4: Test Payment Flow
 
 1. Run app locally or on production
-2. Create account and wait for 24h trial to expire
+2. Create account and wait for the 12-hour trial to expire
 3. Click TBC or BOG payment button
 4. You should be redirected to bank's payment page
 5. Complete test payment (use sandbox credentials)

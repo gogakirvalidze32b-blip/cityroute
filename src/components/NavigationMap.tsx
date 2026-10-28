@@ -112,9 +112,30 @@ function FitRoute({ line, enabled }: { line: LatLng[]; enabled: boolean }) {
 function MapSizeFix() {
   const map = useMap()
   useEffect(() => {
-    map.invalidateSize()
-    const id = window.setTimeout(() => map.invalidateSize(), 50)
-    return () => window.clearTimeout(id)
+    let frame = 0
+    const invalidate = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        map.invalidateSize({ pan: false, debounceMoveend: true })
+      })
+    }
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(invalidate)
+      : null
+
+    observer?.observe(map.getContainer())
+    window.addEventListener('resize', invalidate, { passive: true })
+    window.visualViewport?.addEventListener('resize', invalidate, { passive: true })
+    document.addEventListener('fullscreenchange', invalidate)
+    invalidate()
+
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', invalidate)
+      window.visualViewport?.removeEventListener('resize', invalidate)
+      document.removeEventListener('fullscreenchange', invalidate)
+    }
   }, [map])
   return null
 }
@@ -148,9 +169,11 @@ function NavigationCamera({
   const map = useMap()
   const headingRef = useRef(heading)
   const navZoomRef = useRef(YANDEX_STREET_ZOOM)
+  const rotationUpdaterRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     headingRef.current = heading
+    rotationUpdaterRef.current?.()
   }, [heading])
 
   useEffect(() => {
@@ -168,10 +191,7 @@ function NavigationCamera({
   }, [map])
 
   useEffect(() => {
-    if (!position || followPaused) {
-      if (followPaused) resetMapRotation(map)
-      return
-    }
+    if (!position || followPaused) return
 
     const followWithOffset = navigating || gpsFollow
     if (!followWithOffset) return
@@ -187,10 +207,17 @@ function NavigationCamera({
 
     const projected = map.project(position, zoom)
     projected.y += size.y * (0.5 - USER_SCREEN_Y)
-    map.setView(map.unproject(projected, zoom), zoom, { animate: true, duration: 0.2 })
+    const targetCenter = map.unproject(projected, zoom)
+    const currentCenter = map.project(map.getCenter(), zoom)
+    const zoomChanged = Math.abs(map.getZoom() - zoom) > 0.01
+    if (zoomChanged || currentCenter.distanceTo(projected) >= 1) {
+      map.setView(targetCenter, zoom, { animate: true, duration: 0.2 })
+    }
+  }, [map, position, navigating, gpsFollow, followPaused])
 
+  useEffect(() => {
     const applyRotation = () => {
-      if (!navigating) {
+      if (!navigating || followPaused) {
         resetMapRotation(map)
         return
       }
@@ -202,19 +229,20 @@ function NavigationCamera({
       pane.style.transform = `rotate(${-headingRef.current}deg)`
     }
 
-    if (!navigating) {
+    rotationUpdaterRef.current = applyRotation
+    if (!navigating || followPaused) {
       resetMapRotation(map)
-      return
+    } else {
+      applyRotation()
+      map.on('move', applyRotation)
+      map.on('moveend', applyRotation)
     }
-
-    applyRotation()
-    map.on('move', applyRotation)
-    map.on('moveend', applyRotation)
     return () => {
+      rotationUpdaterRef.current = null
       map.off('move', applyRotation)
       map.off('moveend', applyRotation)
     }
-  }, [map, position, heading, navigating, gpsFollow, followPaused])
+  }, [map, navigating, followPaused])
 
   useEffect(() => () => resetMapRotation(map), [map])
 

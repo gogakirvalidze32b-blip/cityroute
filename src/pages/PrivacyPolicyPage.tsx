@@ -95,7 +95,7 @@ export function PrivacyPolicyPage() {
               <li>ტექნიკურ და უსაფრთხოების ჟურნალებს</li>
             </ul>
             <p style={{ fontSize: '0.9rem', color: '#94a3b8', marginTop: '0.75rem', fontStyle: 'italic' }}>
-              📌 საბანკო ბარათის სრულ მონაცემებს ჩვენ არ ვინახავთ - ისინი მუშავდება უშუალოდ TBC/BOG-ის მიერ.
+              📌 საბანკო ბარათის მონაცემებს CityRoute-ში არ ვაგროვებთ — გადახდა საქართველოს ბანკის დაცულ გვერდზე მუშავდება.
             </p>
           </section>
 
@@ -125,7 +125,7 @@ export function PrivacyPolicyPage() {
             </p>
             <ul style={{ paddingLeft: '1.5rem', fontSize: '0.95rem', color: '#cbd5e1' }}>
               <li><strong>Supabase</strong> - მონაცემთა ბაზისა და ავთენტიფიკაციის სერვისი</li>
-              <li><strong>TBC Bank / Bank of Georgia</strong> - გადახდის დამუშავება</li>
+              <li><strong>საქართველოს ბანკი</strong> - გადახდის დაცული დამუშავება</li>
               <li><strong>Vercel</strong> - ვებ-ჰოსტინგი</li>
               <li>უფლებამოსილი ორგანოები - კანონით მოთხოვნის შემთხვევაში</li>
             </ul>

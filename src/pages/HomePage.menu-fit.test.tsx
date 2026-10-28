@@ -31,6 +31,8 @@ vi.mock('@/hooks/useRoutes', () => ({
       { id: '2', slug: 'route-2', name_ka: 'მარშრუტი 2', license_category: 'B', official_label: null },
       { id: '3', slug: 'route-3', name_ka: 'მარშრუტი 3', license_category: 'B', official_label: null },
       { id: '4', slug: 'route-4', name_ka: 'მარშრუტი 4', license_category: 'B', official_label: null },
+      { id: '5', slug: 'route-5', name_ka: 'C/D კატეგორია', license_category: 'C,D', official_label: null },
+      { id: 'tbilisi', slug: 'test-route-tbilisi', name_ka: 'თბილისი ტესტი', license_category: null, official_label: null },
     ],
   }),
 }))
@@ -69,12 +71,17 @@ describe('HomePage outer menu fit (Android landscape)', () => {
   })
 
   it.each([
+    [320, 568],
+    [360, 640],
+    [393, 851],
+    [412, 915],
     [1024, 600],
     [800, 480],
     [1280, 720],
     [390, 844],
+    [390, 700],
     [1440, 900],
-  ])('renders every route button for %i×%i', (width, height) => {
+  ])('renders every route button and footer actions for %i×%i', (width, height) => {
     setViewport(width, height)
     renderHome()
 
@@ -83,7 +90,11 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(screen.getByTestId('home-route-card-route-2')).toBeTruthy()
     expect(screen.getByTestId('home-route-card-route-3')).toBeTruthy()
     expect(screen.getByTestId('home-route-card-route-4')).toBeTruthy()
+    expect(screen.queryAllByTestId(/^home-route-card-/)).toHaveLength(4)
+    expect(screen.queryByText('C/D კატეგორია')).toBeNull()
+    expect(screen.queryByText('თბილისი ტესტი')).toBeNull()
     expect(screen.getByRole('button', { name: 'გასვლა' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'მხარდაჭერა' })).toBeTruthy()
   })
 
   it('keeps laptop detection for tall wide desktops', () => {
@@ -106,7 +117,8 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(css).toMatch(/max-height:\s*100dvh/)
     expect(css).toMatch(/\.home-page \.route-list[\s\S]*flex-direction:\s*column/)
     expect(css).toMatch(/\.home-page \.route-list[\s\S]*flex-wrap:\s*nowrap/)
-    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 560px\)/)
+    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 620px\)/)
+    expect(css).toMatch(/@media \(orientation: landscape\) and \(max-height: 500px\)/)
     expect(css).not.toMatch(/\.home-page \.route-card[\s\S]*flex:\s*1 1 calc\(50%/)
   })
 })

@@ -2,7 +2,7 @@ import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
 export function PlanGate() {
-  const { needsPlanSelection, loading } = useAuth()
+  const { hasAccess, needsPlanSelection, loading } = useAuth()
 
   if (loading) {
     return (
@@ -12,6 +12,6 @@ export function PlanGate() {
     )
   }
 
-  if (needsPlanSelection) return <Navigate to="/choose-plan" replace />
+  if (!hasAccess || needsPlanSelection) return <Navigate to="/choose-plan" replace />
   return <Outlet />
 }

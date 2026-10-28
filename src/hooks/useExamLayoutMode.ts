@@ -6,8 +6,8 @@ export type ExamLayoutMode = 'laptop' | 'tablet' | 'mobile' | 'mobile-landscape'
 export function detectExamLayoutMode(): ExamLayoutMode {
   if (typeof window === 'undefined') return 'tablet'
 
-  const w = window.innerWidth
-  const h = window.innerHeight
+  const w = window.visualViewport?.width ?? window.innerWidth
+  const h = window.visualViewport?.height ?? window.innerHeight
   const shortSide = Math.min(w, h)
 
   if (w >= 1200 && h >= 680) return 'laptop'
@@ -22,23 +22,36 @@ export function useExamLayoutMode(): ExamLayoutMode {
   const [mode, setMode] = useState<ExamLayoutMode>(detectExamLayoutMode)
 
   useEffect(() => {
+    let fullscreenFrame = 0
     const sync = () => setMode(detectExamLayoutMode())
+    const syncFullscreen = () => {
+      cancelAnimationFrame(fullscreenFrame)
+      fullscreenFrame = requestAnimationFrame(sync)
+    }
 
     sync()
     window.addEventListener('resize', sync, { passive: true })
     window.addEventListener('orientationchange', sync)
+    window.visualViewport?.addEventListener('resize', sync, { passive: true })
+    document.addEventListener('fullscreenchange', syncFullscreen)
 
     const landscapeMq = window.matchMedia('(orientation: landscape)')
     landscapeMq.addEventListener('change', sync)
 
     const laptopMq = window.matchMedia(LAPTOP_MQ)
     laptopMq.addEventListener('change', sync)
+    const standaloneMq = window.matchMedia('(display-mode: standalone)')
+    standaloneMq.addEventListener('change', sync)
 
     return () => {
+      cancelAnimationFrame(fullscreenFrame)
       window.removeEventListener('resize', sync)
       window.removeEventListener('orientationchange', sync)
+      window.visualViewport?.removeEventListener('resize', sync)
+      document.removeEventListener('fullscreenchange', syncFullscreen)
       landscapeMq.removeEventListener('change', sync)
       laptopMq.removeEventListener('change', sync)
+      standaloneMq.removeEventListener('change', sync)
     }
   }, [])
 

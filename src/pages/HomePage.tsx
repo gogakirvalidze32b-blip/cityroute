@@ -1,7 +1,6 @@
-﻿import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 
 import { AppBrand } from '@/components/AppBrand'
-import { PaymentButton } from '@/components/PaymentButton'
 import { useAuth } from '@/context/AuthContext'
 import { SupportButton, SupportFooterLinks } from '@/components/support/SupportLinks'
 
@@ -9,22 +8,16 @@ import { accessLabel, routeSourceLabel } from '@/types/database'
 
 import { useExamLayoutMode } from '@/hooks/useExamLayoutMode'
 import { useRoutes } from '@/hooks/useRoutes'
-import { planName, calculatePrice } from '@/data/subscription-plans'
-import { useState } from 'react'
+import { planName } from '@/data/subscription-plans'
+import { selectableRoutes } from '@/data/selectable-routes'
+import { PREVIEW_TEST_ROUTE_ENABLED } from '@/lib/debug-flags'
 
 export function HomePage() {
   const { profile, hasAccess, deviceBlocked, signOut } = useAuth()
   const { routes, source } = useRoutes()
+  const visibleRoutes = selectableRoutes(routes, PREVIEW_TEST_ROUTE_ENABLED)
   const layoutMode = useExamLayoutMode()
   const onTrial = profile?.subscription_status === 'trial' && hasAccess
-  const [paymentError, setPaymentError] = useState<string | null>(null)
-  
-  const deviceSlots = profile?.device_slots === 2 ? 2 : 1
-  const monthlyPrice = profile?.subscription_plan ? calculatePrice(profile.subscription_plan, deviceSlots) : 99
-
-  function handlePaymentError(error: string) {
-    setPaymentError(error)
-  }
 
   if (deviceBlocked) {
     return (
@@ -40,52 +33,7 @@ export function HomePage() {
     )
   }
 
-  if (!hasAccess) {
-    return (
-      <div className="page plan-page plan-page--expired">
-        <header className="plan-page__header">
-          <AppBrand centered />
-          <h1>საცდელი პერიოდი დასრულებულია</h1>
-          <p className="muted plan-page__lead">
-            გააქტიურე გამოწერა - {monthlyPrice} ₾/თვე
-          </p>
-          {profile && <p className="home-trial">{accessLabel(profile)}</p>}
-        </header>
-
-        <div className="plan-summary">
-          <h2>პრემიუმ პაკეტი</h2>
-          <p className="plan-price">{monthlyPrice} ₾/თვე</p>
-          <ul className="plan-features">
-            <li>GPS ხმოვანი მარშრუტი</li>
-            <li>Live რუკა მძღოლობისას</li>
-            <li>გამოცდის პანელი</li>
-            <li>გადართვა: რუკა ↔ შეცდომები</li>
-            <li>ყველა მომავალი ფუნქცია</li>
-          </ul>
-          {deviceSlots === 2 && (
-            <p className="muted" style={{ textAlign: 'center', marginTop: '0.5rem' }}>
-              2 მოწყობილობა · 179 ₾
-            </p>
-          )}
-        </div>
-
-        <footer className="plan-page__footer">
-          <p className="payment-instructions">
-            აირჩიე BOG-ით გადახდა:
-          </p>
-          {paymentError && <p className="error-text">{paymentError}</p>}
-          
-          <PaymentButton deviceSlots={deviceSlots} onError={handlePaymentError} />
-
-          <SupportButton />
-          <button type="button" className="home-signout" onClick={() => void signOut()}>
-            გასვლა
-          </button>
-          <SupportFooterLinks />
-        </footer>
-      </div>
-    )
-  }
+  if (!hasAccess) return <Navigate to="/choose-plan" replace />
 
   return (
     <div className={`page home-page home-page--${layoutMode}`}>
@@ -94,7 +42,7 @@ export function HomePage() {
       </header>
 
       <div className="route-list" data-testid="home-route-list">
-        {routes.map((route, index) => (
+        {visibleRoutes.map((route, index) => (
           <Link 
             key={route.id} 
             to={`/route/${route.slug}`} 

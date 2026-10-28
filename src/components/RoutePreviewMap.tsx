@@ -7,9 +7,9 @@ import { RoutePolyline } from '@/components/RoutePolyline'
 import { getRouteOfficialPreviewMap } from '@/data/route-preview-maps'
 import { OfficialRoutePreviewZoom } from '@/components/OfficialRoutePreviewZoom'
 import { MAP_TILES } from '@/lib/map-tiles'
+import { examRouteLine } from '@/lib/pin-route-line'
 import type { LatLng } from '@/lib/gps'
 import type { RouteWithPins } from '@/types/database'
-import { TELAVI_CENTER } from '@/data/telavi-routes'
 
 type Props = {
   route: RouteWithPins
@@ -18,41 +18,87 @@ type Props = {
 function MapSizeFix() {
   const map = useMap()
   useEffect(() => {
-    map.invalidateSize()
-    const id = window.setTimeout(() => map.invalidateSize(), 80)
-    return () => window.clearTimeout(id)
+    let frame = 0
+    const invalidate = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        map.invalidateSize({ pan: false, debounceMoveend: true })
+      })
+    }
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(invalidate)
+      : null
+
+    observer?.observe(map.getContainer())
+    window.addEventListener('resize', invalidate, { passive: true })
+    window.visualViewport?.addEventListener('resize', invalidate, { passive: true })
+    document.addEventListener('fullscreenchange', invalidate)
+    invalidate()
+
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', invalidate)
+      window.visualViewport?.removeEventListener('resize', invalidate)
+      document.removeEventListener('fullscreenchange', invalidate)
+    }
   }, [map])
   return null
 }
 
-function FitRoutePreview({ line }: { line: LatLng[] }) {
+function FitRoutePreview({ positions }: { positions: LatLng[] }) {
   const map = useMap()
   useEffect(() => {
-    if (line.length < 2) return
-    map.fitBounds(L.latLngBounds(line.map(([lat, lng]) => [lat, lng])), {
-      padding: [28, 28],
-      maxZoom: 15,
+    if (positions.length < 2) return
+    map.fitBounds(L.latLngBounds(positions.map(([lat, lng]) => [lat, lng])), {
+      padding: [36, 36],
+      maxZoom: 16,
       animate: false,
     })
-  }, [map, line])
+  }, [map, positions])
   return null
 }
 
-function RouteEndpoint({ position, kind }: { position: LatLng; kind: 'start' | 'end' }) {
+function RoutePin({
+  position,
+  order,
+}: {
+  position: LatLng
+  order: number
+}) {
+  return (
+    <CircleMarker
+      center={position}
+      radius={6}
+      pathOptions={{
+        color: '#ffffff',
+        fillColor: '#1d4ed8',
+        fillOpacity: 1,
+        weight: 2,
+      }}
+    >
+      <Tooltip permanent direction="top" offset={[0, -5]} className="route-pin-tip">
+        {order}
+      </Tooltip>
+    </CircleMarker>
+  )
+}
+
+function RouteEndpoint({ position, kind }: { position: LatLng; kind: 'start' | 'finish' }) {
   const start = kind === 'start'
   return (
     <CircleMarker
       center={position}
-      radius={11}
+      radius={12}
       pathOptions={{
-        color: start ? '#15803d' : '#b91c1c',
-        fillColor: start ? '#22c55e' : '#ef4444',
+        color: '#ffffff',
+        fillColor: start ? '#16a34a' : '#dc2626',
         fillOpacity: 1,
         weight: 3,
       }}
     >
-      <Tooltip permanent direction="top" offset={[0, -8]} className="route-ep-tip">
-        {start ? 'დაწყება' : 'დასრულება'}
+      <Tooltip permanent direction="top" offset={[0, -9]} className="route-ep-tip">
+        {start ? 'START' : 'FINISH'}
       </Tooltip>
     </CircleMarker>
   )
@@ -63,37 +109,53 @@ function OfficialRoutePreviewImage({ map }: { map: NonNullable<ReturnType<typeof
 }
 
 function InteractiveRoutePreviewMap({ route }: { route: RouteWithPins }) {
-  const line = route.polyline as LatLng[]
-  const hasLine = line.length >= 2
-  const start = hasLine ? line[0] : null
-  const finish = hasLine ? line[line.length - 1] : null
-  const center = start ?? TELAVI_CENTER
+  const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+  const line = examRouteLine(route.slug, pins)
+  const startPin = pins[0]
+  const finishPin = pins[pins.length - 1]
+  if (!startPin || !finishPin || line.length < 2) {
+    return (
+      <div className="exam-preview__map" role="alert">
+        მარშრუტის რუკის მონაცემები ხელმისაწვდომი არ არის.
+      </div>
+    )
+  }
+
+  const start: LatLng = [startPin.lat, startPin.lng]
+  const finish: LatLng = [finishPin.lat, finishPin.lng]
+  const boundsPositions = [...line, ...pins.map((pin) => [pin.lat, pin.lng] as LatLng)]
 
   return (
-    <div className="exam-preview__map" aria-label={`${route.name_ka} — მარშრუტის გადახედვა`}>
+    <div
+      className="exam-preview__map exam-preview__map--interactive"
+      aria-label={`${route.name_ka} — მარშრუტის გადახედვა`}
+    >
       <MapContainer
         key={route.id}
-        center={center}
-        zoom={14}
+        center={start}
+        zoom={12}
         className="exam-preview-map"
         zoomControl={false}
         attributionControl={false}
-        scrollWheelZoom={false}
-        dragging={false}
-        doubleClickZoom={false}
-        touchZoom={false}
+        scrollWheelZoom
+        dragging
+        doubleClickZoom
+        touchZoom
         boxZoom={false}
-        keyboard={false}
+        keyboard
+        zoomSnap={0.25}
+        zoomDelta={0.5}
+        maxZoom={MAP_TILES.maxZoom}
+        minZoom={10}
       >
-        <MapBasemapLayers tiles={MAP_TILES} />
-        {hasLine && <RoutePolyline positions={line} variant="preview" />}
-        {start && finish && (
-          <>
-            <RouteEndpoint position={start} kind="start" />
-            <RouteEndpoint position={finish} kind="end" />
-          </>
-        )}
-        <FitRoutePreview line={line} />
+        <MapBasemapLayers tiles={MAP_TILES} detectRetina />
+        <RoutePolyline positions={line} variant="pins" />
+        {pins.map((pin) => (
+          <RoutePin key={pin.id} position={[pin.lat, pin.lng]} order={pin.sort_order} />
+        ))}
+        <RouteEndpoint position={start} kind="start" />
+        <RouteEndpoint position={finish} kind="finish" />
+        <FitRoutePreview positions={boundsPositions} />
         <MapSizeFix />
       </MapContainer>
       <div className="exam-preview__map-label">
@@ -112,7 +174,7 @@ function InteractiveRoutePreviewMap({ route }: { route: RouteWithPins }) {
 }
 
 export function RoutePreviewMap({ route }: Props) {
-  const officialMap = getRouteOfficialPreviewMap(route.slug)
+  const officialMap = route.slug === 'route-5' ? getRouteOfficialPreviewMap(route.slug) : null
   if (officialMap) {
     return <OfficialRoutePreviewImage map={officialMap} />
   }

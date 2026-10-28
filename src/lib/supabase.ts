@@ -1,17 +1,25 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+export function normalizeSupabaseProjectUrl(configuredUrl: string | undefined): string | undefined {
+  if (!configuredUrl?.trim()) return undefined
 
-// Debug logging
-console.log('🔍 Supabase Config Check:', {
-  url: url ? `${url.substring(0, 30)}...` : 'MISSING',
-  anonKey: anonKey ? `${anonKey.substring(0, 20)}...` : 'MISSING',
-  hasUrl: !!url,
-  hasAnonKey: !!anonKey,
-  isPlaceholder: anonKey?.includes('your_anon'),
-})
+  try {
+    const projectUrl = new URL(configuredUrl.trim())
+    if (projectUrl.protocol !== 'https:' && projectUrl.protocol !== 'http:') {
+      return undefined
+    }
+    if (projectUrl.pathname.replace(/\/+$/, '') === '/rest/v1') {
+      projectUrl.pathname = '/'
+    }
+    return projectUrl.toString().replace(/\/$/, '')
+  } catch {
+    return undefined
+  }
+}
+
+const url = normalizeSupabaseProjectUrl(import.meta.env.VITE_SUPABASE_URL)
+const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 export const isSupabaseConfigured = Boolean(url && anonKey && !anonKey.includes('your_anon'))
 

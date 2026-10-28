@@ -26,7 +26,7 @@ export function DemoHomePage() {
           marginTop: '1rem',
           fontSize: '0.9rem'
         }}>
-          🎨 <strong>DEMO MODE</strong> - UI Preview (საცდელი: 24 საათი · პრემიუმ პაკეტი 99 ₾/თვე)
+          🎨 <strong>DEMO MODE</strong> - UI Preview (საცდელი: 12 საათი · პრემიუმ პაკეტი 99 ₾/თვე)
         </div>
       </header>
 
@@ -47,7 +47,7 @@ export function DemoHomePage() {
 
       <footer className="home-footer">
         <p className="home-trial">
-          ⏱️ საცდელი: 23 საათი 45 წუთი · პრემიუმ · 99 ₾/თვე
+          ⏱️ საცდელი: 11 საათი 45 წუთი · პრემიუმ · 99 ₾/თვე
         </p>
         <p className="muted home-meta" style={{ marginTop: '1rem' }}>
           <strong>✅ რა შეიცვალა:</strong>
