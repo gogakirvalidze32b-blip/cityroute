@@ -42,4 +42,11 @@ describe('Preview-only test route visibility', () => {
     expect(isPreviewFeatureEnabled({ dev: false, vercelEnv: 'preview' })).toBe(true)
     expect(isPreviewFeatureEnabled({ dev: false, vercelEnv: 'production' })).toBe(false)
   })
+
+  it('allows plan demo routes in local development and Vercel Preview, never Production', () => {
+    expect(isPreviewFeatureEnabled({ dev: true, vercelEnv: 'development' })).toBe(true)
+    expect(isPreviewFeatureEnabled({ dev: false, vercelEnv: 'preview' })).toBe(true)
+    expect(isPreviewFeatureEnabled({ dev: false, vercelEnv: 'production' })).toBe(false)
+    expect(isPreviewFeatureEnabled({ dev: false })).toBe(false)
+  })
 })

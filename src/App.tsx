@@ -14,6 +14,7 @@ import { RoutePage } from '@/pages/RoutePage'
 import { DebugLoginPage } from '@/pages/DebugLoginPage'
 import { SupportChatPage } from '@/pages/SupportChatPage'
 import { SupportAdminPage } from '@/pages/SupportAdminPage'
+import { PLAN_PREVIEW_ROUTES_ENABLED } from '@/lib/debug-flags'
 import '@/styles/payment.css'
 
 export default function App() {
@@ -31,7 +32,7 @@ export default function App() {
           <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
           <Route path="/support" element={<SupportChatPage />} />
           <Route path="/support-admin" element={<SupportAdminPage />} />
-          {import.meta.env.DEV && (
+          {PLAN_PREVIEW_ROUTES_ENABLED && (
             <>
               <Route path="/premium-preview/trial" element={<PlanSelectionPage previewMode="trial" />} />
               <Route path="/premium-preview/expired" element={<PlanSelectionPage previewMode="expired" />} />

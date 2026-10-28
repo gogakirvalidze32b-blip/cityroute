@@ -29,6 +29,10 @@ export function shouldShowSpeedLimitDebug({
 }
 
 export const PREVIEW_TEST_ROUTE_ENABLED = isVercelPreview(import.meta.env.VERCEL_ENV)
+export const PLAN_PREVIEW_ROUTES_ENABLED = isPreviewFeatureEnabled({
+  dev: import.meta.env.DEV,
+  vercelEnv: import.meta.env.VERCEL_ENV,
+})
 
 export const SPEED_LIMIT_DEBUG_PANEL =
   import.meta.env.VITE_SPEED_LIMIT_DEBUG !== '0' &&
