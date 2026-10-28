@@ -14,7 +14,7 @@ const MOVED = [
   [[41.917267, 45.475761], [41.91745, 45.475199]],
   [[41.920189, 45.470198], [41.920288, 45.470219]],
   [[41.929098, 45.475144], [41.92918, 45.475192]],
-  [[41.933977, 45.478151], [41.933177, 45.477598]],
+  [[41.933977, 45.478151], [41.933897, 45.478101]],
 ] as const
 
 function close(left: number, right: number) {
@@ -84,7 +84,7 @@ describe('nine corrected Telavi pin coordinates', () => {
     expect(local.pins[16]).toMatchObject({ lat: 41.919129, lng: 45.471847, sort_order: 17 })
     expect(local.pins[18]).toMatchObject({ lat: 41.917305, lng: 45.474576, sort_order: 19 })
     expect(local.pins[25]).toMatchObject({ lat: 41.918213, lng: 45.473228, sort_order: 26 })
-    expect(local.pins[31]).toMatchObject({ lat: 41.933733, lng: 45.477972, sort_order: 32 })
+    expect(local.pins[31]).toMatchObject({ lat: 41.933897, lng: 45.478101, sort_order: 32 })
 
     const staleRemote = local.pins.slice(0, 34).map((pin) => ({ ...pin, lat: 0, lng: 0 }))
     const chosen = selectRoutePins(local.pins, staleRemote)
@@ -108,24 +108,24 @@ describe('nine corrected Telavi pin coordinates', () => {
       { slug: 'route-1', order: 24, lat: 41.918155, lng: 45.481760, instruction: 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ' },
       { slug: 'route-1', order: 26, lat: 41.918213, lng: 45.473228, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-1', order: 31, lat: 41.932953, lng: 45.477635, instruction: 'მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ' },
-      { slug: 'route-1', order: 32, lat: 41.933733, lng: 45.477972, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-1', order: 32, lat: 41.933897, lng: 45.478101, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-2', order: 3, lat: 41.931738, lng: 45.476857, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-2', order: 12, lat: 41.920923, lng: 45.500863, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-2', order: 17, lat: 41.918890, lng: 45.485221, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
       { slug: 'route-2', order: 20, lat: 41.918213, lng: 45.473228, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-2', order: 25, lat: 41.933312, lng: 45.477867, instruction: 'მალე, გთხოვთ მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ' },
-      { slug: 'route-2', order: 26, lat: 41.933177, lng: 45.477598, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-2', order: 26, lat: 41.933897, lng: 45.478101, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-3', order: 11, lat: 41.918278, lng: 45.482804, instruction: 'გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარცხნივ' },
       { slug: 'route-3', order: 12, lat: 41.918300, lng: 45.482891, instruction: '300 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ' },
       { slug: 'route-3', order: 17, lat: 41.927579, lng: 45.457432, instruction: '300 მეტრში, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარცხნივ' },
       { slug: 'route-3', order: 18, lat: 41.926853, lng: 45.455832, instruction: 'წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ' },
       { slug: 'route-3', order: 22, lat: 41.924907, lng: 45.466812, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-3', order: 24, lat: 41.925079, lng: 45.470325, instruction: 'მალე, გთხოვთ მოუხვიოთ მარცხნივ' },
-      { slug: 'route-3', order: 28, lat: 41.933177, lng: 45.477598, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
-      { slug: 'route-4', order: 10, lat: 41.918817, lng: 45.486591, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
+      { slug: 'route-3', order: 28, lat: 41.933897, lng: 45.478101, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-4', order: 10, lat: 41.918919, lng: 45.486113, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
       { slug: 'route-4', order: 12, lat: 41.919399, lng: 45.499970, instruction: 'მალე, გთხოვთ მოუხვიოთ მარცხნივ' },
       { slug: 'route-4', order: 14, lat: 41.919945, lng: 45.500247, instruction: 'გთხოვთ, მოუხვიოთ მარჯვნივ' },
-      { slug: 'route-4', order: 29, lat: 41.933177, lng: 45.477598, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
+      { slug: 'route-4', order: 29, lat: 41.933897, lng: 45.478101, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
     ] as const
 
     for (const { slug, order, lat, lng, instruction } of expected) {
