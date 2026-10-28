@@ -1044,7 +1044,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setExam((prev) => recordSevereQuick(prev))
   }, [])
 
-  function startSession() {
+  function startSession(startSortOrder = 1) {
     audioSessionGenerationRef.current++
     audioEngine.stopAll()
     queuedAudioPinOrdersRef.current = []
@@ -1059,7 +1059,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
     clearRoutePinProgress(route.slug)
-    const handled = new Set<number>()
+    const handled = new Set(
+      voicePins
+        .filter((pin) => pin.sort_order < startSortOrder)
+        .map((pin) => pin.sort_order),
+    )
+    if (handled.size > 0) saveRoutePinProgress(route.slug, handled)
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     route3Pin12RoadURef.current = null
@@ -1080,11 +1085,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     const totalPins = voicePins.length
     const finishSectionStart = finishSectionStartIndex(totalPins)
     
-    const nextPinCandidate = voicePins.find((p, idx) => {
-      if (triggeredRef.current.has(p.id)) return false
-      if (idx >= finishSectionStart && triggeredCount < finishSectionStart) return false
-      return true
-    })
+    const nextPinCandidate =
+      voicePins.find((pin) => pin.sort_order === startSortOrder) ??
+      voicePins.find((p, idx) => {
+        if (triggeredRef.current.has(p.id)) return false
+        if (idx >= finishSectionStart && triggeredCount < finishSectionStart) return false
+        return true
+      })
     
     setNextPin(nextPinCandidate ?? null)
     speedTrackerRef.current = createSpeedTracker()
@@ -1135,7 +1142,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     // No saved state - this is a NEW session. Resume returned above.
     const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
     if (gpsResult.denied) return
-    startSession()
+    const selectedSortOrder =
+      previewPinSelection?.routeId === route.id ? previewPin?.sort_order ?? 1 : 1
+    startSession(selectedSortOrder)
   }
 
   function fieldTestProgressFields() {

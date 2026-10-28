@@ -72,7 +72,7 @@ vi.mock('@/lib/route-nav', () => ({
 
 vi.mock('@/components/ExamLiveMap', () => ({
   ExamLiveMap: ({ nextPin }: { nextPin: PinRow | null }) => (
-    <div data-testid="next-pin" data-order={nextPin?.sort_order ?? ''}>
+    <div data-testid="next-pin" data-id={nextPin?.id ?? ''} data-order={nextPin?.sort_order ?? ''}>
       {nextPin?.instruction_ka ?? ''}
     </div>
   ),
@@ -138,6 +138,10 @@ const cases = [
 const playDetailed = vi.mocked(audioEngine.playDetailed)
 const pinAt = (route: RouteWithPins, order: number) => route.pins.find((pin) => pin.sort_order === order)!
 const sorted = (route: RouteWithPins) => [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+const allRoutePinCases = cases.flatMap(([slug]) => {
+  const route = routeBySlug(slug)
+  return sorted(route).map((pin) => [slug, pin.sort_order] as const)
+})
 const fix = (route: RouteWithPins, order: number, extra: Partial<GpsPosition> = {}): GpsPosition => {
   const pin = pinAt(route, order)
   return { lat: pin.lat, lng: pin.lng, accuracy: 5, heading: 0, speed: 5, timestamp: Date.now(), ...extra }
@@ -241,7 +245,86 @@ describe('Telavi field-test routes keep strict progress and resume on production
     localStorage.clear()
   })
 
-  it('lets the user browse a selected PIN without changing a fresh run start from PIN 1', async () => {
+  it('route 1: selected PIN 8 starts at PIN 8 and restores PIN 8 after refresh', async () => {
+    const route = routeBySlug('route-1')
+    const selectedPin = pinAt(route, 8)
+    gps.once = fix(route, 1)
+    const first = render(<ExamDriveSession route={route} />)
+    await settle()
+
+    await userEvent.setup().selectOptions(
+      screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }),
+      '8',
+    )
+    await userEvent.setup().click(screen.getByRole('button', { name: /გამოცდის დაწყება/ }))
+    await settle()
+
+    expect(nextOrder()).toBe(8)
+    expect(screen.getByTestId('next-pin').getAttribute('data-id')).toBe(selectedPin.id)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)).toMatchObject({
+      nextSortOrder: 8,
+      triggeredSortOrders: [1, 2, 3, 4, 5, 6, 7],
+    })
+    expect(loadRoutePinProgress(route.slug)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    first.unmount()
+
+    gps.once = null
+    render(<ExamDriveSession route={route} />)
+    await settle()
+
+    expect(nextOrder()).toBe(8)
+    expect(screen.getByTestId('next-pin').getAttribute('data-id')).toBe(selectedPin.id)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(8)
+  })
+
+  it('every route PIN starts, persists, and restores as the selected PIN', async () => {
+    expect(allRoutePinCases).toHaveLength(127)
+    expect(
+      Object.fromEntries(
+        cases.map(([slug]) => [slug, sorted(routeBySlug(slug)).length]),
+      ),
+    ).toEqual({ 'route-1': 35, 'route-2': 29, 'route-3': 31, 'route-4': 32 })
+    let checked = 0
+
+    for (const [slug, order] of allRoutePinCases) {
+      cleanup()
+      localStorage.clear()
+      const route = routeBySlug(slug)
+      const selectedPin = pinAt(route, order)
+      gps.once = fix(route, order)
+      const first = render(<ExamDriveSession route={route} />)
+      await settle()
+      await userEvent.setup().selectOptions(
+        screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }),
+        String(order),
+      )
+      await userEvent.setup().click(screen.getByRole('button', { name: /გამოცდის დაწყება/ }))
+      await settle()
+
+      const precedingOrders = Array.from({ length: order - 1 }, (_, index) => index + 1)
+      expect(nextOrder(), `${slug} PIN ${order} active order`).toBe(order)
+      expect(screen.getByTestId('next-pin').getAttribute('data-id')).toBe(selectedPin.id)
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)).toMatchObject({
+        nextSortOrder: order,
+        triggeredSortOrders: precedingOrders,
+      })
+      expect(loadRoutePinProgress(route.slug)).toEqual(precedingOrders.length ? precedingOrders : null)
+      expect(screen.queryByTestId('route-complete')).toBeNull()
+      first.unmount()
+
+      gps.once = null
+      render(<ExamDriveSession route={route} />)
+      await settle()
+      expect(nextOrder(), `${slug} PIN ${order} restored order`).toBe(order)
+      expect(screen.getByTestId('next-pin').getAttribute('data-id')).toBe(selectedPin.id)
+      expect(screen.queryByTestId('route-complete')).toBeNull()
+      checked += 1
+    }
+
+    expect(checked).toBe(127)
+  }, 120_000)
+
+  it('starts from the last preview PIN selected by the user', async () => {
     const route = routeBySlug('route-2')
     saveRoutePinProgress(route.slug, Array.from({ length: 12 }, (_, index) => index + 1))
     gps.once = fix(route, 1)
@@ -264,8 +347,8 @@ describe('Telavi field-test routes keep strict progress and resume on production
 
     await user.click(screen.getByRole('button', { name: /გამოცდის დაწყება/ }))
     await settle()
-    expect(nextOrder()).toBe(1)
-    expect(loadRoutePinProgress(route.slug)).toBeNull()
+    expect(nextOrder()).toBe(7)
+    expect(loadRoutePinProgress(route.slug)).toEqual([1, 2, 3, 4, 5, 6])
   })
 
   it('does not add a Tbilisi test route', () => {
