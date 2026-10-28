@@ -1,8 +1,9 @@
-﻿import { Link, Navigate, useNavigate } from 'react-router-dom'
+﻿import { Navigate, useNavigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { PaymentButton } from '@/components/PaymentButton'
 import { useAuth } from '@/context/AuthContext'
 import { calculatePrice } from '@/data/subscription-plans'
+import { accessLabel } from '@/types/database'
 import { useEffect, useState } from 'react'
 
 export function PlanSelectionPage() {
@@ -23,6 +24,7 @@ export function PlanSelectionPage() {
 
   const chosen = 'premium'
   const isFirstPick = needsPlanSelection
+  const activeTrial = profile?.subscription_status === 'trial' && hasAccess
   const totalPrice = calculatePrice(chosen, deviceSlots)
 
   async function onContinue() {
@@ -43,67 +45,108 @@ export function PlanSelectionPage() {
     }
   }
 
+  function continueToRoutes() {
+    if (isFirstPick) {
+      void onContinue()
+      return
+    }
+    navigate('/')
+  }
+
   return (
-    <div className="page plan-page">
-      <header className="plan-page__header">
-        <AppBrand centered />
-        <h1>პრემიუმ პაკეტი</h1>
-        <p className="muted plan-page__lead">
-          <strong>24 საათი უფასოდ</strong> · შემდეგ {totalPrice} ₾/თვე
-        </p>
-      </header>
+    <div className="page plan-page plan-page--premium">
+      <div className="premium-layout">
+        <section className="premium-intro">
+          <header className="premium-intro__header">
+            <AppBrand centered />
+            <h1>CityRoute <span>Premium</span></h1>
+            <p className="premium-intro__subtitle">მოამზადე მოსწავლე მართვის პრაქტიკული გამოცდისთვის</p>
+            <p className="premium-intro__trial-summary">
+              <strong>12 საათი უფასოდ</strong> · შემდეგ {totalPrice} ₾/თვე
+            </p>
+            <p className="premium-intro__description">
+              CityRoute ინსტრუქტორებს ეხმარება მოსწავლეები ქალაქ თელავში პრაქტიკული მართვის გამოცდისთვის მოამზადონ.
+            </p>
+          </header>
 
-      <div className="device-selector">
-        <p className="device-selector__label">რამდენ მანქანაზე გინდა გამოყენება?</p>
-        <div className="device-selector__buttons">
+          {activeTrial && profile && (
+            <div className="premium-trial-status">
+              <span className="premium-trial-status__icon" aria-hidden="true">✓</span>
+              <div>
+                <strong>უფასო Trial აქტიურია</strong>
+                <p>{accessLabel(profile)}</p>
+              </div>
+            </div>
+          )}
+
+          <ul className="premium-benefits">
+            <li>საგამოცდო მარშრუტები — ქალაქი თელავი</li>
+            <li>ხმოვანი მითითებები გზაზე</li>
+            <li>მოსწავლის მომზადება რეალურ მარშრუტებზე</li>
+            <li>მოსახერხებელი GPS ნავიგაცია</li>
+          </ul>
+
+          {activeTrial && (
+            <button
+              type="button"
+              className="premium-routes-button"
+              disabled={submitting}
+              onClick={continueToRoutes}
+            >
+              {submitting ? 'ინახება...' : 'მარშრუტებზე გადასვლა'}
+              {!submitting && <span aria-hidden="true">→</span>}
+            </button>
+          )}
+        </section>
+
+        <section className="premium-checkout" aria-labelledby="premium-checkout-title">
+          <h2 id="premium-checkout-title">რამდენი ავტომობილისთვის?</h2>
+          <div className="device-selector">
+            <div className="device-selector__buttons">
+              <button
+                type="button"
+                className={`device-btn ${deviceSlots === 1 ? 'device-btn--active' : ''}`}
+                aria-pressed={deviceSlots === 1}
+                onClick={() => setDeviceSlots(1)}
+              >
+                <span className="device-btn__icon" aria-hidden="true">🚗</span>
+                <strong>1 მანქანა</strong>
+                <span className="device-btn__price">99 ₾ / 30 დღე</span>
+              </button>
+              <button
+                type="button"
+                className={`device-btn ${deviceSlots === 2 ? 'device-btn--active' : ''}`}
+                aria-pressed={deviceSlots === 2}
+                onClick={() => setDeviceSlots(2)}
+              >
+                <span className="device-btn__icon" aria-hidden="true">🚗🚗</span>
+                <strong>2 მანქანა</strong>
+                <span className="device-btn__price">179 ₾ / 30 დღე</span>
+              </button>
+            </div>
+          </div>
+
+          <p className="premium-checkout__device-note">
+            1 ანგარიში (ერთი ელფოსტა) = მაქსიმუმ {deviceSlots} მოწყობილობა
+          </p>
+          <div className="premium-total">
+            <span>არჩეული პაკეტი</span>
+            <strong>{totalPrice} ₾ <small>/ 30 დღე</small></strong>
+          </div>
+          {error && <p className="error-text" role="alert">{error}</p>}
+          <PaymentButton deviceSlots={deviceSlots} onError={setError} />
+          <p className="premium-checkout__trial-copy">ან გააგრძელე 12-საათიანი უფასო საცდელი პერიოდით:</p>
           <button
             type="button"
-            className={`device-btn ${deviceSlots === 1 ? 'device-btn--active' : ''}`}
-            onClick={() => setDeviceSlots(1)}
+            className="primary plan-page__cta premium-cta"
+            disabled={submitting}
+            onClick={() => void onContinue()}
           >
-            <span className="device-btn__icon">🚗</span>
-            <strong>1 მანქანა</strong>
-            <span className="device-btn__price">99 ₾/თვე</span>
+            {submitting ? 'ინახება...' : '12 საათიანი უფასო წვდომის დაწყება'}
           </button>
-          <button
-            type="button"
-            className={`device-btn ${deviceSlots === 2 ? 'device-btn--active' : ''}`}
-            onClick={() => setDeviceSlots(2)}
-          >
-            <span className="device-btn__icon">🚗🚗</span>
-            <strong>2 მანქანა</strong>
-            <span className="device-btn__price">179 ₾/თვე</span>
-          </button>
-        </div>
-        <p className="device-selector__note">1 ანგარიში (ერთი ემაილი) = მაქსიმუმ {deviceSlots} მოწყობილობა</p>
+          <p className="muted plan-page__fine">ანგარიშიდან გასვლით შეგიძლია სხვა მოწყობილობაზე შესვლა</p>
+        </section>
       </div>
-
-      <div className="plan-summary">
-        <h2>სრული ფუნქციონალი</h2>
-        <p className="plan-price">{totalPrice} ₾/თვე</p>
-        <ul className="plan-features">
-          <li>GPS ხმოვანი მარშრუტი</li>
-          <li>Live რუკა მძღოლობისას</li>
-          <li>გამოცდის პანელი</li>
-          <li>გადართვა: რუკა ↔ შეცდომები</li>
-          <li>ყველა მომავალი ფუნქცია</li>
-        </ul>
-      </div>
-
-      <footer className="plan-page__footer">
-        {error && <p className="error-text">{error}</p>}
-        <PaymentButton deviceSlots={deviceSlots} onError={setError} />
-        <p className="muted">ან გააგრძელე 24-საათიანი საცდელი პერიოდით:</p>
-        <button type="button" className="primary plan-page__cta premium-cta" disabled={submitting} onClick={() => void onContinue()}>
-          {submitting ? 'ინახება...' : '🚀 24 საათიანი უფასო წვდომის დაწყება'}
-        </button>
-        {!isFirstPick && (
-          <Link to="/" className="plan-page__back">
-            ← მარშრუტებზე დაბრუნება
-          </Link>
-        )}
-        <p className="muted plan-page__fine">ანგარიშიდან გასვლით შეგიძლია სხვა მოწყობილობაზე შესვლა</p>
-      </footer>
     </div>
   )
 }

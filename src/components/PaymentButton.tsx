@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { getSupabase } from '@/lib/supabase'
+import { getOrCreateBogPaymentRequestId } from '@/lib/bog-payment-request'
 
 type PaymentButtonProps = {
   deviceSlots: 1 | 2
@@ -9,6 +11,11 @@ type PaymentButtonProps = {
 
 export function PaymentButton({ deviceSlots, onError, disabled }: PaymentButtonProps) {
   const [loading, setLoading] = useState(false)
+  const requestIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    requestIdRef.current = null
+  }, [deviceSlots])
 
   async function handlePayment() {
     setLoading(true)
@@ -16,6 +23,8 @@ export function PaymentButton({ deviceSlots, onError, disabled }: PaymentButtonP
       const { data: { session } } = await getSupabase().auth.getSession()
       if (!session) throw new Error('შესვლა საჭიროა')
 
+      const requestId = requestIdRef.current ?? getOrCreateBogPaymentRequestId(deviceSlots)
+      requestIdRef.current = requestId
       const response = await fetch('/api/payments/bog/initialize', {
         method: 'POST',
         headers: {
@@ -25,7 +34,7 @@ export function PaymentButton({ deviceSlots, onError, disabled }: PaymentButtonP
         body: JSON.stringify({
           provider: 'bog',
           deviceSlots,
-          requestId: crypto.randomUUID(),
+          requestId,
         }),
       })
       const data: { success?: boolean; paymentUrl?: string; error?: string } = await response.json()

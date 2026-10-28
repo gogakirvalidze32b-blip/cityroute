@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { useAuth } from '@/context/AuthContext'
 import { getSupabase } from '@/lib/supabase'
+import { clearBogPaymentRequestIds } from '@/lib/bog-payment-request'
 
 type PaymentStatus = 'checking' | 'success' | 'failed' | 'pending' | 'cancelled'
 
@@ -13,6 +14,7 @@ export function PaymentReturnPage() {
   const { refreshProfile } = useAuth()
 
   useEffect(() => {
+    clearBogPaymentRequestIds()
     const provider = searchParams.get('provider')
     const merchantPaymentId = searchParams.get('merchantPaymentId')
     let active = true

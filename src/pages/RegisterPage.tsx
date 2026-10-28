@@ -59,7 +59,7 @@ export function RegisterPage() {
         <div className="auth-card">
           <h1>თითქმის მზად ხარ!</h1>
           <p className="muted">
-            შეამოწმე ელფოსტა (დადასტურების ბმული). შემდეგ შედი — <strong>24 საათიანი სრული საცდელი</strong> და პაკეტის არჩევა.
+            შეამოწმე ელფოსტა (დადასტურების ბმული). შემდეგ შედი — <strong>12 საათიანი სრული საცდელი</strong> და პაკეტის არჩევა.
           </p>
           <Link to="/login" className="primary btn-link">
             შესვლა
@@ -76,7 +76,7 @@ export function RegisterPage() {
       </div>
       <div className="auth-card">
         <h1>რეგისტრაცია</h1>
-        <p className="muted">24 საათი სრული საცდელი · შესვლის შემდეგ აირჩევ პაკეტს · 1 ანგარიში = 1 მანქანა</p>
+        <p className="muted">12 საათი სრული საცდელი · შესვლის შემდეგ აირჩევ პაკეტს · 1 ანგარიში = 1 მანქანა</p>
         <form onSubmit={onSubmit} className="form">
           <label>
             სახელი
