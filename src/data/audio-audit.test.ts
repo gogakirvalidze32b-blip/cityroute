@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import pins from './audio-audit-pins.fixture.json'
+import { TELAVI_ROUTES_FALLBACK } from './telavi-routes'
 import { collectPreloadAudioUrls, resolvePinAudioUrl } from './route-audio'
 import { normalizeInstruction, route1VoicePreloadPaths } from './route-1-voice'
 import type { PinRow } from '@/types/database'
@@ -45,6 +46,40 @@ describe('FINAL audio audit: 127 PINs', () => {
     for (const [r, n] of [[1, 35], [2, 29], [3, 31], [4, 32]]) {
       expect(pins.filter((p) => p.route === r).length).toBe(n)
     }
+  })
+
+  it('audits every bundled route PIN ID, order, resolved WAV, and file', () => {
+    const expectedCounts = new Map([
+      ['route-1', 35],
+      ['route-2', 29],
+      ['route-3', 31],
+      ['route-4', 32],
+    ])
+    let checked = 0
+
+    for (const route of TELAVI_ROUTES_FALLBACK.filter((item) => expectedCounts.has(item.slug))) {
+      const count = expectedCounts.get(route.slug)!
+      const orderedPins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+      expect(orderedPins).toHaveLength(count)
+
+      orderedPins.forEach((pin, index) => {
+        const order = index + 1
+        expect(pin.sort_order, `${route.slug} PIN ${order} order`).toBe(order)
+        expect(pin.id, `${route.slug} PIN ${order} id`).toBe(`p${route.sort_order}-${order}`)
+
+        const url = resolvePinAudioUrl(route.slug, pin)
+        expect(url, `${route.slug} PIN ${order} audio URL`).not.toBeNull()
+        expect(decodeAudioPath(url!), `${route.slug} PIN ${order} audio path`).toMatch(/^\/audio\/.+\.wav$/)
+        const relativePath = decodeAudioPath(url!).replace(/^\/audio\//, '')
+        expect(
+          existsSync(join(AUDIO_DIR, relativePath)),
+          `${route.slug} PIN ${order} file ${relativePath}`,
+        ).toBe(true)
+        checked += 1
+      })
+    }
+
+    expect(checked).toBe(127)
   })
 
   it('every PIN maps to the expected, existing WAV (127/127 MAPPED, 0 MISSING, 0 AMBIGUOUS)', () => {

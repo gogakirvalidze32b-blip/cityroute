@@ -25,6 +25,8 @@ export type SavedExamState = {
   queuedPinSortOrders?: number[]
   lastPassedSortOrder?: number | null
   nextSortOrder?: number | null
+  /** Canonical ID for the PIN represented by nextSortOrder. */
+  nextPinId?: string | null
   savedAt: number
 }
 
@@ -141,6 +143,9 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
     }
     if (!('queuedPinSortOrders' in incoming) && 'queuedPinSortOrders' in previous) {
       merged = { ...merged, queuedPinSortOrders: previous.queuedPinSortOrders }
+    }
+    if (incoming.nextPinId === undefined && previous.nextPinId !== undefined) {
+      merged = { ...merged, nextPinId: previous.nextPinId }
     }
     return merged
   }

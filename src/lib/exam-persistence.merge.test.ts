@@ -34,18 +34,20 @@ describe('exam save merge: incomplete writes do not replace progress', () => {
   })
 
   it('keeps sort-order progress when a later save has no orders (empty pin list)', () => {
-    const previous = saved()
+    const previous = saved({ nextPinId: 'p2-3' })
     const incomplete = saved({
       triggeredPins: ['uuid-1', 'uuid-2'],
       triggeredSortOrders: undefined,
       lastPassedSortOrder: undefined,
       nextSortOrder: undefined,
+      nextPinId: undefined,
       savedAt: 2_000,
     })
     const merged = mergeExamSave(previous, incomplete)
     expect(merged.triggeredSortOrders).toEqual([1, 2])
     expect(merged.nextSortOrder).toBe(3)
     expect(merged.lastPassedSortOrder).toBe(2)
+    expect(merged.nextPinId).toBe('p2-3')
     expect(merged.triggeredPins).toEqual(['uuid-1', 'uuid-2'])
   })
 

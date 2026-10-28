@@ -103,6 +103,7 @@ export type ResumeResolution =
       handledOrders: number[] | null
       lastPassedSortOrder: number | null
       nextSortOrder: number | null
+      nextPinId: string | null
       triggeredIds: string[]
     }
 
@@ -111,6 +112,7 @@ export type SavedResume = {
   triggeredSortOrders?: readonly number[] | null
   lastPassedSortOrder?: number | null
   nextSortOrder?: number | null
+  nextPinId?: string | null
 }
 
 const isOrder = (value: unknown): value is number =>
@@ -150,6 +152,7 @@ export function resolveExamResume(
       handledOrders: null,
       lastPassedSortOrder: null,
       nextSortOrder: null,
+      nextPinId: null,
       triggeredIds: [...saved.triggeredPins],
     }
   }
@@ -162,6 +165,7 @@ export function resolveExamResume(
       handledOrders,
       lastPassedSortOrder: handledOrders.length ? handledOrders[handledOrders.length - 1] : null,
       nextSortOrder: isOrder(saved.nextSortOrder) ? saved.nextSortOrder : null,
+      nextPinId: null,
       triggeredIds: [],
     }
   }
@@ -182,12 +186,21 @@ export function resolveExamResume(
   if (isOrder(saved.lastPassedSortOrder) && saved.lastPassedSortOrder !== progress.lastPassedSortOrder) {
     return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
   }
+  if (saved.nextPinId != null) {
+    const conflictingSavedPin = pins.find((pin) => pin.id === saved.nextPinId)
+    if (conflictingSavedPin && conflictingSavedPin.sort_order !== progress.nextSortOrder) {
+      return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
+    }
+  }
 
   return {
     status: 'resume',
     handledOrders,
     lastPassedSortOrder: progress.lastPassedSortOrder,
     nextSortOrder: progress.nextSortOrder,
+    nextPinId: progress.nextSortOrder === null
+      ? null
+      : pins.find((pin) => pin.sort_order === progress.nextSortOrder)?.id ?? null,
     triggeredIds: [...pinIdsForOrders(pins, orders)],
   }
 }

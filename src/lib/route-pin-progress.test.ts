@@ -5,6 +5,7 @@ import { nextSortOrder } from '@/lib/route-resume'
 import {
   clearRoutePinProgress,
   loadRoutePinProgress,
+  routePinProgressUpdatedAt,
   saveRoutePinProgress,
 } from './route-pin-progress'
 
@@ -57,5 +58,16 @@ describe('route PIN progress is independent from the active session', () => {
 
     expect(loadRoutePinProgress(route1.slug)).toBeNull()
     expect(loadRoutePinProgress(route2.slug)).toEqual([1, 2, 3])
+  })
+
+  it('keeps legacy array saves readable and timestamps new progress writes', () => {
+    localStorage.setItem('cityroute-pin-progress:route-1', JSON.stringify([1, 2]))
+    expect(loadRoutePinProgress('route-1')).toEqual([1, 2])
+    expect(routePinProgressUpdatedAt('route-1')).toBeNull()
+
+    const beforeSave = Date.now()
+    saveRoutePinProgress('route-1', [3])
+    expect(loadRoutePinProgress('route-1')).toEqual([1, 2, 3])
+    expect(routePinProgressUpdatedAt('route-1')).toBeGreaterThanOrEqual(beforeSave)
   })
 })

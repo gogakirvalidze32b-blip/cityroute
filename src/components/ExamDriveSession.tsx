@@ -65,6 +65,7 @@ import { SPEED_LIMIT_DEBUG_PANEL } from '@/lib/debug-flags'
 import {
   clearRoutePinProgress,
   loadRoutePinProgress,
+  routePinProgressUpdatedAt,
   saveRoutePinProgress,
 } from '@/lib/route-pin-progress'
 import { SpeedLimitDebugPanel, type GpsRejectionInfo } from '@/components/SpeedLimitDebugPanel'
@@ -88,6 +89,10 @@ const AUDIO_RETRY_MAX_MS = 4000
 const AUDIO_QUEUE_WATCHDOG_MS = 13_000
 const SPEED_LIMIT_FIX_STALE_MS = 20_000
 
+function pinIdForOrder(pins: readonly PinRow[], order: number | null | undefined): string | null {
+  return order == null ? null : pins.find((pin) => pin.sort_order === order)?.id ?? null
+}
+
 function initialHandledOrders(
   saved: SavedExamState,
   pins: readonly PinRow[],
@@ -102,17 +107,23 @@ function restoredHandledOrders(
   pins: readonly PinRow[],
   routeSlug: string,
 ): Set<number> | null {
+  const savedNextPin = saved.nextPinId
+    ? pins.find((pin) => pin.id === saved.nextPinId)
+    : undefined
+  if (savedNextPin && savedNextPin.sort_order !== saved.nextSortOrder) return null
   const savedOrders = initialHandledOrders(saved, pins, routeSlug)
   const routeOrders = loadRoutePinProgress(routeSlug)
+  const routeProgressIsNewer = (routePinProgressUpdatedAt(routeSlug) ?? 0) > saved.savedAt
+  const recoverableRouteOrders = routeProgressIsNewer ? routeOrders : null
   const savedPinIds = ordersForIds(saved.triggeredPins, pins, routeSlug)
   const hasRecoverableProgress =
     Boolean(savedOrders?.size) ||
-    Boolean(routeOrders?.length) ||
+    Boolean(recoverableRouteOrders?.length) ||
     savedPinIds.orders.size > 0
 
   if (!hasRecoverableProgress && savedPinIds.unknown.length > 0) return null
-  if (savedOrders === null && !routeOrders?.length && savedPinIds.orders.size === 0) return null
-  return mostAdvancedPinProgress(pins, routeOrders, savedOrders, savedPinIds.orders)
+  if (savedOrders === null && !recoverableRouteOrders?.length && savedPinIds.orders.size === 0) return null
+  return mostAdvancedPinProgress(pins, recoverableRouteOrders, savedOrders, savedPinIds.orders)
 }
 
 function mostAdvancedPinProgress(
@@ -677,6 +688,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
                 lastPassedSortOrder:
                   previous?.lastPassedSortOrder ?? (sorted.length ? sorted[sorted.length - 1]! : null),
                 nextSortOrder: previous?.nextSortOrder ?? null,
+                nextPinId: previous?.nextPinId ?? null,
               }
             }
             const progress = nextSortOrder(pins, orders)
@@ -684,6 +696,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
               triggeredSortOrders: sorted,
               lastPassedSortOrder: progress.lastPassedSortOrder,
               nextSortOrder: progress.nextSortOrder,
+              nextPinId: pinIdForOrder(pins, progress.nextSortOrder),
             }
           })()
         : {}
@@ -1159,6 +1172,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         lastPassedSortOrder:
           previous?.lastPassedSortOrder ?? (sorted.length ? sorted[sorted.length - 1]! : null),
         nextSortOrder: previous?.nextSortOrder ?? null,
+        nextPinId: previous?.nextPinId ?? null,
       }
     }
     const progress = nextSortOrder(pins, orders)
@@ -1166,6 +1180,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       triggeredSortOrders: sorted,
       lastPassedSortOrder: progress.lastPassedSortOrder,
       nextSortOrder: progress.nextSortOrder,
+      nextPinId: pinIdForOrder(pins, progress.nextSortOrder),
     }
   }
 

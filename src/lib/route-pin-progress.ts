@@ -1,7 +1,29 @@
 const STORAGE_PREFIX = 'cityroute-pin-progress:'
 
+type RoutePinProgress = {
+  orders: number[]
+  updatedAt: number
+}
+
 function storageKey(routeSlug: string): string {
   return `${STORAGE_PREFIX}${encodeURIComponent(routeSlug)}`
+}
+
+function parseProgress(value: unknown): { orders: number[]; updatedAt: number | null } | null {
+  const progress =
+    Array.isArray(value)
+      ? { orders: value, updatedAt: null }
+      : value && typeof value === 'object'
+        ? value as Partial<RoutePinProgress>
+        : null
+  if (!progress || !Array.isArray(progress.orders) || !validOrders(progress.orders)) return null
+  return {
+    orders: progress.orders,
+    updatedAt:
+      typeof progress.updatedAt === 'number' && Number.isFinite(progress.updatedAt)
+        ? progress.updatedAt
+        : null,
+  }
 }
 
 function validOrders(value: unknown): value is number[] {
@@ -17,13 +39,26 @@ export function loadRoutePinProgress(routeSlug: string): number[] | null {
     const raw = localStorage.getItem(storageKey(routeSlug))
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
-    if (!validOrders(parsed)) {
+    const progress = parseProgress(parsed)
+    if (!progress) {
       console.error('Failed to load route PIN progress: invalid saved data', routeSlug)
       return null
     }
-    return [...parsed].sort((a, b) => a - b)
+    return [...progress.orders].sort((a, b) => a - b)
   } catch (err) {
     console.error('Failed to load route PIN progress:', err)
+    return null
+  }
+}
+
+export function routePinProgressUpdatedAt(routeSlug: string): number | null {
+  try {
+    const raw = localStorage.getItem(storageKey(routeSlug))
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    return parseProgress(parsed)?.updatedAt ?? null
+  } catch (err) {
+    console.error('Failed to read route PIN progress timestamp:', err)
     return null
   }
 }
@@ -37,7 +72,7 @@ export function saveRoutePinProgress(routeSlug: string, orders: Iterable<number>
   const sorted = [...new Set([...(loadRoutePinProgress(routeSlug) ?? []), ...incoming])]
     .sort((a, b) => a - b)
   try {
-    localStorage.setItem(storageKey(routeSlug), JSON.stringify(sorted))
+    localStorage.setItem(storageKey(routeSlug), JSON.stringify({ orders: sorted, updatedAt: Date.now() }))
   } catch (err) {
     console.error('Failed to save route PIN progress:', err)
   }
