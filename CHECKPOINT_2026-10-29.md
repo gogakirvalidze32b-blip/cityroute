@@ -76,4 +76,4 @@ After the final coordinate and relocation-test updates:
 
 ## Checkpoint branch
 
-This file is intended to be committed on a separate checkpoint branch based on the source HEAD above. The checkpoint commit should add only this Markdown file; it must not alter or replace the source branch's PIN-coordinate commit.
+This checkpoint file is committed on the separate branch `checkpoint/cityroute-state-2026-10-29`, based on the source HEAD above. The checkpoint branch adds this Markdown file without altering or replacing the source branch's PIN-coordinate commit.
