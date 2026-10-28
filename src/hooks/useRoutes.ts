@@ -1,8 +1,6 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
-import { applyLocalTbilisiTestPin } from '@/data/local-tbilisi-test-pin'
-import { PREVIEW_TEST_ROUTE_ENABLED } from '@/lib/debug-flags'
 import type { PinRow, RouteRow, RouteWithPins } from '@/types/database'
 
 const MOVED_PINS: Array<[[number, number], [number, number]]> = [
@@ -48,10 +46,7 @@ export function selectRoutePins<T>(localPins: readonly T[], remotePins: readonly
  * route-polylines.ts / TELAVI_ROUTES_FALLBACK is the source of truth for map geometry and PIN coords.
  */
 function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): RouteWithPins[] {
-  const localRoutes = applyLocalTbilisiTestPin(
-    applyRelocatedPin(TELAVI_ROUTES_FALLBACK),
-    PREVIEW_TEST_ROUTE_ENABLED,
-  )
+  const localRoutes = applyRelocatedPin(TELAVI_ROUTES_FALLBACK)
   if (!remoteRows?.length) {
     console.log('[DEBUG] mergeRoutes: No remote rows, returning TELAVI_ROUTES_FALLBACK')
     return localRoutes
@@ -82,12 +77,7 @@ function mergeRoutes(remoteRows: RouteRow[] | null, pinRows: PinRow[] | null): R
 }
 
 export function useRoutes() {
-  const [routes, setRoutes] = useState<RouteWithPins[]>(() =>
-    applyLocalTbilisiTestPin(
-      applyRelocatedPin(TELAVI_ROUTES_FALLBACK),
-      PREVIEW_TEST_ROUTE_ENABLED,
-    ),
-  )
+  const [routes, setRoutes] = useState<RouteWithPins[]>(() => applyRelocatedPin(TELAVI_ROUTES_FALLBACK))
   const [source, setSource] = useState<'local' | 'merged'>('local')
 
   useEffect(() => {

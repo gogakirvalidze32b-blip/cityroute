@@ -262,6 +262,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const [deviceBlocked, setDeviceBlocked] = useState<string | null>(null)
 
+  const [trialExpired, setTrialExpired] = useState(false)
+
+  useEffect(() => {
+    if (profile?.subscription_status !== 'trial' || !profile.subscription_expires_at) {
+      setTrialExpired(false)
+      return
+    }
+
+    const expiresAt = new Date(profile.subscription_expires_at).getTime()
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      setTrialExpired(true)
+      return
+    }
+
+    setTrialExpired(false)
+    const timer = window.setTimeout(() => setTrialExpired(true), expiresAt - Date.now())
+    return () => window.clearTimeout(timer)
+  }, [profile?.subscription_status, profile?.subscription_expires_at])
 
 
   // User id whose profile is currently loaded. Lets a repeated SIGNED_IN / TOKEN_REFRESHED for the
@@ -574,7 +592,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const appReady = !loading && profileReady
 
-  const hasAccess = isAccessActive(profile) && !deviceBlocked
+  const hasAccess = isAccessActive(profile) && !deviceBlocked && !trialExpired
 
   const needsPlanSelection = Boolean(profile && hasAccess && profileNeedsPlan(profile))
 
@@ -669,4 +687,3 @@ export function usePlanFeatures() {
   return useAuth().features
 
 }
-

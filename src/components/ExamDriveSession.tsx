@@ -82,7 +82,7 @@ import { TELAVI_CENTER } from '@/data/telavi-landmarks'
 type Phase = 'preview' | 'active' | 'summary'
 
 /** Sort-order resume for Telavi exam routes and the local Tbilisi GPS test city. */
-const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4', 'test-route-tbilisi'])
+const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
 const AUDIO_RETRY_BASE_MS = 500
 const AUDIO_RETRY_MAX_MS = 4000
 const AUDIO_QUEUE_WATCHDOG_MS = 13_000
@@ -188,6 +188,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     [route.id, route.slug, route.name_ka, savedEpoch],
   )
   const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
+  const [previewPinSelection, setPreviewPinSelection] = useState<{
+    routeId: string
+    sortOrder: number
+  } | null>(null)
   // Same-render sync: slug match after local→UUID must not paint preview+saved (empty map).
   if (savedState && phase === 'preview') {
     setPhase('active')
@@ -311,6 +315,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   )
   const voicePinsRef = useRef(voicePins)
   voicePinsRef.current = voicePins
+  const completedPreviewOrders = mostAdvancedPinProgress(
+    sortedPins,
+    initialRoutePinProgress,
+    savedState ? savedProgressOrders : null,
+  )
+  const previewPin =
+    previewPinSelection?.routeId === route.id
+      ? sortedPins.find((pin) => pin.sort_order === previewPinSelection.sortOrder) ?? sortedPins[0] ?? null
+      : sortedPins.find((pin) => !completedPreviewOrders.has(pin.sort_order)) ?? sortedPins[0] ?? null
   const pinsActive = voicePins.length > 0
   // Posted limit comes from the vehicle's real position on the route's road line (not from PIN proximity).
   // null (shown as "—") whenever the position is not inside a known zone.
@@ -1050,8 +1063,8 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
-    const handledOrders = persistMostAdvancedPinProgress(getHandledPinOrders())
-    const handled = new Set(handledOrders)
+    clearRoutePinProgress(route.slug)
+    const handled = new Set<number>()
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     route3Pin12RoadURef.current = null
@@ -1061,7 +1074,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
-    setRouteComplete(voicePins.length > 0 && nextSortOrder(voicePins, handled).nextSortOrder === null)
+    setRouteComplete(false)
     resumePendingRef.current = false
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
@@ -1330,15 +1343,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }
 
   function restartPreview() {
-    const resetTestRouteProgress = route.slug === 'test-route-tbilisi'
-    const handled = resetTestRouteProgress
-      ? new Set<number>()
-      : persistMostAdvancedPinProgress(getHandledPinOrders())
-    if (resetTestRouteProgress) clearRoutePinProgress(route.slug)
+    const handled = new Set<number>()
+    clearRoutePinProgress(route.slug)
     queuedAudioPinOrdersRef.current = []
     finishInProgressRef.current = true
     finishRouteSlugRef.current = null
     setPhase('preview')
+    setPreviewPinSelection(
+      sortedPins[0] ? { routeId: route.id, sortOrder: sortedPins[0].sort_order } : null,
+    )
     setExamSummary(null)
     setSummaryCanContinue(false)
     setExam(createExamSession(route.id, route.name_ka))
@@ -1507,8 +1520,38 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
       {phase === 'preview' && !savedState && (
         <div className="exam-preview">
-          <RoutePreviewMap route={route} />
+          <RoutePreviewMap
+            route={route}
+            selectedPinOrder={previewPin?.sort_order ?? null}
+            onPinSelect={(sortOrder) => setPreviewPinSelection({ routeId: route.id, sortOrder })}
+          />
           <div className="exam-preview__panel">
+            {previewPin && (
+              <div className="exam-preview__pin-picker">
+                <label htmlFor="exam-preview-pin">აირჩიეთ PIN</label>
+                <select
+                  id="exam-preview-pin"
+                  aria-label="PIN-ების არჩევა"
+                  value={previewPin.sort_order}
+                  onChange={(event) =>
+                    setPreviewPinSelection({
+                      routeId: route.id,
+                      sortOrder: Number(event.currentTarget.value),
+                    })
+                  }
+                >
+                  {sortedPins.map((pin) => (
+                    <option key={pin.id} value={pin.sort_order}>
+                      PIN {pin.sort_order} — {pin.instruction_ka}
+                    </option>
+                  ))}
+                </select>
+                <p data-testid="selected-preview-pin">
+                  <strong>PIN {previewPin.sort_order}</strong>
+                  <span>{previewPin.instruction_ka}</span>
+                </p>
+              </div>
+            )}
             {savedState && (
               <div style={{ 
                 background: '#fef3c7', 

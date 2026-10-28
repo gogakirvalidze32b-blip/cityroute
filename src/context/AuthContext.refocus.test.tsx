@@ -4,7 +4,7 @@
  * background profile fetch fails, and SIGNED_OUT / a different user must still be handled.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, act, screen } from '@testing-library/react'
+import { render, act, screen, waitFor } from '@testing-library/react'
 import { AuthProvider, useAuth } from './AuthContext'
 
 type Cb = (event: string, session: unknown) => void
@@ -119,5 +119,24 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByText('loading')).toBeTruthy()
     await tick(); await tick(); await tick()
     expect(screen.getByTestId('s').textContent).toBe('access:u2')
+  })
+
+  it('revokes trial access when the 12-hour window expires without a profile refetch', async () => {
+    h.profileFetch = async () => ({
+      data: {
+        ...profile('u1'),
+        subscription_status: 'trial',
+        subscription_plan: 'premium',
+        subscription_expires_at: new Date(Date.now() + 120).toISOString(),
+      },
+      error: null,
+    })
+    render(<AuthProvider><Gate /></AuthProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('access:u1'))
+    await waitFor(
+      () => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'),
+      { timeout: 1000 },
+    )
   })
 })

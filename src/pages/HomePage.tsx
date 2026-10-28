@@ -10,12 +10,11 @@ import { useExamLayoutMode } from '@/hooks/useExamLayoutMode'
 import { useRoutes } from '@/hooks/useRoutes'
 import { planName } from '@/data/subscription-plans'
 import { selectableRoutes } from '@/data/selectable-routes'
-import { PREVIEW_TEST_ROUTE_ENABLED } from '@/lib/debug-flags'
 
 export function HomePage() {
   const { profile, hasAccess, deviceBlocked, signOut } = useAuth()
   const { routes, source } = useRoutes()
-  const visibleRoutes = selectableRoutes(routes, PREVIEW_TEST_ROUTE_ENABLED)
+  const visibleRoutes = selectableRoutes(routes)
   const layoutMode = useExamLayoutMode()
   const onTrial = profile?.subscription_status === 'trial' && hasAccess
 
@@ -69,6 +68,15 @@ export function HomePage() {
 
       <footer className="home-footer">
         {onTrial && profile && <p className="home-trial">{accessLabel(profile)}</p>}
+        {onTrial && (
+          <Link
+            to="/choose-plan?earlyPayment=1"
+            className="home-early-payment"
+            data-testid="home-early-payment"
+          >
+            Premium-ის შეძენა ვადის ამოწურვამდე
+          </Link>
+        )}
         <p className="muted home-meta">
           {!onTrial && profile && accessLabel(profile)}
           {!onTrial && profile && ' · '}

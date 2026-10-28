@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import L from 'leaflet'
 import { RoutePreviewMap } from './RoutePreviewMap'
@@ -16,15 +16,19 @@ vi.mock('react-leaflet', () => ({
     center,
     pathOptions,
     children,
+    eventHandlers,
   }: {
     center: [number, number]
     pathOptions?: { fillColor?: string }
     children?: ReactNode
+    eventHandlers?: { click?: () => void }
   }) => (
     <div
       data-testid="route-marker"
       data-position={center.join(',')}
       data-fill={pathOptions?.fillColor}
+      data-selected={pathOptions?.fillColor === '#facc15'}
+      onClick={() => eventHandlers?.click?.()}
     >
       {children}
     </div>
@@ -102,5 +106,23 @@ describe('RoutePreviewMap for routes 1–4', () => {
     for (const point of [...linePoints, ...pins.map((pin) => [pin.lat, pin.lng] as [number, number])]) {
       expect(bounds.contains(L.latLng(point))).toBe(true)
     }
+  })
+
+  it('highlights a selected PIN and reports map selection', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
+    const onPinSelect = vi.fn()
+
+    render(
+      <RoutePreviewMap
+        route={route}
+        selectedPinOrder={2}
+        onPinSelect={onPinSelect}
+      />,
+    )
+
+    const markers = screen.getAllByTestId('route-marker')
+    expect(markers[1].dataset.selected).toBe('true')
+    fireEvent.click(markers[2])
+    expect(onPinSelect).toHaveBeenCalledWith(3)
   })
 })

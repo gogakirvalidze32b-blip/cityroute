@@ -43,15 +43,6 @@ WHERE r.slug LIKE 'route-%'
 ORDER BY r.slug;
 
 
--- ===== 4. Update other routes (if needed) =====
-/*
--- If you have test routes:
-UPDATE public.routes
-SET license_category = 'B'
-WHERE slug = 'test-route-tbilisi';
-*/
-
-
 -- ===== Future: Filter routes by category =====
 /*
 -- Get only B category routes

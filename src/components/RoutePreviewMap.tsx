@@ -13,6 +13,8 @@ import type { RouteWithPins } from '@/types/database'
 
 type Props = {
   route: RouteWithPins
+  selectedPinOrder?: number | null
+  onPinSelect?: (sortOrder: number) => void
 }
 
 function MapSizeFix() {
@@ -62,20 +64,25 @@ function FitRoutePreview({ positions }: { positions: LatLng[] }) {
 function RoutePin({
   position,
   order,
+  selected,
+  onSelect,
 }: {
   position: LatLng
   order: number
+  selected: boolean
+  onSelect?: (sortOrder: number) => void
 }) {
   return (
     <CircleMarker
       center={position}
-      radius={6}
+      radius={selected ? 8 : 6}
       pathOptions={{
-        color: '#ffffff',
-        fillColor: '#1d4ed8',
+        color: selected ? '#0f172a' : '#ffffff',
+        fillColor: selected ? '#facc15' : '#1d4ed8',
         fillOpacity: 1,
-        weight: 2,
+        weight: selected ? 3 : 2,
       }}
+      eventHandlers={onSelect ? { click: () => onSelect(order) } : undefined}
     >
       <Tooltip permanent direction="top" offset={[0, -5]} className="route-pin-tip">
         {order}
@@ -108,7 +115,15 @@ function OfficialRoutePreviewImage({ map }: { map: NonNullable<ReturnType<typeof
   return <OfficialRoutePreviewZoom map={map} />
 }
 
-function InteractiveRoutePreviewMap({ route }: { route: RouteWithPins }) {
+function InteractiveRoutePreviewMap({
+  route,
+  selectedPinOrder,
+  onPinSelect,
+}: {
+  route: RouteWithPins
+  selectedPinOrder?: number | null
+  onPinSelect?: (sortOrder: number) => void
+}) {
   const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
   const line = examRouteLine(route.slug, pins)
   const startPin = pins[0]
@@ -151,7 +166,13 @@ function InteractiveRoutePreviewMap({ route }: { route: RouteWithPins }) {
         <MapBasemapLayers tiles={MAP_TILES} detectRetina />
         <RoutePolyline positions={line} variant="pins" />
         {pins.map((pin) => (
-          <RoutePin key={pin.id} position={[pin.lat, pin.lng]} order={pin.sort_order} />
+          <RoutePin
+            key={pin.id}
+            position={[pin.lat, pin.lng]}
+            order={pin.sort_order}
+            selected={pin.sort_order === selectedPinOrder}
+            onSelect={onPinSelect}
+          />
         ))}
         <RouteEndpoint position={start} kind="start" />
         <RouteEndpoint position={finish} kind="finish" />
@@ -173,10 +194,16 @@ function InteractiveRoutePreviewMap({ route }: { route: RouteWithPins }) {
   )
 }
 
-export function RoutePreviewMap({ route }: Props) {
+export function RoutePreviewMap({ route, selectedPinOrder, onPinSelect }: Props) {
   const officialMap = route.slug === 'route-5' ? getRouteOfficialPreviewMap(route.slug) : null
   if (officialMap) {
     return <OfficialRoutePreviewImage map={officialMap} />
   }
-  return <InteractiveRoutePreviewMap route={route} />
+  return (
+    <InteractiveRoutePreviewMap
+      route={route}
+      selectedPinOrder={selectedPinOrder}
+      onPinSelect={onPinSelect}
+    />
+  )
 }

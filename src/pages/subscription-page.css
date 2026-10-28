@@ -156,6 +156,24 @@
 .subscription-disclaimer { margin: 12px 0 0; color: #858a94; text-align: center; font-size: 10px; line-height: 1.6; }
 .subscription-bottom-links { padding-bottom: 20px; text-align: center; }
 .subscription-page--center { display: grid; min-height: 100vh; place-items: center; }
+.subscription-early-payment-note {
+  margin: 12px 0 0;
+  color: #b6cbd4;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.subscription-signout {
+  display: block;
+  margin: 12px auto 0;
+  padding: 8px 12px;
+  color: #b6cbd4;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 @media (max-width: 760px) {
   .subscription-layout { width: min(520px, calc(100% - 28px)); margin: 24px auto 34px; grid-template-columns: 1fr; gap: 23px; }

@@ -10,7 +10,6 @@ import { hasSavedExamForSlug } from '@/lib/exam-persistence'
 
 import { useRoutes } from '@/hooks/useRoutes'
 import { selectableRoutes } from '@/data/selectable-routes'
-import { PREVIEW_TEST_ROUTE_ENABLED } from '@/lib/debug-flags'
 
 type NavPhase = 'preview' | 'active' | 'summary'
 
@@ -47,7 +46,7 @@ export function RoutePage() {
   const { hasAccess, deviceBlocked } = useAuth()
   const { routes } = useRoutes()
   const route = useMemo(
-    () => selectableRoutes(routes, PREVIEW_TEST_ROUTE_ENABLED).find((r) => r.slug === slug),
+    () => selectableRoutes(routes).find((r) => r.slug === slug),
     [routes, slug],
   )
   const routeName = route?.name_ka

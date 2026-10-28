@@ -20,7 +20,7 @@ describe('resolvePinAudioUrl (original WAV path for every route)', () => {
   const decodeAudioPath = (url: string) => decodeURIComponent(url)
 
   it('exact instruction→WAV map wins over a stale/wrong pin.audio_url', () => {
-    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4', 'test-route-tbilisi']) {
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4']) {
       const url = resolvePinAudioUrl(
         slug,
         pin('გთხოვთ, მოუხვიოთ მარჯვნივ', '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav'),

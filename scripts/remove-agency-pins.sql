@@ -22,5 +22,3 @@ WHERE route_id = (SELECT id FROM public.routes WHERE slug = 'route-1');
 SELECT id, instruction_ka, lat, lng FROM public.pins 
 WHERE route_id = (SELECT id FROM public.routes WHERE slug = 'route-1')
 ORDER BY lat DESC;
-
--- ✅ უნდა დარჩეს მხოლოდ 2 თბილისის test pin (lat=41.691852)

@@ -10,17 +10,24 @@ import { MemoryRouter } from 'react-router-dom'
 import { HomePage } from './HomePage'
 import { detectExamLayoutMode } from '@/hooks/useExamLayoutMode'
 
+const homeState = vi.hoisted(() => ({
+  profile: {
+    subscription_status: 'active',
+    subscription_plan: 'car_1',
+    device_slots: 1,
+  } as {
+    subscription_status: string
+    subscription_plan: string | null
+    subscription_expires_at?: string
+    device_slots: number
+  },
+  hasAccess: true,
+  deviceBlocked: null as string | null,
+  signOut: vi.fn(),
+}))
+
 vi.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({
-    profile: {
-      subscription_status: 'active',
-      subscription_plan: 'car_1',
-      device_slots: 1,
-    },
-    hasAccess: true,
-    deviceBlocked: null,
-    signOut: vi.fn(),
-  }),
+  useAuth: () => homeState,
 }))
 
 vi.mock('@/hooks/useRoutes', () => ({
@@ -32,7 +39,6 @@ vi.mock('@/hooks/useRoutes', () => ({
       { id: '3', slug: 'route-3', name_ka: 'მარშრუტი 3', license_category: 'B', official_label: null },
       { id: '4', slug: 'route-4', name_ka: 'მარშრუტი 4', license_category: 'B', official_label: null },
       { id: '5', slug: 'route-5', name_ka: 'C/D კატეგორია', license_category: 'C,D', official_label: null },
-      { id: 'tbilisi', slug: 'test-route-tbilisi', name_ka: 'თბილისი ტესტი', license_category: null, official_label: null },
     ],
   }),
 }))
@@ -64,6 +70,13 @@ function renderHome() {
 describe('HomePage outer menu fit (Android landscape)', () => {
   beforeEach(() => {
     cleanup()
+    homeState.profile = {
+      subscription_status: 'active',
+      subscription_plan: 'car_1',
+      device_slots: 1,
+    }
+    homeState.hasAccess = true
+    homeState.deviceBlocked = null
   })
   afterEach(() => {
     cleanup()
@@ -92,7 +105,6 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(screen.getByTestId('home-route-card-route-4')).toBeTruthy()
     expect(screen.queryAllByTestId(/^home-route-card-/)).toHaveLength(4)
     expect(screen.queryByText('C/D კატეგორია')).toBeNull()
-    expect(screen.queryByText('თბილისი ტესტი')).toBeNull()
     expect(screen.getByRole('button', { name: 'გასვლა' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'მხარდაჭერა' })).toBeTruthy()
   })
@@ -102,6 +114,20 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(detectExamLayoutMode()).toBe('laptop')
     renderHome()
     expect(document.querySelector('.home-page--laptop')).toBeTruthy()
+  })
+
+  it('offers active trial users a path to pay before their trial expires', () => {
+    homeState.profile = {
+      subscription_status: 'trial',
+      subscription_plan: 'premium',
+      subscription_expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+      device_slots: 1,
+    }
+    renderHome()
+
+    expect(screen.getByTestId('home-early-payment').getAttribute('href')).toBe(
+      '/choose-plan?earlyPayment=1',
+    )
   })
 
   it('marks typical car monitors with a non-laptop layout class', () => {

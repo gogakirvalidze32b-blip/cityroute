@@ -314,6 +314,22 @@ button:disabled {
   text-align: center;
 }
 
+.home-early-payment {
+  padding: 0.55rem 1rem;
+  border: 1px solid #2dd4bf;
+  border-radius: 999px;
+  color: #5eead4;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.home-early-payment:focus-visible {
+  outline: 2px solid #5eead4;
+  outline-offset: 3px;
+}
+
 .home-meta {
   margin: 0;
   font-size: 0.8rem;
@@ -2409,6 +2425,50 @@ button:disabled {
   flex-direction: column;
   gap: 0.5rem;
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.exam-preview__pin-picker {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #dbe3ee;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.exam-preview__pin-picker label {
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.exam-preview__pin-picker select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #0f172a;
+  background: #fff;
+  font: inherit;
+}
+
+.exam-preview__pin-picker select:focus-visible {
+  outline: 3px solid rgba(29, 78, 216, 0.3);
+  outline-offset: 2px;
+}
+
+.exam-preview__pin-picker p {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0.1rem 0 0;
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.exam-preview__pin-picker p strong {
+  color: #1e3a8a;
 }
 
 .session-hint {

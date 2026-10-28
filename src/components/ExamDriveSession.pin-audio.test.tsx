@@ -239,7 +239,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(played()).toEqual(['pin-1'])
   })
 
-  it('route 2 does not skip a pin when GPS jumps ahead (Tbilisi sequential rule)', async () => {
+  it('route 2 does not skip a pin when GPS jumps ahead', async () => {
     await emit(150) // approached PIN 1 (50 m)
     await emit(392) // 8 m from PIN 2 while PIN 1 is still next
     expect(played()).toEqual([])
