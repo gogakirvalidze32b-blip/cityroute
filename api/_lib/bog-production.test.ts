@@ -98,6 +98,43 @@ describe('BOG Production payment API', () => {
     }))
   })
 
+  it('calculates 99 GEL on the server for one device and ignores a client-supplied amount', async () => {
+    const createOrder = vi.fn(async (input: { amount: number; deviceSlots: number }) => {
+      expect(input.amount).toBe(99)
+      expect(input.deviceSlots).toBe(1)
+      return { paymentId: 'bog-order-1', paymentUrl: 'https://payment.bog.ge/order/1' }
+    })
+    const insertTransaction = vi.fn(async () => {})
+    const response = await handleBogInitialize(request('https://cityroute.ge/api/payments/bog/initialize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'bog',
+        deviceSlots: 1,
+        requestId: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        amount: 179,
+      }),
+    }), {
+      environment,
+      authenticateUser: async () => ({ id: 'user-1' }),
+      createOrder,
+      insertTransaction,
+      getTransactionById: async () => null,
+      getTransactionByMerchantId: async () => null,
+      getOrderDetails: async () => successfulOrder,
+      updatePaymentStatus: async () => {},
+      verifyCallbackSignature: async () => true,
+    })
+
+    expect(response.status, await response.clone().text()).toBe(200)
+    expect(await response.json()).toMatchObject({ success: true, amount: 99 })
+    expect(insertTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      amount: 99,
+      currency: 'GEL',
+      metadata: { provider: 'bog', device_slots: 1 },
+    }))
+  })
+
   it('does not initialize Live payments outside Vercel Production', async () => {
     const authenticateUser = vi.fn()
     const response = await handleBogInitialize(request('https://preview.cityroute.ge/api/payments/bog/initialize', {

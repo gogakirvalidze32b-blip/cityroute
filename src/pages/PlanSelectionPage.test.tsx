@@ -48,7 +48,7 @@ describe('Premium package selection', () => {
     }
   })
 
-  it('saves the selected device slots and preserves the 12-hour trial path', async () => {
+  it('preserves selected package pricing and the 12-hour trial path', async () => {
     render(
       <MemoryRouter initialEntries={['/plans']}>
         <Routes>
@@ -61,7 +61,7 @@ describe('Premium package selection', () => {
     fireEvent.click(screen.getByRole('radio', { name: /2 მანქანა/ }))
     expect(screen.getAllByText(/179/).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByRole('button', { name: /უფასო/ }))
-    await waitFor(() => expect(state.selectPlan).toHaveBeenCalledWith('premium', 2))
+    await waitFor(() => expect(state.selectPlan).toHaveBeenCalledWith('premium'))
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeTruthy()
   })
 

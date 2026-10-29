@@ -126,7 +126,7 @@ type AuthState = {
 
   refreshProfile: () => Promise<void>
 
-  selectPlan: (plan: SubscriptionPlan, deviceSlots: 1 | 2) => Promise<string | null>
+  selectPlan: (plan: SubscriptionPlan) => Promise<string | null>
 
   signUp: (email: string, password: string, fullName: string) => Promise<string | null>
 
@@ -158,7 +158,7 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
 
 async function bindDevice(): Promise<string | null> {
 
-  if (import.meta.env.DEV) return null
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
 
   try {
 
@@ -170,19 +170,16 @@ async function bindDevice(): Promise<string | null> {
 
       supabase.rpc('bind_device', { fp }),
 
-      new Promise<{ data: null; error: { message: string } }>((resolve) =>
-
-        setTimeout(() => resolve({ data: null, error: { message: 'timeout' } }), 3000)
-
-      ),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('timeout')), 3000)
+      }),
 
     ])
 
     if (error) {
 
-      if (error.message === 'timeout') return null // Timeout არ უნდა აბლოკოს login-ს
-
-      return error.message
+      console.error('bind_device RPC failed:', error)
+      return 'მოწყობილობის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.'
 
     }
 
@@ -196,7 +193,11 @@ async function bindDevice(): Promise<string | null> {
 
     console.error('bindDevice error:', err)
 
-    return null // არ უნდა აბლოკოს login-ს
+    return 'მოწყობილობის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.'
+
+  } finally {
+
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
 
   }
 
@@ -207,7 +208,6 @@ async function bindDevice(): Promise<string | null> {
 async function persistPlan(
   userId: string,
   plan: SubscriptionPlan,
-  deviceSlots: 1 | 2,
 ): Promise<string | null> {
 
   writeLocalPlan(userId, plan)
@@ -218,31 +218,7 @@ async function persistPlan(
 
   const { error: rpcError } = await supabase.rpc('select_subscription_plan', { chosen: plan })
 
-  const { error: updateError } = await supabase
-
-    .from('profiles')
-
-    .update(rpcError
-      ? { subscription_plan: plan, device_slots: deviceSlots }
-      : { device_slots: deviceSlots })
-
-    .eq('id', userId)
-
-
-
-  if (updateError) {
-
-    if (updateError.message.includes('subscription_plan')) {
-
-      return null
-
-    }
-
-    return updateError.message
-
-  }
-
-
+  if (rpcError) return rpcError.message
 
   return null
 
@@ -261,6 +237,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileReady, setProfileReady] = useState(false)
 
   const [deviceBlocked, setDeviceBlocked] = useState<string | null>(null)
+
+  const [deviceBinding, setDeviceBinding] = useState(false)
 
   const [trialExpired, setTrialExpired] = useState(false)
 
@@ -289,6 +267,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loadProfile = useCallback(async (userId: string, silent = false) => {
 
+    setDeviceBinding(true)
+
     try {
 
       const p = await fetchProfile(userId)
@@ -301,11 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (p && isAccessActive(p)) {
 
-        void bindDevice()
-
-          .then((blockMsg) => setDeviceBlocked(blockMsg))
-
-          .catch((e) => console.error(e))
+        setDeviceBlocked(await bindDevice())
 
       }
 
@@ -326,6 +302,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     } finally {
 
+      setDeviceBinding(false)
+
       setProfileReady(true)
 
     }
@@ -341,6 +319,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(null)
 
       setDeviceBlocked(null)
+
+      setDeviceBinding(false)
 
       setProfileReady(true)
 
@@ -480,6 +460,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setDeviceBlocked(null)
 
+        setDeviceBinding(false)
+
         setProfileReady(true)
 
       }
@@ -511,6 +493,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null)
 
     setDeviceBlocked(null)
+
+    setDeviceBinding(false)
 
     setProfileReady(true)
 
@@ -566,16 +550,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const selectPlan = useCallback(
 
-    async (plan: SubscriptionPlan, deviceSlots: 1 | 2) => {
+    async (plan: SubscriptionPlan) => {
 
       if (!session?.user) return 'ჯერ შედი ანგარიშში'
 
-      const err = await persistPlan(session.user.id, plan, deviceSlots)
+      const err = await persistPlan(session.user.id, plan)
 
       if (err) return err
 
       setProfile((prev) => (prev
-        ? { ...prev, subscription_plan: plan, device_slots: deviceSlots }
+        ? { ...prev, subscription_plan: plan }
         : prev))
 
       await refreshProfile()
@@ -592,7 +576,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const appReady = !loading && profileReady
 
-  const hasAccess = isAccessActive(profile) && !deviceBlocked && !trialExpired
+  const hasAccess = isAccessActive(profile) && !deviceBinding && !deviceBlocked && !trialExpired
 
   const needsPlanSelection = Boolean(profile && hasAccess && profileNeedsPlan(profile))
 

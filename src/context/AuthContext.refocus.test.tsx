@@ -11,11 +11,21 @@ type Cb = (event: string, session: unknown) => void
 const h = vi.hoisted(() => ({
   cb: null as null | ((event: string, session: unknown) => void),
   profileFetch: null as null | (() => Promise<{ data: unknown; error: unknown }>),
+  bindResponse: null as unknown,
+  bindError: null as unknown,
 }))
 
 vi.mock('@/lib/device', () => ({
   getDeviceFingerprint: () => 'fp',
-  parseDeviceBindResult: () => ({ status: 'ok' }),
+  parseDeviceBindResult: (data: { status?: string; message?: string } | null) => {
+    if (data?.status === 'blocked') {
+      return { status: 'blocked', message: data.message ?? 'მოწყობილობა დაბლოკილია' }
+    }
+    if (data?.status === 'ok' || data?.status === 'bound') {
+      return { status: data.status }
+    }
+    throw new Error('Invalid bind_device response')
+  },
 }))
 vi.mock('@/lib/supabase', () => ({
   isSupabaseConfigured: true,
@@ -28,7 +38,7 @@ vi.mock('@/lib/supabase', () => ({
       },
     },
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => h.profileFetch!() }) }) }),
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async () => ({ data: h.bindResponse, error: h.bindError }),
   }),
 }))
 
@@ -63,7 +73,14 @@ function Gate() {
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 20)) })
 
 describe('AuthContext – tab refocus', () => {
-  beforeEach(() => { seen.length = 0; mounts = 0; unmounts = 0; h.cb = null })
+  beforeEach(() => {
+    seen.length = 0
+    mounts = 0
+    unmounts = 0
+    h.cb = null
+    h.bindResponse = { status: 'ok' }
+    h.bindError = null
+  })
 
   it('SIGNED_IN for the same user does NOT unmount the app subtree', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
@@ -138,5 +155,31 @@ describe('AuthContext – tab refocus', () => {
       () => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'),
       { timeout: 1000 },
     )
+  })
+
+  it('denies access when bind_device returns blocked', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.bindResponse = { status: 'blocked', message: 'device limit reached' }
+    render(<AuthProvider><Gate /></AuthProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'))
+  })
+
+  it('denies access when bind_device returns an RPC error', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.bindError = { message: 'network unavailable' }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'))
+  })
+
+  it('denies access when bind_device returns an unexpected response', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.bindResponse = { status: 'unknown' }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'))
   })
 })

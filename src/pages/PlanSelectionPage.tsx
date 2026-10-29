@@ -39,7 +39,7 @@ export function PlanSelectionPage() {
     setSubmitting(true)
     setError(null)
     try {
-      const selectError = await selectPlan('premium', deviceSlots)
+      const selectError = await selectPlan('premium')
       if (selectError) {
         setError(selectError)
         return

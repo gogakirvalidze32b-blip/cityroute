@@ -28,13 +28,28 @@ export function getDeviceFingerprint(): string {
 }
 
 export type DeviceBindResult =
-  | { status: 'bound' | 'ok'; fingerprint: string }
+  | { status: 'bound' | 'ok'; fingerprint?: string }
   | { status: 'blocked'; message: string }
 
 export function parseDeviceBindResult(data: unknown): DeviceBindResult {
-  const obj = data as Record<string, string>
-  if (obj.status === 'blocked') {
-    return { status: 'blocked', message: obj.message ?? 'მოწყობილობა დაბლოკილია' }
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error('Invalid bind_device response')
   }
-  return { status: (obj.status as 'bound' | 'ok') ?? 'ok', fingerprint: obj.fingerprint }
+
+  const status = 'status' in data ? data.status : undefined
+  if (status === 'blocked') {
+    const message = 'message' in data && typeof data.message === 'string'
+      ? data.message
+      : 'მოწყობილობა დაბლოკილია'
+    return { status, message }
+  }
+
+  if (status === 'bound' || status === 'ok') {
+    const fingerprint = 'fingerprint' in data && typeof data.fingerprint === 'string'
+      ? data.fingerprint
+      : undefined
+    return { status, fingerprint }
+  }
+
+  throw new Error('Invalid bind_device response status')
 }
