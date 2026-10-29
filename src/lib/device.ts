@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'cityroute_device_fp'
+let cachedFingerprint: string | null = null
 
 function randomId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -8,23 +9,31 @@ function randomId() {
 }
 
 export function getDeviceFingerprint(): string {
+  if (cachedFingerprint) return cachedFingerprint
+
+  let fp: string | null
   try {
-    let fp = localStorage.getItem(STORAGE_KEY)
-    if (!fp) {
-      fp = randomId()
-      try {
-        localStorage.setItem(STORAGE_KEY, fp)
-      } catch (storageError) {
-        // თუ localStorage არ მუშაობს (private mode და სხვა), მაინც დავაბრუნოთ fp
-        console.warn('Could not save fingerprint to localStorage:', storageError)
-      }
-    }
-    return fp
+    fp = localStorage.getItem(STORAGE_KEY)
   } catch (err) {
-    // თუ localStorage საერთოდ არ არის ხელმისაწვდომი
-    console.warn('localStorage not accessible, generating temp fingerprint:', err)
-    return randomId()
+    console.warn('localStorage not accessible, using an in-memory fingerprint:', err)
+    cachedFingerprint = randomId()
+    return cachedFingerprint
   }
+
+  if (fp) {
+    cachedFingerprint = fp
+    return cachedFingerprint
+  }
+
+  fp = randomId()
+  try {
+    localStorage.setItem(STORAGE_KEY, fp)
+  } catch (storageError) {
+    console.warn('Could not save fingerprint to localStorage:', storageError)
+  }
+
+  cachedFingerprint = fp
+  return cachedFingerprint
 }
 
 export type DeviceBindResult =

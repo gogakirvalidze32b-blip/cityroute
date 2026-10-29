@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   profileFetch: null as null | (() => Promise<{ data: unknown; error: unknown }>),
   bindResponse: null as unknown,
   bindError: null as unknown,
+  rpcCalls: [] as string[],
 }))
 
 vi.mock('@/lib/device', () => ({
@@ -38,7 +39,10 @@ vi.mock('@/lib/supabase', () => ({
       },
     },
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => h.profileFetch!() }) }) }),
-    rpc: async () => ({ data: h.bindResponse, error: h.bindError }),
+    rpc: async (name: string) => {
+      h.rpcCalls.push(name)
+      return { data: h.bindResponse, error: h.bindError }
+    },
   }),
 }))
 
@@ -57,6 +61,14 @@ function Probe() {
   const { loading, hasAccess, user } = useAuth()
   seen.push(loading)
   return <div data-testid="s">{loading ? 'loading' : hasAccess ? 'access' : 'noaccess'}:{user?.id ?? 'none'}</div>
+}
+function EntitlementProbe() {
+  const { profile, hasAccess } = useAuth()
+  return (
+    <div data-testid="entitlement">
+      {profile?.subscription_status}:{profile?.subscription_expires_at}:{hasAccess ? 'access' : 'denied'}
+    </div>
+  )
 }
 function Child() {
   useEffect(() => {
@@ -80,6 +92,7 @@ describe('AuthContext – tab refocus', () => {
     h.cb = null
     h.bindResponse = { status: 'ok' }
     h.bindError = null
+    h.rpcCalls.length = 0
   })
 
   it('SIGNED_IN for the same user does NOT unmount the app subtree', async () => {
@@ -166,12 +179,18 @@ describe('AuthContext – tab refocus', () => {
   })
 
   it('denies access when bind_device returns an RPC error', async () => {
-    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    const expiresAt = '2027-01-01T00:00:00.000Z'
+    h.profileFetch = async () => ({
+      data: { ...profile('u1'), subscription_expires_at: expiresAt },
+      error: null,
+    })
     h.bindError = { message: 'network unavailable' }
     vi.spyOn(console, 'error').mockImplementation(() => {})
-    render(<AuthProvider><Gate /></AuthProvider>)
+    render(<AuthProvider><Gate /><EntitlementProbe /></AuthProvider>)
 
     await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'))
+    expect(screen.getByTestId('entitlement').textContent).toBe(`active:${expiresAt}:denied`)
+    expect(h.rpcCalls).toEqual(['bind_device'])
   })
 
   it('denies access when bind_device returns an unexpected response', async () => {
