@@ -1,11 +1,12 @@
 /**
- * Outer home menu must keep every route button available on short Android landscape viewports.
+ * The automatic home menu stays compact; manual route selection remains usable on
+ * short Android landscape viewports.
  * (happy-dom has no real layout engine, so we assert structure + CSS rules rather than pixels.)
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { HomePage } from './HomePage'
 import { detectExamLayoutMode } from '@/hooks/useExamLayoutMode'
@@ -94,9 +95,15 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     [390, 844],
     [390, 700],
     [1440, 900],
-  ])('renders every route button and footer actions for %i×%i', (width, height) => {
+  ])('keeps automatic start and manual route selection available for %i×%i', (width, height) => {
     setViewport(width, height)
     renderHome()
+
+    expect(screen.queryByTestId('home-route-list')).toBeNull()
+    expect(screen.getByRole('button', { name: 'გამოცდის დაწყება' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }))
 
     expect(screen.getByTestId('home-route-list')).toBeTruthy()
     expect(screen.getByTestId('home-route-card-route-1')).toBeTruthy()
@@ -105,6 +112,7 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(screen.getByTestId('home-route-card-route-4')).toBeTruthy()
     expect(screen.queryAllByTestId(/^home-route-card-/)).toHaveLength(4)
     expect(screen.queryByText('C/D კატეგორია')).toBeNull()
+    expect(screen.getByRole('button', { name: 'გამოცდის დაწყება' }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByRole('button', { name: 'გასვლა' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'მხარდაჭერა' })).toBeTruthy()
   })
