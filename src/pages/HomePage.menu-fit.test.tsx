@@ -95,15 +95,9 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     [390, 844],
     [390, 700],
     [1440, 900],
-  ])('keeps automatic start and manual route selection available for %i×%i', (width, height) => {
+  ])('keeps the four route choices and footer actions available for %i×%i', (width, height) => {
     setViewport(width, height)
     renderHome()
-
-    expect(screen.queryByTestId('home-route-list')).toBeNull()
-    expect(screen.getByRole('button', { name: 'გამოცდის დაწყება' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' }).getAttribute('aria-pressed')).toBe('true')
-
-    fireEvent.click(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }))
 
     expect(screen.getByTestId('home-route-list')).toBeTruthy()
     expect(screen.getByTestId('home-route-card-route-1')).toBeTruthy()
@@ -112,7 +106,8 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(screen.getByTestId('home-route-card-route-4')).toBeTruthy()
     expect(screen.queryAllByTestId(/^home-route-card-/)).toHaveLength(4)
     expect(screen.queryByText('C/D კატეგორია')).toBeNull()
-    expect(screen.getByRole('button', { name: 'გამოცდის დაწყება' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'PIN-ის არჩევა ხელით' })).toBeNull()
     expect(screen.getByRole('button', { name: 'გასვლა' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'მხარდაჭერა' })).toBeTruthy()
   })

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { HomePage } from './HomePage'
-import { hasSavedExamForSlug } from '@/lib/exam-persistence'
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
@@ -28,10 +27,6 @@ vi.mock('@/hooks/useRoutes', () => ({
       { id: '5', slug: 'route-5', name_ka: 'მარშრუტი 5', license_category: 'B', official_label: null },
     ],
   }),
-}))
-
-vi.mock('@/lib/exam-persistence', () => ({
-  hasSavedExamForSlug: vi.fn(() => false),
 }))
 
 vi.mock('@/components/support/SupportLinks', () => ({
@@ -62,56 +57,28 @@ function renderHome() {
   )
 }
 
-afterEach(() => {
-  cleanup()
-  vi.mocked(hasSavedExamForSlug).mockReset()
-  vi.mocked(hasSavedExamForSlug).mockReturnValue(false)
-})
+afterEach(cleanup)
 
-describe('HomePage exam start', () => {
-  it('starts route 1 by default and keeps the route list hidden', () => {
+describe('HomePage route selection', () => {
+  it('shows only the four selectable routes without PIN-mode controls', () => {
     renderHome()
 
-    expect(screen.queryByTestId('home-route-list')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'გამოცდის დაწყება' }))
-
-    expect(screen.getByTestId('current-path').textContent).toBe('/route/route-1')
-  })
-
-  it('resumes the saved route after a fresh automatic-mode mount', () => {
-    vi.mocked(hasSavedExamForSlug).mockImplementation((slug) => slug === 'route-3')
-    renderHome()
-
-    fireEvent.click(screen.getByRole('button', { name: 'გამოცდის დაწყება' }))
-
-    expect(screen.getByTestId('current-path').textContent).toBe('/route/route-3')
-  })
-
-  it('switches modes in place and requires a manual route before starting', () => {
-    renderHome()
-
-    fireEvent.click(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }))
-
-    expect(screen.getByTestId('current-path').textContent).toBe('/')
     expect(screen.getByTestId('home-route-list')).toBeTruthy()
+    expect(screen.queryAllByTestId(/^home-route-card-/)).toHaveLength(4)
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4']) {
+      expect(screen.getByTestId(`home-route-card-${slug}`).getAttribute('href')).toBe(`/route/${slug}`)
+    }
     expect(screen.queryByTestId('home-route-card-route-5')).toBeNull()
-    expect(screen.getByRole('button', { name: 'გამოცდის დაწყება' }).hasAttribute('disabled')).toBe(true)
-
-    fireEvent.click(screen.getByTestId('home-route-card-route-2'))
-    expect(screen.getByRole('button', { name: 'გამოცდის დაწყება' }).hasAttribute('disabled')).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: 'გამოცდის დაწყება' }))
-
-    expect(screen.getByTestId('current-path').textContent).toBe('/route/route-2')
+    expect(screen.queryByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'PIN-ის არჩევა ხელით' })).toBeNull()
   })
 
-  it('starts the manually chosen route so its existing saved PIN progress can resume', () => {
-    vi.mocked(hasSavedExamForSlug).mockImplementation((slug) => slug === 'route-2')
+  it('opens the selected route so its exam-start screen can choose the PIN mode', () => {
     renderHome()
-    fireEvent.click(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }))
+
     fireEvent.click(screen.getByTestId('home-route-card-route-2'))
-    fireEvent.click(screen.getByRole('button', { name: 'გამოცდის დაწყება' }))
 
     expect(screen.getByTestId('current-path').textContent).toBe('/route/route-2')
-    expect(hasSavedExamForSlug).toHaveBeenCalledWith('route-2', 'მარშრუტი 2')
+    expect(screen.getByTestId('exam-route')).toBeTruthy()
   })
 })

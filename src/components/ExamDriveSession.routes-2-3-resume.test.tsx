@@ -162,6 +162,9 @@ async function pressStart() {
   })
   await settle()
 }
+async function chooseManualPinMode() {
+  await userEvent.setup().click(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }))
+}
 async function sendFix(pos: GpsPosition) {
   expect(gps.onFix).not.toBeNull()
   await act(async () => {
@@ -261,6 +264,33 @@ describe('Telavi field-test routes keep strict progress and resume on production
     }
   })
 
+  it('shows automatic and manual PIN choices above the start button and defaults to automatic', () => {
+    const route = routeBySlug('route-1')
+    render(<ExamDriveSession route={route} />)
+
+    const controls = screen.getByTestId('exam-pin-selection-controls')
+    const startButton = screen.getByRole('button', { name: '▶ გამოცდის დაწყება' })
+    expect(controls.compareDocumentPosition(startButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.queryByRole('combobox', { name: 'PIN-ების არჩევა' })).toBeNull()
+  })
+
+  it('discards a manual PIN choice when switching back to automatic mode', async () => {
+    const route = routeBySlug('route-1')
+    gps.once = fix(route, 1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+
+    await chooseManualPinMode()
+    await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }), '4')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' }))
+    expect(screen.queryByRole('combobox', { name: 'PIN-ების არჩევა' })).toBeNull()
+    await pressStart()
+
+    expect(nextOrder()).toBe(1)
+  })
+
   it('starts and resumes from a manually selected PIN while marking earlier PINs complete', async () => {
     const route = routeBySlug('route-2')
     saveRoutePinProgress(route.slug, [1, 2])
@@ -268,6 +298,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     const first = render(<ExamDriveSession route={route} />)
     await settle()
 
+    await chooseManualPinMode()
     const pinPicker = screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }) as HTMLSelectElement
     expect(pinPicker.value).toBe('3')
     expect(screen.getByTestId('preview').getAttribute('data-selected-order')).toBe('3')
@@ -295,6 +326,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     gps.once = fix(route, 1)
     const first = render(<ExamDriveSession route={route} />)
     await settle()
+    await chooseManualPinMode()
     await userEvent.setup().selectOptions(
       screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }),
       '8',
@@ -335,6 +367,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
       gps.once = fix(route, order)
       const first = render(<ExamDriveSession route={route} />)
       await settle()
+      await chooseManualPinMode()
       await userEvent.setup().selectOptions(
         screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }),
         String(order),
@@ -370,6 +403,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     gps.once = fix(route, 1)
     render(<ExamDriveSession route={route} />)
     await settle()
+    await chooseManualPinMode()
 
     const pinPicker = screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }) as HTMLSelectElement
     expect(pinPicker.value).toBe('3')

@@ -188,6 +188,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     [route.id, route.slug, route.name_ka, savedEpoch],
   )
   const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
+  const [previewSelectionMode, setPreviewSelectionMode] = useState<'automatic' | 'manual'>('automatic')
   const [previewPinSelection, setPreviewPinSelection] = useState<{
     routeId: string
     sortOrder: number
@@ -1148,7 +1149,9 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
     if (gpsResult.denied) return
     const selectedSortOrder =
-      previewPinSelection?.routeId === route.id ? previewPin?.sort_order ?? 1 : 1
+      previewSelectionMode === 'manual' && previewPinSelection?.routeId === route.id
+        ? previewPin?.sort_order ?? 1
+        : 1
     startSession(selectedSortOrder)
   }
 
@@ -1531,11 +1534,45 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         <div className="exam-preview">
           <RoutePreviewMap
             route={route}
-            selectedPinOrder={previewPin?.sort_order ?? null}
-            onPinSelect={(sortOrder) => setPreviewPinSelection({ routeId: route.id, sortOrder })}
+            selectedPinOrder={
+              previewSelectionMode === 'manual'
+                ? previewPin?.sort_order ?? null
+                : sortedPins[0]?.sort_order ?? null
+            }
+            onPinSelect={
+              previewSelectionMode === 'manual'
+                ? (sortOrder) => setPreviewPinSelection({ routeId: route.id, sortOrder })
+                : undefined
+            }
           />
           <div className="exam-preview__panel">
-            {previewPin && (
+            <div
+              className="exam-preview__mode-controls"
+              role="group"
+              aria-label="PIN-ის არჩევის რეჟიმი"
+              data-testid="exam-pin-selection-controls"
+            >
+              <button
+                type="button"
+                className={`exam-preview__mode-button${previewSelectionMode === 'automatic' ? ' is-active' : ''}`}
+                aria-pressed={previewSelectionMode === 'automatic'}
+                onClick={() => {
+                  setPreviewSelectionMode('automatic')
+                  setPreviewPinSelection(null)
+                }}
+              >
+                PIN-ის არჩევა ავტომატურად
+              </button>
+              <button
+                type="button"
+                className={`exam-preview__mode-button${previewSelectionMode === 'manual' ? ' is-active' : ''}`}
+                aria-pressed={previewSelectionMode === 'manual'}
+                onClick={() => setPreviewSelectionMode('manual')}
+              >
+                PIN-ის არჩევა ხელით
+              </button>
+            </div>
+            {previewPin && previewSelectionMode === 'manual' && (
               <div className="exam-preview__pin-picker">
                 <label htmlFor="exam-preview-pin">აირჩიეთ PIN</label>
                 <select

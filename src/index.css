@@ -2471,6 +2471,34 @@ button:disabled {
   color: #1e3a8a;
 }
 
+.exam-preview__mode-controls {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.exam-preview__mode-button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #475569;
+  border-radius: 10px;
+  background: #1e293b;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: clamp(0.7rem, 1.8vh, 0.88rem);
+  font-weight: 600;
+  line-height: 1.2;
+  touch-action: manipulation;
+}
+
+.exam-preview__mode-button.is-active {
+  border-color: #5eead4;
+  background: #134e4a;
+  color: #f0fdfa;
+}
+
 .session-hint {
   font-size: 0.9rem;
   color: #64748b;
@@ -3503,95 +3531,4 @@ button:disabled {
   height: 100%;
   max-height: 100%;
   aspect-ratio: auto;
-}
-
-.home-page .home-exam-start {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  align-items: center;
-  width: min(100%, 42rem);
-  min-height: 0;
-  margin: 0 auto;
-}
-
-.home-page .home-mode-controls {
-  display: flex;
-  flex: 0 0 auto;
-  width: 100%;
-  gap: 0.5rem;
-  margin-top: clamp(0.35rem, 1.5vh, 1rem);
-}
-
-.home-page .home-mode-button {
-  flex: 1 1 0;
-  min-height: clamp(40px, 6vh, 48px);
-  padding: 0.5rem 0.65rem;
-  border: 1px solid #475569;
-  border-radius: 12px;
-  background: #1e293b;
-  color: #cbd5e1;
-  font: inherit;
-  font-size: clamp(0.76rem, 2vh, 0.95rem);
-  font-weight: 600;
-  touch-action: manipulation;
-}
-
-.home-page .home-mode-button.is-active {
-  border-color: #5eead4;
-  background: #134e4a;
-  color: #f0fdfa;
-}
-
-.home-page .home-start-hint {
-  flex: 0 0 auto;
-  margin: clamp(0.8rem, 3vh, 1.6rem) 0 0.8rem;
-  color: #cbd5e1;
-  font-size: clamp(0.8rem, 2vh, 0.95rem);
-  line-height: 1.35;
-  text-align: center;
-}
-
-.home-page .home-start-button {
-  flex: 0 0 auto;
-  width: 100%;
-  min-height: clamp(48px, 7vh, 60px);
-  margin-top: clamp(0.6rem, 2vh, 1rem);
-  border: 1px solid #5eead4;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #0f766e, #0d9488);
-  color: #f0fdfa;
-  font: inherit;
-  font-size: clamp(1rem, 2.5vh, 1.2rem);
-  font-weight: 700;
-  box-shadow: 0 5px 18px rgba(20, 184, 166, 0.22);
-  touch-action: manipulation;
-}
-
-.home-page .home-start-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.home-page .home-exam-start .route-list {
-  flex: 1 1 auto;
-  width: 100%;
-  max-height: 54dvh;
-  margin-top: clamp(0.5rem, 1.5vh, 1rem);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.home-page button.route-card {
-  width: 100%;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-.home-page .route-card.is-selected {
-  border-color: #5eead4;
-  box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.25);
 }
