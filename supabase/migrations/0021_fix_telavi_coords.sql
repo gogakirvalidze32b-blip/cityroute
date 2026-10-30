@@ -1,5 +1,5 @@
 -- Update Telavi route coordinates (OSM-based landmarks)
--- Run after 001_initial.sql
+-- Kept after the existing version 002 payment migration.
 
 with telavi as (select id from public.cities where slug = 'telavi')
 update public.routes r set polyline = v.polyline::jsonb

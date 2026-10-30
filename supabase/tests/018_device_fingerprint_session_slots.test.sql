@@ -1,7 +1,12 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(42);
+select plan(47);
+
+select ok(
+  not has_table_privilege('authenticated', 'public.profile_active_sessions', 'select'),
+  'authenticated clients cannot bypass the session registry RLS boundary'
+);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -97,6 +102,8 @@ select is(
   'verified 179 GEL entitlement retains two session slots'
 );
 
+reset role;
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000801', true);
 select set_config(
@@ -122,6 +129,16 @@ select is(
   public.activate_current_session()->>'status',
   'blocked',
   'legacy session without a fingerprint is revoked and cannot reactivate'
+);
+select is(
+  public.activate_current_session()->>'status',
+  'blocked',
+  'a revoked legacy session cannot reactivate on a later request'
+);
+select is(
+  public.has_current_active_session(),
+  false,
+  'revoked legacy session remains inactive after a repeated activation attempt'
 );
 select set_config(
   'request.jwt.claims',
@@ -257,29 +274,47 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000813","role":"authenticated"}',
   true
 );
-select is(public.deactivate_current_session()->>'status', 'deactivated', 'logout deactivates the current device session');
+select is(
+  (public.deactivate_current_session()->>'deactivated_sessions')::integer,
+  2,
+  'logout deactivates both account device sessions and reports the count'
+);
+reset role;
+select is(
+  (select count(*)::integer
+   from public.profile_active_sessions
+   where profile_id = '00000000-0000-0000-0000-000000000801'),
+  0,
+  'logout removes all active-device rows for the account'
+);
+set local role authenticated;
+select is(
+  public.deactivate_current_session()->>'status',
+  'inactive',
+  'repeated account-wide logout succeeds when no active rows remain'
+);
 select is(public.has_current_active_session(), false, 'logged-out device A loses access');
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000812","role":"authenticated"}',
+  true
+);
+select is(public.has_current_active_session(), false, 'logout revokes the other device session too');
 select set_config(
   'request.jwt.claims',
   '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000814","role":"authenticated"}',
   true
 );
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-c"}', true);
-select is(public.activate_current_session()->>'status', 'active', 'blocked device C activates after device A logs out');
-select is(public.has_current_active_session(), true, 'device C has access after taking the released slot');
-select set_config(
-  'request.jwt.claims',
-  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000812","role":"authenticated"}',
-  true
-);
-select is(public.has_current_active_session(), true, 'logout leaves device B active');
+select is(public.activate_current_session()->>'status', 'active', 'new login activates after account-wide logout');
+select is(public.has_current_active_session(), true, 'new login has app access after account-wide logout');
 reset role;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
    where profile_id = '00000000-0000-0000-0000-000000000801'),
-  2,
-  'device B and replacement device C occupy exactly two 179 GEL slots'
+  1,
+  'only the newly logged-in device is active after account-wide logout'
 );
 
 insert into public.profile_active_sessions (
@@ -296,10 +331,10 @@ values (
 set local role authenticated;
 select set_config(
   'request.jwt.claims',
-  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000812","role":"authenticated"}',
+  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000814","role":"authenticated"}',
   true
 );
-select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-b"}', true);
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-c"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'valid device remains active after expired-row cleanup');
 reset role;
 select is(

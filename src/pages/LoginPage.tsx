@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext'
 import { SupportFooterLinks } from '@/components/support/SupportLinks'
 
 export function LoginPage() {
-  const { signIn, user, loading } = useAuth()
+  const { signIn, user, loading, signOutWarning } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(true) // Default: checked
@@ -82,6 +82,7 @@ export function LoginPage() {
       <div className="auth-card">
         <h1>შესვლა</h1>
         <p className="muted">ინსტრუქტორებისთვის</p>
+        {signOutWarning && <p className="error-text" role="status">{signOutWarning}</p>}
         <form onSubmit={onSubmit} className="form">
           <label>
             ელფოსტა

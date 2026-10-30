@@ -13,12 +13,19 @@ const h = vi.hoisted(() => ({
   profileFetch: null as null | (() => Promise<{ data: unknown; error: unknown }>),
   sessionResponse: null as unknown,
   sessionError: null as unknown,
+  activeSessionResponse: true as unknown,
+  accessResponse: true as unknown,
+  accessError: null as unknown,
   planError: null as unknown,
   deactivateError: null as unknown,
+  deactivateResponse: { status: 'deactivated', deactivated_sessions: 2 } as unknown,
+  deactivateWait: null as null | (() => Promise<{ data: unknown; error: unknown }>),
+  signOutCallback: false,
   signOutOptions: null as unknown,
   signOut: null as null | (() => Promise<void>),
   rpcCalls: [] as string[],
   rpcArgs: [] as Array<{ name: string; args: unknown }>,
+  events: [] as string[],
   profileUpdates: [] as unknown[],
 }))
 
@@ -28,7 +35,9 @@ vi.mock('@/lib/supabase', () => ({
     auth: {
       getSession: async () => ({ data: { session: { user: { id: 'u1' } } } }),
       signOut: async (options: unknown) => {
+        h.events.push('local signOut')
         h.signOutOptions = options
+        if (h.signOutCallback) h.cb?.('SIGNED_OUT', null)
         return { error: null }
       },
       onAuthStateChange: (cb: Cb) => {
@@ -47,10 +56,17 @@ vi.mock('@/lib/supabase', () => ({
       h.rpcCalls.push(name)
       h.rpcArgs.push({ name, args })
       if (name === 'deactivate_current_session') {
-        return {
-          data: { status: 'deactivated' },
+        h.events.push('deactivate_current_session')
+        return h.deactivateWait ? h.deactivateWait() : {
+          data: h.deactivateResponse,
           error: h.deactivateError,
         }
+      }
+      if (name === 'has_current_active_session') {
+        return { data: h.activeSessionResponse, error: null }
+      }
+      if (name === 'has_active_access') {
+        return { data: h.accessResponse, error: h.accessError }
       }
       if (name === 'select_subscription_plan') {
         return {
@@ -88,7 +104,7 @@ function EntitlementProbe() {
   const { profile, hasAccess } = useAuth()
   return (
     <div data-testid="entitlement">
-      {profile?.subscription_status}:{profile?.subscription_expires_at}:{hasAccess ? 'access' : 'denied'}
+      {profile?.subscription_status}:{profile?.subscription_expires_at}:{profile?.subscription_plan ?? 'no-plan'}:{hasAccess ? 'access' : 'denied'}
     </div>
   )
 }
@@ -100,11 +116,11 @@ function Child() {
   return null
 }
 function SignOutProbe() {
-  const { signOut } = useAuth()
+  const { signOut, signOutWarning } = useAuth()
   useEffect(() => {
     h.signOut = signOut
   }, [signOut])
-  return null
+  return <output data-testid="sign-out-warning">{signOutWarning}</output>
 }
 function RefreshProfileProbe() {
   const { refreshProfile } = useAuth()
@@ -134,14 +150,21 @@ describe('AuthContext – tab refocus', () => {
     unmounts = 0
     localStorage.clear()
     h.cb = null
-    h.sessionResponse = { status: 'active' }
+    h.sessionResponse = { status: 'active', access_active: true }
     h.sessionError = null
+    h.activeSessionResponse = true
+    h.accessResponse = true
+    h.accessError = null
     h.planError = null
     h.deactivateError = null
+    h.deactivateResponse = { status: 'deactivated', deactivated_sessions: 2 }
+    h.deactivateWait = null
+    h.signOutCallback = false
     h.signOutOptions = null
     h.signOut = null
     h.rpcCalls.length = 0
     h.rpcArgs.length = 0
+    h.events.length = 0
     h.profileUpdates.length = 0
   })
 
@@ -165,7 +188,7 @@ describe('AuthContext – tab refocus', () => {
       args: { chosen: 'premium' },
     })
     expect(h.profileUpdates).toEqual([])
-    expect(localStorage.getItem('cityroute-plan-u1')).toBe('premium')
+    expect(localStorage.getItem('cityroute-plan-u1')).toBeNull()
   })
 
   it('does not cache a plan or fall back to a profiles update when the secure RPC is rejected', async () => {
@@ -194,6 +217,32 @@ describe('AuthContext – tab refocus', () => {
       args: { chosen: 'premium' },
     })
     expect(h.profileUpdates).toEqual([])
+  })
+
+  it('does not use a cached local plan as Premium entitlement', async () => {
+    localStorage.setItem('cityroute-plan-u1', 'premium')
+    h.profileFetch = async () => ({
+      data: {
+        ...profile('u1'),
+        subscription_status: 'expired',
+        subscription_plan: null,
+      },
+      error: null,
+    })
+    h.sessionResponse = { status: 'active', access_active: false }
+    h.accessResponse = false
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+    await tick()
+    await tick()
+
+    expect(screen.getByTestId('entitlement').textContent).toContain('expired:')
+    expect(screen.getByTestId('entitlement').textContent).toContain(':no-plan:denied')
+    expect(screen.getByTestId('s').textContent).toBe('noaccess:u1')
   })
 
   it('SIGNED_IN for the same user does NOT unmount the app subtree', async () => {
@@ -274,11 +323,24 @@ describe('AuthContext – tab refocus', () => {
   it('denies access and shows the server reason when session activation is blocked', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.sessionResponse = { status: 'blocked', message: 'device limit reached' }
-    render(<AuthProvider><Gate /></AuthProvider>)
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+        <RefreshProfileProbe />
+      </AuthProvider>,
+    )
 
     await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
     expect(screen.getByTestId('s').textContent).toContain('device limit reached')
+    expect(screen.getByTestId('entitlement').textContent).toContain('active:')
+    expect(screen.getByTestId('entitlement').textContent).toContain(':denied')
     expect(h.rpcCalls).toEqual(['activate_current_session'])
+
+    h.sessionResponse = { status: 'active', access_active: true }
+    await act(async () => { screen.getByRole('button', { name: 'Refresh profile' }).click() })
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('access:u1'))
+    expect(screen.getByTestId('entitlement').textContent).toContain('active:')
   })
 
   it('preserves a loaded premium entitlement when a later session check is blocked', async () => {
@@ -338,18 +400,116 @@ describe('AuthContext – tab refocus', () => {
     await act(async () => { await h.signOut?.() })
 
     expect(h.rpcCalls).toContain('deactivate_current_session')
+    expect(h.rpcArgs).toContainEqual({ name: 'deactivate_current_session', args: undefined })
+    expect(h.events).toEqual(['deactivate_current_session', 'local signOut'])
     expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
   })
 
-  it('does not sign out locally when server-side session deactivation fails', async () => {
+  it('clears authorized UI while waiting for account-wide server revocation', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    let resolveRevocation: ((result: { data: unknown; error: unknown }) => void) | null = null
+    h.deactivateWait = () => new Promise((resolve) => { resolveRevocation = resolve })
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick()
+    await tick()
+
+    let pendingSignOut: Promise<void> | undefined
+    await act(async () => {
+      pendingSignOut = h.signOut?.()
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
+    expect(h.signOutOptions).toBeNull()
+
+    await act(async () => {
+      resolveRevocation?.({
+        data: { status: 'deactivated', deactivated_sessions: 2 },
+        error: null,
+      })
+      await pendingSignOut
+    })
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
+  })
+
+  it('treats an already inactive session as a successful logout', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.deactivateResponse = { status: 'inactive', deactivated_sessions: 0 }
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick(); await tick()
+
+    await act(async () => { await h.signOut?.() })
+
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
+  })
+
+  it('signs out locally and warns when server-side session deactivation fails', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.deactivateError = { message: 'network unavailable' }
     vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<AuthProvider><Gate /></AuthProvider>)
     await tick(); await tick()
 
-    await expect(h.signOut?.()).rejects.toMatchObject({ message: 'network unavailable' })
+    await act(async () => { await h.signOut?.() })
+
     expect(h.rpcCalls).toContain('deactivate_current_session')
-    expect(h.signOutOptions).toBeNull()
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
+      'ყველა მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
+    )
+    expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
+      'შემდეგი შესვლისას წვდომა ხელახლა შემოწმდება',
+    )
+  })
+
+  it('keeps logout device-scoped and does not request global session revocation', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick(); await tick()
+
+    await act(async () => { await h.signOut?.() })
+
+    expect(h.rpcArgs.find(({ name }) => name === 'deactivate_current_session')).toEqual({
+      name: 'deactivate_current_session',
+      args: undefined,
+    })
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+  })
+
+  it('warns and signs out locally for an unexpected RPC response', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.deactivateResponse = { status: 'unknown' }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick(); await tick()
+
+    await act(async () => { await h.signOut?.() })
+
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
+      'ყველა მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
+    )
+  })
+
+  it('signs out locally when another device revokes the current session', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.signOutCallback = true
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick()
+    await tick()
+
+    h.activeSessionResponse = false
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
+    expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
+      'ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.',
+    )
   })
 })

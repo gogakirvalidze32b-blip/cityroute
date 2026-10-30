@@ -38,7 +38,9 @@ begin
 end;
 $$;
 
-create or replace function public.select_subscription_plan(chosen text)
+drop function if exists public.select_subscription_plan(text);
+
+create function public.select_subscription_plan(chosen text)
 returns jsonb
 language plpgsql
 security definer

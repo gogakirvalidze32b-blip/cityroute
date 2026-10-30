@@ -7,6 +7,7 @@ import { PlanSelectionPage } from './PlanSelectionPage'
 const state = vi.hoisted(() => ({
   selectPlan: vi.fn(async () => null as string | null),
   signOut: vi.fn(async () => {}),
+  refreshProfile: vi.fn(async () => {}),
   auth: {
     user: { id: 'user-1' as string } as { id: string } | null,
     loading: false,
@@ -27,6 +28,7 @@ vi.mock('@/context/AuthContext', () => ({
     ...state.auth,
     selectPlan: state.selectPlan,
     signOut: state.signOut,
+    refreshProfile: state.refreshProfile,
   }),
 }))
 
@@ -40,6 +42,7 @@ describe('Premium package selection', () => {
   beforeEach(() => {
     state.selectPlan.mockClear()
     state.signOut.mockClear()
+    state.refreshProfile.mockClear()
     state.auth = {
       user: { id: 'user-1' },
       loading: false,
@@ -154,5 +157,36 @@ describe('Premium package selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ანგარიშიდან გასვლა' }))
     expect(await screen.findByRole('heading', { name: 'Login' })).toBeTruthy()
     expect(state.signOut).toHaveBeenCalledOnce()
+  })
+
+  it('shows active Premium separately from a blocked device session and offers a safe retry', async () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: false,
+      needsPlanSelection: false,
+      deviceBlocked: 'session limit reached',
+      profile: {
+        subscription_status: 'active',
+        subscription_plan: 'premium',
+        subscription_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        device_slots: 1,
+      },
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/login" element={<h1>Login</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Premium გამოწერა აქტიურია')).toBeTruthy()
+    expect(screen.getByRole('alert')).toHaveTextContent('Premium აქტიურია')
+    expect(screen.queryByText('საცდელი პერიოდი დასრულებულია')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'სესიის ხელახლა შემოწმება' }))
+    await waitFor(() => expect(state.refreshProfile).toHaveBeenCalledOnce())
   })
 })

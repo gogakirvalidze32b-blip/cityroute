@@ -28,12 +28,12 @@ const successfulOrder = {
   payment_detail: { transaction_id: 'bank-transaction-1' },
 }
 
-function paymentTransaction(status = 'pending') {
+function paymentTransaction(status = 'pending', amount = 179) {
   return {
     payment_id: 'bog-order-1',
     merchant_payment_id: 'cr-merchant-1',
     user_id: 'user-1',
-    amount: 179,
+    amount,
     currency: 'GEL',
     status,
   }
@@ -159,8 +159,48 @@ describe('BOG Production payment API', () => {
     expect(authenticateUser).not.toHaveBeenCalled()
   })
 
-  it('updates Premium through the RPC only after an independently fetched receipt verifies', async () => {
-    const updatePaymentStatus = vi.fn(async () => {})
+  it.each([
+    { amount: 99 },
+    { amount: 179 },
+  ])('updates Premium for a verified $amount GEL order', async ({ amount }) => {
+    let status = 'pending'
+    const updatePaymentStatus = vi.fn(async ({ status: nextStatus }: { status: string }) => {
+      status = nextStatus
+    })
+    const response = await handleBogVerify(request(
+      'https://cityroute.ge/api/payments/bog/verify?provider=bog&merchantPaymentId=cr-merchant-1',
+      { method: 'GET' },
+    ), {
+      environment,
+      authenticateUser: async () => ({ id: 'user-1' }),
+      createOrder: vi.fn(),
+      insertTransaction: vi.fn(),
+      getTransactionById: async () => paymentTransaction(status, amount),
+      getTransactionByMerchantId: async () => paymentTransaction(status, amount),
+      getOrderDetails: async () => ({
+        ...successfulOrder,
+        purchase_units: { ...successfulOrder.purchase_units, request_amount: `${amount}.00` },
+      }),
+      updatePaymentStatus,
+      verifyCallbackSignature: async () => true,
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ status: 'success' })
+    expect(updatePaymentStatus).toHaveBeenCalledWith(expect.objectContaining({
+      paymentId: 'bog-order-1',
+      status: 'success',
+      transactionId: 'bank-transaction-1',
+      metadata: expect.objectContaining({
+        bank_status: 'completed',
+        bank_amount: `${amount}.00`,
+        bank_currency: 'GEL',
+        bank_external_order_id: 'cr-merchant-1',
+      }),
+    }))
+  })
+
+  it('does not activate Premium while the bank still reports a pending payment', async () => {
+    const updatePaymentStatus = vi.fn()
     const response = await handleBogVerify(request(
       'https://cityroute.ge/api/payments/bog/verify?provider=bog&merchantPaymentId=cr-merchant-1',
       { method: 'GET' },
@@ -171,22 +211,17 @@ describe('BOG Production payment API', () => {
       insertTransaction: vi.fn(),
       getTransactionById: async () => paymentTransaction('pending'),
       getTransactionByMerchantId: async () => paymentTransaction('pending'),
-      getOrderDetails: async () => successfulOrder,
+      getOrderDetails: async () => ({
+        ...successfulOrder,
+        order_status: { key: 'created' },
+      }),
       updatePaymentStatus,
       verifyCallbackSignature: async () => true,
     })
+
     expect(response.status).toBe(200)
-    expect(updatePaymentStatus).toHaveBeenCalledWith(expect.objectContaining({
-      paymentId: 'bog-order-1',
-      status: 'success',
-      transactionId: 'bank-transaction-1',
-      metadata: expect.objectContaining({
-        bank_status: 'completed',
-        bank_amount: '179.00',
-        bank_currency: 'GEL',
-        bank_external_order_id: 'cr-merchant-1',
-      }),
-    }))
+    expect(await response.json()).toMatchObject({ status: 'pending', bankStatus: 'created' })
+    expect(updatePaymentStatus).not.toHaveBeenCalled()
   })
 
   it('rejects receipt mismatches without applying a successful payment', async () => {
