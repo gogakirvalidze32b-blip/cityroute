@@ -553,7 +553,7 @@ describe('AuthContext – tab refocus', () => {
     )
   })
 
-  it('keeps logout device-scoped and does not request global session revocation', async () => {
+  it('requests account-wide session revocation before local logout', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     render(<AuthProvider><Gate /></AuthProvider>)
     await tick(); await tick()
@@ -565,6 +565,7 @@ describe('AuthContext – tab refocus', () => {
       args: undefined,
     })
     expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(h.events).toEqual(['deactivate_current_session', 'local signOut'])
   })
 
   it('warns and signs out locally for an unexpected RPC response', async () => {

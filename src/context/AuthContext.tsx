@@ -494,7 +494,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setProfile(null)
         setEntitlementStatusUnavailable(false)
-        setEntitlementStatusUnavailable(false)
 
         setDeviceBlocked(null)
 

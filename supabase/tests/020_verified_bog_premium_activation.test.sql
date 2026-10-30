@@ -2,7 +2,7 @@ begin;
 set local role postgres;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(25);
+select plan(31);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -196,24 +196,6 @@ select is(
 );
 reset role;
 set local role postgres;
-set local role service_role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
-select is(
-  public.update_bog_payment_status(
-    'bog-verified-179', 'refunded', 'bank-refund-179',
-    '{"bank_status":"refunded","bank_amount":"179.00","bank_currency":"GEL","bank_external_order_id":"merchant-verified-179","bank_refund_amount":"179.00"}'
-  )->>'status',
-  'refunded',
-  'verified bank refund is recorded'
-);
-reset role;
-set local role postgres;
-select is(
-  public.current_verified_premium_device_slots('00000000-0000-0000-0000-000000000902'),
-  0,
-  'refunded payment no longer grants paid device slots'
-);
-
 select is(
   (select subscription_status from public.profiles where id = '00000000-0000-0000-0000-000000000903'),
   'trial',
@@ -253,6 +235,124 @@ select is(
   (select subscription_status from public.profiles where id = '00000000-0000-0000-0000-000000000904'),
   'trial',
   'mismatched receipt leaves Premium inactive'
+);
+
+insert into auth.sessions (id, user_id, created_at, updated_at, not_after)
+values
+  ('00000000-0000-0000-0000-000000000911', '00000000-0000-0000-0000-000000000902', pg_catalog.now(), pg_catalog.now(), null),
+  ('00000000-0000-0000-0000-000000000912', '00000000-0000-0000-0000-000000000902', pg_catalog.now(), pg_catalog.now(), null),
+  ('00000000-0000-0000-0000-000000000913', '00000000-0000-0000-0000-000000000902', pg_catalog.now(), pg_catalog.now(), null),
+  ('00000000-0000-0000-0000-000000000921', '00000000-0000-0000-0000-000000000901', pg_catalog.now(), pg_catalog.now(), null),
+  ('00000000-0000-0000-0000-000000000922', '00000000-0000-0000-0000-000000000901', pg_catalog.now(), pg_catalog.now(), null);
+
+insert into public.profile_active_sessions (
+  profile_id, session_id, session_created_at, activated_at, updated_at, device_fingerprint
+)
+values
+  (
+    '00000000-0000-0000-0000-000000000902',
+    '00000000-0000-0000-0000-000000000911',
+    pg_catalog.now(), pg_catalog.now() - interval '2 minutes', pg_catalog.now(), 'paid-device-a-020'
+  ),
+  (
+    '00000000-0000-0000-0000-000000000902',
+    '00000000-0000-0000-0000-000000000912',
+    pg_catalog.now(), pg_catalog.now() - interval '1 minute', pg_catalog.now(), 'paid-device-b-020'
+  ),
+  (
+    '00000000-0000-0000-0000-000000000901',
+    '00000000-0000-0000-0000-000000000921',
+    pg_catalog.now(), pg_catalog.now(), pg_catalog.now(), 'logout-device-a-020'
+  ),
+  (
+    '00000000-0000-0000-0000-000000000901',
+    '00000000-0000-0000-0000-000000000922',
+    pg_catalog.now(), pg_catalog.now(), pg_catalog.now(), 'logout-device-b-020'
+  );
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-000000000902","session_id":"00000000-0000-0000-0000-000000000913","role":"authenticated"}',
+  true
+);
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"paid-device-c-020"}', true);
+select is(
+  public.activate_current_session()->>'status',
+  'blocked',
+  'a third device is blocked for verified 179 GEL Premium'
+);
+reset role;
+set local role postgres;
+
+select is(
+  (select count(*)::integer
+   from public.profile_active_sessions
+   where profile_id = '00000000-0000-0000-0000-000000000902'),
+  2,
+  'blocking a third device preserves both existing 179 GEL sessions'
+);
+select is(
+  (select count(*)::integer
+   from public.profile_revoked_sessions
+   where profile_id = '00000000-0000-0000-0000-000000000902'
+     and session_id in (
+       '00000000-0000-0000-0000-000000000911',
+       '00000000-0000-0000-0000-000000000912'
+     )),
+  0,
+  'a third-device attempt does not revoke either existing session'
+);
+
+set local role authenticated;
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-000000000901","session_id":"00000000-0000-0000-0000-000000000921","role":"authenticated"}',
+  true
+);
+select is(
+  (public.deactivate_current_session()->>'deactivated_sessions')::integer,
+  2,
+  'logout revokes every active device session on the account'
+);
+reset role;
+set local role postgres;
+
+select is(
+  (select count(*)::integer
+   from public.profile_active_sessions
+   where profile_id = '00000000-0000-0000-0000-000000000901'),
+  0,
+  'account-wide logout removes all active session rows'
+);
+select is(
+  (select count(*)::integer
+   from public.profile_revoked_sessions
+   where profile_id = '00000000-0000-0000-0000-000000000901'
+     and session_id in (
+       '00000000-0000-0000-0000-000000000921',
+       '00000000-0000-0000-0000-000000000922'
+     )),
+  2,
+  'account-wide logout records every device session as revoked'
+);
+
+set local role service_role;
+select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+select is(
+  public.update_bog_payment_status(
+    'bog-verified-179', 'refunded', 'bank-refund-179',
+    '{"bank_status":"refunded","bank_amount":"179.00","bank_currency":"GEL","bank_external_order_id":"merchant-verified-179","bank_refund_amount":"179.00"}'
+  )->>'status',
+  'refunded',
+  'verified bank refund is recorded'
+);
+reset role;
+set local role postgres;
+select is(
+  public.current_verified_premium_device_slots('00000000-0000-0000-0000-000000000902'),
+  0,
+  'refunded payment no longer grants paid device slots'
 );
 
 select * from finish();
