@@ -22,6 +22,7 @@ export type Database = {
           subscription_expires_at: string
           subscription_plan: SubscriptionPlan | null
           device_slots: number
+          subscription_payment_id: string | null
           device_fingerprint: string | null
           device_bound_at: string | null
           created_at: string
@@ -150,8 +151,11 @@ export function accessLabel(profile: Profile | null): string {
     return `საცდელი: ${h} სთ ${m} წთ დარჩა${planNote}`
   }
   if (profile.subscription_status === 'active') {
+    if (profile.subscription_payment_id) {
+      return `გადახდილი Premium · ${profile.subscription_plan ? planName(profile.subscription_plan) : 'აქტიური'}`
+    }
     if (profile.subscription_plan) return `აქტიური · ${planName(profile.subscription_plan)}`
-    return 'აქტიური გამოწერა'
+    return 'ძველი აქტიური გამოწერა'
   }
   return 'გამოწერა არ არის აქტიური'
 }

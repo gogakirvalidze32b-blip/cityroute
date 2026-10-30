@@ -32,8 +32,10 @@ export function PlanSelectionPage() {
   const trialActive =
     profile?.subscription_status === 'trial' &&
     new Date(profile.subscription_expires_at).getTime() > Date.now()
-  const paidSubscriptionActive =
+  const activeSubscription =
     profile?.subscription_status === 'active' && isAccessActive(profile)
+  const paidSubscriptionActive = activeSubscription && Boolean(profile.subscription_payment_id)
+  const legacySubscriptionActive = activeSubscription && !profile.subscription_payment_id
   const activeTrial = trialActive && hasAccess
   const earlyPayment = new URLSearchParams(location.search).get('earlyPayment') === '1'
   const totalPrice = calculatePrice(chosen, deviceSlots)
@@ -107,8 +109,16 @@ export function PlanSelectionPage() {
             <div className="subscription-status subscription-status--active">
               <span className="subscription-status__icon" aria-hidden="true">✓</span>
               <div>
-                <strong>Premium გამოწერა აქტიურია</strong>
+                <strong>გადახდილი Premium აქტიურია</strong>
                 <p>{profile ? accessLabel(profile) : 'Premium აქტიურია'}</p>
+              </div>
+            </div>
+          ) : legacySubscriptionActive ? (
+            <div className="subscription-status subscription-status--active">
+              <span className="subscription-status__icon" aria-hidden="true">✓</span>
+              <div>
+                <strong>ძველი გამოწერა აქტიურია</strong>
+                <p>{profile ? accessLabel(profile) : 'არსებული წვდომა აქტიურია'}</p>
               </div>
             </div>
           ) : (
@@ -123,10 +133,10 @@ export function PlanSelectionPage() {
           {deviceBlocked && (
             <>
               <p className="subscription-error" role="alert">
-                {paidSubscriptionActive ? 'Premium აქტიურია, მაგრამ სესიის შემოწმება ვერ დასრულდა' : 'მოწყობილობა დაბლოკილია'}:
+                {activeSubscription ? 'გამოწერა აქტიურია, მაგრამ სესიის შემოწმება ვერ დასრულდა' : 'მოწყობილობა დაბლოკილია'}:
                 {' '}{deviceBlocked}
               </p>
-              {paidSubscriptionActive && (
+              {activeSubscription && (
                 <button
                   type="button"
                   className="secondary-button"

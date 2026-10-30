@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
       subscription_plan: string | null
       subscription_expires_at: string
       device_slots: 1 | 2
+      subscription_payment_id?: string | null
     },
   },
 }))
@@ -171,6 +172,7 @@ describe('Premium package selection', () => {
         subscription_plan: 'premium',
         subscription_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
         device_slots: 1,
+        subscription_payment_id: 'verified-payment-1',
       },
     }
 
@@ -183,10 +185,39 @@ describe('Premium package selection', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('Premium გამოწერა აქტიურია')).toBeTruthy()
-    expect(screen.getByRole('alert')).toHaveTextContent('Premium აქტიურია')
+    expect(screen.getByText('გადახდილი Premium აქტიურია')).toBeTruthy()
+    expect(screen.getByRole('alert')).toHaveTextContent('გამოწერა აქტიურია')
     expect(screen.queryByText('საცდელი პერიოდი დასრულებულია')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'სესიის ხელახლა შემოწმება' }))
     await waitFor(() => expect(state.refreshProfile).toHaveBeenCalledOnce())
+  })
+
+  it('distinguishes an active legacy subscription from paid Premium', () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: true,
+      needsPlanSelection: false,
+      deviceBlocked: null,
+      profile: {
+        subscription_status: 'active',
+        subscription_plan: 'premium',
+        subscription_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        device_slots: 1,
+        subscription_payment_id: null,
+      },
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/" element={<h1>Home</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('ძველი გამოწერა აქტიურია')).toBeTruthy()
+    expect(screen.queryByText('გადახდილი Premium აქტიურია')).toBeNull()
   })
 })
