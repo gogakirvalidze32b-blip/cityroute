@@ -73,6 +73,7 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000311","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-trial-device-a"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'Trial device A activates');
 select is(public.has_current_active_session(), true, 'Trial device A has server-side session access');
 select is(public.has_active_access('00000000-0000-0000-0000-000000000301'), true, 'Trial subscription remains valid for device A');
@@ -87,12 +88,14 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000312","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-trial-device-b"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'Trial device B replaces device A');
 select set_config(
   'request.jwt.claims',
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000311","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-trial-device-a"}', true);
 select is(public.has_current_active_session(), false, 'replaced Trial device A is blocked');
 select is(
   public.activate_current_session()->>'status',
@@ -104,6 +107,7 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000312","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-trial-device-b"}', true);
 select is(public.deactivate_current_session()->>'status', 'deactivated', 'Trial device B logout releases its slot');
 
 reset role;
@@ -121,12 +125,14 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000313","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-99-device-a"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'Premium 99 device A activates');
 select set_config(
   'request.jwt.claims',
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000314","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-99-device-b"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'Premium 99 device B replaces device A');
 select set_config(
   'request.jwt.claims',
@@ -174,12 +180,14 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000315","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-179-device-a"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'Premium 179 device A activates');
 select set_config(
   'request.jwt.claims',
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000316","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-179-device-b"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'Premium 179 device B activates without replacing A');
 select set_config(
   'request.jwt.claims',
@@ -199,12 +207,14 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000316","role":"authenticated","iat":1793304000,"exp":1793307600}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-179-device-b"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'token refresh keeps the same Premium 179 session active');
 select set_config(
   'request.jwt.claims',
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000317","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-179-device-c"}', true);
 select is(public.activate_current_session()->>'status', 'blocked', 'Premium 179 device C is blocked while A and B use both slots');
 select is(public.has_current_active_session(), false, 'blocked Premium 179 device C has no protected access');
 select is(
@@ -218,6 +228,7 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000315","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-179-device-a"}', true);
 select is(public.deactivate_current_session()->>'status', 'deactivated', 'Premium 179 device A logout releases one slot');
 select is(public.has_current_active_session(), false, 'logged-out Premium 179 device A immediately loses access');
 select is(public.activate_current_session()->>'status', 'blocked', 'logged-out Premium 179 JWT cannot reactivate');
@@ -226,6 +237,7 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000317","role":"authenticated"}',
   true
 );
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-179-device-c"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'Premium 179 device C can activate after A logs out');
 select set_config(
   'request.jwt.claims',

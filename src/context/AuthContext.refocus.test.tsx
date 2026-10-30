@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   profileFetch: null as null | (() => Promise<{ data: unknown; error: unknown }>),
   sessionResponse: null as unknown,
   sessionError: null as unknown,
+  planError: null as unknown,
   deactivateError: null as unknown,
   signOutOptions: null as unknown,
   signOut: null as null | (() => Promise<void>),
@@ -52,7 +53,10 @@ vi.mock('@/lib/supabase', () => ({
         }
       }
       if (name === 'select_subscription_plan') {
-        return { data: { status: 'ok', plan: 'premium' }, error: null }
+        return {
+          data: h.planError ? null : { status: 'ok', plan: 'premium' },
+          error: h.planError,
+        }
       }
       return { data: h.sessionResponse, error: h.sessionError }
     },
@@ -69,7 +73,7 @@ const profile = (id: string) => ({
 const seen: boolean[] = []
 let mounts = 0
 let unmounts = 0
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 function Probe() {
   const { loading, hasAccess, user, deviceBlocked } = useAuth()
   seen.push(loading)
@@ -102,9 +106,19 @@ function SignOutProbe() {
   }, [signOut])
   return null
 }
+function RefreshProfileProbe() {
+  const { refreshProfile } = useAuth()
+  return <button onClick={() => void refreshProfile()}>Refresh profile</button>
+}
 function PlanSelector() {
   const { selectPlan } = useAuth()
-  return <button onClick={() => void selectPlan('premium')}>Save Premium plan</button>
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <>
+      <button onClick={() => void selectPlan('premium').then(setError)}>Save Premium plan</button>
+      {error && <output data-testid="plan-error">{error}</output>}
+    </>
+  )
 }
 function Gate() {
   const { loading } = useAuth()
@@ -118,9 +132,11 @@ describe('AuthContext – tab refocus', () => {
     seen.length = 0
     mounts = 0
     unmounts = 0
+    localStorage.clear()
     h.cb = null
     h.sessionResponse = { status: 'active' }
     h.sessionError = null
+    h.planError = null
     h.deactivateError = null
     h.signOutOptions = null
     h.signOut = null
@@ -144,6 +160,35 @@ describe('AuthContext – tab refocus', () => {
 
     await act(async () => { screen.getByRole('button', { name: 'Save Premium plan' }).click() })
 
+    expect(h.rpcArgs).toContainEqual({
+      name: 'select_subscription_plan',
+      args: { chosen: 'premium' },
+    })
+    expect(h.profileUpdates).toEqual([])
+    expect(localStorage.getItem('cityroute-plan-u1')).toBe('premium')
+  })
+
+  it('does not cache a plan or fall back to a profiles update when the secure RPC is rejected', async () => {
+    h.profileFetch = async () => ({
+      data: {
+        ...profile('u1'),
+        subscription_status: 'trial',
+        subscription_plan: null,
+        device_slots: 1,
+      },
+      error: null,
+    })
+    h.planError = { message: 'This session is no longer active; sign in again' }
+    render(<AuthProvider><Gate /><PlanSelector /></AuthProvider>)
+    await tick()
+    await tick()
+
+    await act(async () => { screen.getByRole('button', { name: 'Save Premium plan' }).click() })
+
+    expect(await screen.findByTestId('plan-error')).toHaveTextContent(
+      'This session is no longer active; sign in again',
+    )
+    expect(localStorage.getItem('cityroute-plan-u1')).toBeNull()
     expect(h.rpcArgs).toContainEqual({
       name: 'select_subscription_plan',
       args: { chosen: 'premium' },
@@ -234,6 +279,35 @@ describe('AuthContext – tab refocus', () => {
     await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
     expect(screen.getByTestId('s').textContent).toContain('device limit reached')
     expect(h.rpcCalls).toEqual(['activate_current_session'])
+  })
+
+  it('preserves a loaded premium entitlement when a later session check is blocked', async () => {
+    h.profileFetch = async () => ({
+      data: {
+        ...profile('u1'),
+        subscription_status: 'active',
+        subscription_plan: 'premium',
+      },
+      error: null,
+    })
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+        <RefreshProfileProbe />
+      </AuthProvider>,
+    )
+    await tick()
+    await tick()
+    expect(screen.getByTestId('entitlement').textContent).toContain('active:')
+
+    h.sessionResponse = { status: 'blocked', message: 'device limit reached' }
+    await act(async () => { screen.getByRole('button', { name: 'Refresh profile' }).click() })
+    await tick()
+
+    expect(screen.getByTestId('entitlement').textContent).toContain('active:')
+    expect(screen.getByTestId('entitlement').textContent).toContain(':denied')
+    expect(screen.getByTestId('s').textContent).toContain('device limit reached')
   })
 
   it('denies access when session activation returns an RPC error', async () => {

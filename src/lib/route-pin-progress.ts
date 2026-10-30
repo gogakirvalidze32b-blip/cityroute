@@ -1,7 +1,9 @@
 const STORAGE_PREFIX = 'cityroute-pin-progress:'
+const SCOPE_STORAGE_PREFIX = 'cityroute-preview:'
 
-function storageKey(routeSlug: string): string {
-  return `${STORAGE_PREFIX}${encodeURIComponent(routeSlug)}`
+function storageKey(routeSlug: string, scope?: string): string {
+  const key = `${STORAGE_PREFIX}${encodeURIComponent(routeSlug)}`
+  return scope ? `${SCOPE_STORAGE_PREFIX}${encodeURIComponent(scope)}:${key}` : key
 }
 
 function validOrders(value: unknown): value is number[] {
@@ -12,9 +14,9 @@ function validOrders(value: unknown): value is number[] {
   )
 }
 
-export function loadRoutePinProgress(routeSlug: string): number[] | null {
+export function loadRoutePinProgress(routeSlug: string, scope?: string): number[] | null {
   try {
-    const raw = localStorage.getItem(storageKey(routeSlug))
+    const raw = localStorage.getItem(storageKey(routeSlug, scope))
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (!validOrders(parsed)) {
@@ -28,24 +30,24 @@ export function loadRoutePinProgress(routeSlug: string): number[] | null {
   }
 }
 
-export function saveRoutePinProgress(routeSlug: string, orders: Iterable<number>): void {
+export function saveRoutePinProgress(routeSlug: string, orders: Iterable<number>, scope?: string): void {
   const incoming = [...new Set(orders)].sort((a, b) => a - b)
   if (!validOrders(incoming)) {
     console.error('Failed to save route PIN progress: invalid PIN order', routeSlug)
     return
   }
-  const sorted = [...new Set([...(loadRoutePinProgress(routeSlug) ?? []), ...incoming])]
+  const sorted = [...new Set([...(loadRoutePinProgress(routeSlug, scope) ?? []), ...incoming])]
     .sort((a, b) => a - b)
   try {
-    localStorage.setItem(storageKey(routeSlug), JSON.stringify(sorted))
+    localStorage.setItem(storageKey(routeSlug, scope), JSON.stringify(sorted))
   } catch (err) {
     console.error('Failed to save route PIN progress:', err)
   }
 }
 
-export function clearRoutePinProgress(routeSlug: string): void {
+export function clearRoutePinProgress(routeSlug: string, scope?: string): void {
   try {
-    localStorage.removeItem(storageKey(routeSlug))
+    localStorage.removeItem(storageKey(routeSlug, scope))
   } catch (err) {
     console.error('Failed to clear route PIN progress:', err)
   }

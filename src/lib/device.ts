@@ -8,6 +8,30 @@ function randomId() {
   return `fp_${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
 
+function isValidFingerprint(value: string | null): value is string {
+  return value !== null && value.trim().length >= 8 && value.trim().length <= 256
+}
+
+function getSessionStorageFingerprint(): string | null {
+  try {
+    const fingerprint = window.sessionStorage.getItem(STORAGE_KEY)
+    return isValidFingerprint(fingerprint) ? fingerprint.trim() : null
+  } catch (storageError) {
+    console.warn('sessionStorage is not accessible:', storageError)
+    return null
+  }
+}
+
+function saveSessionStorageFingerprint(fingerprint: string): boolean {
+  try {
+    window.sessionStorage.setItem(STORAGE_KEY, fingerprint)
+    return true
+  } catch (storageError) {
+    console.warn('Could not save fingerprint to sessionStorage:', storageError)
+    return false
+  }
+}
+
 export function getDeviceFingerprint(): string {
   if (cachedFingerprint) return cachedFingerprint
 
@@ -15,13 +39,22 @@ export function getDeviceFingerprint(): string {
   try {
     fp = localStorage.getItem(STORAGE_KEY)
   } catch (err) {
-    console.warn('localStorage not accessible, using an in-memory fingerprint:', err)
+    console.warn('localStorage not accessible; using sessionStorage when available:', err)
+    const storedFingerprint = getSessionStorageFingerprint()
+    if (storedFingerprint) {
+      cachedFingerprint = storedFingerprint
+      return cachedFingerprint
+    }
+
     cachedFingerprint = randomId()
+    if (!saveSessionStorageFingerprint(cachedFingerprint)) {
+      console.warn('Device fingerprint is temporary because browser storage is unavailable')
+    }
     return cachedFingerprint
   }
 
-  if (fp) {
-    cachedFingerprint = fp
+  if (isValidFingerprint(fp)) {
+    cachedFingerprint = fp.trim()
     return cachedFingerprint
   }
 
@@ -30,6 +63,14 @@ export function getDeviceFingerprint(): string {
     localStorage.setItem(STORAGE_KEY, fp)
   } catch (storageError) {
     console.warn('Could not save fingerprint to localStorage:', storageError)
+    const storedFingerprint = getSessionStorageFingerprint()
+    if (storedFingerprint) {
+      cachedFingerprint = storedFingerprint
+      return cachedFingerprint
+    }
+    if (!saveSessionStorageFingerprint(fp)) {
+      console.warn('Device fingerprint is temporary because browser storage is unavailable')
+    }
   }
 
   cachedFingerprint = fp

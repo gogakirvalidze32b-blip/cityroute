@@ -195,15 +195,13 @@ async function persistPlan(
   plan: SubscriptionPlan,
 ): Promise<string | null> {
 
-  writeLocalPlan(userId, plan)
-
-
-
   const supabase = getSupabase()
 
   const { error: rpcError } = await supabase.rpc('select_subscription_plan', { chosen: plan })
 
   if (rpcError) return rpcError.message
+
+  writeLocalPlan(userId, plan)
 
   return null
 
@@ -251,13 +249,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadedProfileUserIdRef = useRef<string | null>(null)
 
   const loadProfile = useCallback(async (userId: string, silent = false) => {
+    const hasProfileForUser = loadedProfileUserIdRef.current === userId
     setDeviceBinding(true)
     try {
       setDeviceBlocked(null)
       const sessionError = await activateSession()
       if (sessionError) {
         setDeviceBlocked(sessionError)
-        if (!silent) {
+        if (!silent && !hasProfileForUser) {
           loadedProfileUserIdRef.current = null
           setProfile(null)
         }
@@ -645,8 +644,9 @@ export function useAuth() {
 
 
 
-export function usePlanFeatures() {
-
-  return useAuth().features
-
+export function usePlanFeatures(fallback?: PlanFeatures) {
+  const ctx = useContext(AuthContext)
+  if (ctx) return ctx.features
+  if (fallback) return fallback
+  throw new Error('usePlanFeatures must be used within AuthProvider')
 }

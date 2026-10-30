@@ -9,6 +9,7 @@ type Props = {
   heading: number
   nextPin: PinRow | null
   hasGpsFix?: boolean
+  offlineMaps?: boolean
 }
 
 // Toggle between Leaflet (optimized) and MapLibre+Mapbox
@@ -16,7 +17,7 @@ const USE_MAPLIBRE = false // ← Back to Leaflet - properly optimized for Andro
 
 /** Live GPS map — MapLibre/Leaflet, follows user while driving. */
 export function ExamLiveMap(props: Props) {
-  if (USE_MAPLIBRE) {
+  if (USE_MAPLIBRE && !props.offlineMaps) {
     return <ExamLiveMapLibre {...props} />
   }
   return <ExamLiveMapLeaflet {...props} />

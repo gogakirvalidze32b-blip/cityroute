@@ -4,22 +4,35 @@ import { parseDeviceBindResult } from './device'
 describe('getDeviceFingerprint', () => {
   beforeEach(() => {
     vi.resetModules()
+    localStorage.clear()
+    sessionStorage.clear()
   })
 
-  it('preserves and reuses the saved origin-scoped fingerprint', async () => {
+  it('restores the same origin-scoped fingerprint after a module reload', async () => {
+    const firstModule = await import('./device')
+    const firstFingerprint = firstModule.getDeviceFingerprint()
+
+    vi.resetModules()
+    const reloadedModule = await import('./device')
+    const reloadedFingerprint = reloadedModule.getDeviceFingerprint()
+
+    expect(reloadedFingerprint).toBe(firstFingerprint)
+    expect(localStorage.getItem('cityroute_device_fp')).toBe(firstFingerprint)
+  })
+
+  it('replaces a stored fingerprint outside the server-accepted length range', async () => {
     localStorage.clear()
-    localStorage.setItem('cityroute_device_fp', 'saved-device-fingerprint')
+    localStorage.setItem('cityroute_device_fp', 'bad')
     const { getDeviceFingerprint } = await import('./device')
 
-    const firstAccountFingerprint = getDeviceFingerprint()
-    const secondAccountFingerprint = getDeviceFingerprint()
+    const fingerprint = getDeviceFingerprint()
 
-    expect(firstAccountFingerprint).toBe('saved-device-fingerprint')
-    expect(secondAccountFingerprint).toBe(firstAccountFingerprint)
-    expect(localStorage.getItem('cityroute_device_fp')).toBe('saved-device-fingerprint')
+    expect(fingerprint.trim().length).toBeGreaterThanOrEqual(8)
+    expect(fingerprint.trim().length).toBeLessThanOrEqual(256)
+    expect(localStorage.getItem('cityroute_device_fp')).toBe(fingerprint)
   })
 
-  it('reuses one in-memory fingerprint when localStorage is unavailable', async () => {
+  it('persists the fingerprint in sessionStorage when localStorage is unavailable', async () => {
     const storageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage')
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
@@ -35,6 +48,11 @@ describe('getDeviceFingerprint', () => {
       const second = getDeviceFingerprint()
 
       expect(second).toBe(first)
+      expect(sessionStorage.getItem('cityroute_device_fp')).toBe(first)
+
+      vi.resetModules()
+      const reloadedModule = await import('./device')
+      expect(reloadedModule.getDeviceFingerprint()).toBe(first)
     } finally {
       if (storageDescriptor) {
         Object.defineProperty(window, 'localStorage', storageDescriptor)

@@ -4,9 +4,12 @@ import type { MapTilesDefinition } from '@/lib/map-tiles'
 type Props = {
   tiles: MapTilesDefinition
   detectRetina?: boolean
+  enabled?: boolean
 }
 
-export function MapBasemapLayers({ tiles, detectRetina }: Props) {
+export function MapBasemapLayers({ tiles, detectRetina, enabled = true }: Props) {
+  if (!enabled) return null
+
   return (
     <>
       {tiles.layers.map((layer, index) => (

@@ -76,6 +76,30 @@ values
   )
 on conflict (profile_id, session_id) do nothing;
 
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'profile_active_sessions'
+      and column_name = 'device_fingerprint'
+  ) then
+    update public.profile_active_sessions
+    set device_fingerprint = case session_id
+      when '00000000-0000-0000-0000-000000000721'::uuid then '017-support-admin-device'
+      when '00000000-0000-0000-0000-000000000711'::uuid then '017-target-device-a'
+      when '00000000-0000-0000-0000-000000000712'::uuid then '017-target-device-b'
+    end
+    where session_id in (
+      '00000000-0000-0000-0000-000000000721',
+      '00000000-0000-0000-0000-000000000711',
+      '00000000-0000-0000-0000-000000000712'
+    );
+  end if;
+end;
+$$;
+
 select ok(
   (select relrowsecurity from pg_catalog.pg_class where oid = 'public.device_session_limit_overrides'::regclass),
   'override grants are protected by RLS'
@@ -197,6 +221,7 @@ select set_config(
   true
 );
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000701', true);
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"017-target-device-c"}', true);
 select is(
   public.activate_current_session()->>'status',
   'blocked',

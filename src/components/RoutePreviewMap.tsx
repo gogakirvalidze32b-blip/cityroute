@@ -15,6 +15,7 @@ type Props = {
   route: RouteWithPins
   selectedPinOrder?: number | null
   onPinSelect?: (sortOrder: number) => void
+  offlineMaps?: boolean
 }
 
 function MapSizeFix() {
@@ -119,10 +120,12 @@ function InteractiveRoutePreviewMap({
   route,
   selectedPinOrder,
   onPinSelect,
+  offlineMaps = false,
 }: {
   route: RouteWithPins
   selectedPinOrder?: number | null
   onPinSelect?: (sortOrder: number) => void
+  offlineMaps?: boolean
 }) {
   const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
   const line = examRouteLine(route.slug, pins)
@@ -163,7 +166,7 @@ function InteractiveRoutePreviewMap({
         maxZoom={MAP_TILES.maxZoom}
         minZoom={10}
       >
-        <MapBasemapLayers tiles={MAP_TILES} detectRetina />
+        <MapBasemapLayers tiles={MAP_TILES} detectRetina enabled={!offlineMaps} />
         <RoutePolyline positions={line} variant="pins" />
         {pins.map((pin) => (
           <RoutePin
@@ -194,7 +197,7 @@ function InteractiveRoutePreviewMap({
   )
 }
 
-export function RoutePreviewMap({ route, selectedPinOrder, onPinSelect }: Props) {
+export function RoutePreviewMap({ route, selectedPinOrder, onPinSelect, offlineMaps }: Props) {
   const officialMap = route.slug === 'route-5' ? getRouteOfficialPreviewMap(route.slug) : null
   if (officialMap) {
     return <OfficialRoutePreviewImage map={officialMap} />
@@ -204,6 +207,7 @@ export function RoutePreviewMap({ route, selectedPinOrder, onPinSelect }: Props)
       route={route}
       selectedPinOrder={selectedPinOrder}
       onPinSelect={onPinSelect}
+      offlineMaps={offlineMaps}
     />
   )
 }

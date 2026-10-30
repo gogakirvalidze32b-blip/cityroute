@@ -99,17 +99,20 @@ export function examSummaryLines(summary: ExamSessionSummary): { label: string; 
   return gridLines
 }
 
-const historyKey = (routeId: string) => `cityroute-exam-${routeId}`
+const historyKey = (routeId: string, scope?: string) => {
+  const key = `cityroute-exam-${routeId}`
+  return scope ? `cityroute-preview:${encodeURIComponent(scope)}:${key}` : key
+}
 
-export function saveExamSummary(summary: ExamSessionSummary) {
-  const key = historyKey(summary.routeId)
-  const prev = loadExamHistory(summary.routeId)
+export function saveExamSummary(summary: ExamSessionSummary, scope?: string) {
+  const key = historyKey(summary.routeId, scope)
+  const prev = loadExamHistory(summary.routeId, scope)
   localStorage.setItem(key, JSON.stringify([summary, ...prev].slice(0, 10)))
 }
 
-export function loadExamHistory(routeId: string): ExamSessionSummary[] {
+export function loadExamHistory(routeId: string, scope?: string): ExamSessionSummary[] {
   try {
-    const raw = localStorage.getItem(historyKey(routeId))
+    const raw = localStorage.getItem(historyKey(routeId, scope))
     if (!raw) return []
     return JSON.parse(raw) as ExamSessionSummary[]
   } catch {

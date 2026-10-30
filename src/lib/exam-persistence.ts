@@ -30,14 +30,19 @@ export type SavedExamState = {
 
 const STORAGE_KEY = 'cityroute-active-exam'
 const ROUTE_STORAGE_PREFIX = `${STORAGE_KEY}:`
+const SCOPE_STORAGE_PREFIX = 'cityroute-preview:'
 const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 საათი
 
-function routeStorageKeys(routeId: string, routeSlug?: string): string[] {
+function scopedStorageKey(key: string, scope?: string): string {
+  return scope ? `${SCOPE_STORAGE_PREFIX}${encodeURIComponent(scope)}:${key}` : key
+}
+
+function routeStorageKeys(routeId: string, routeSlug?: string, scope?: string): string[] {
   return [...new Set(
     [routeSlug, routeId]
       .filter((value): value is string => Boolean(value))
       .map((value) => `${ROUTE_STORAGE_PREFIX}${encodeURIComponent(value)}`),
-  )]
+  )].map((key) => scopedStorageKey(key, scope))
 }
 
 function isSavedExamState(value: unknown): value is SavedExamState {
@@ -82,15 +87,17 @@ function readSavedExamForRoute(
   routeId: string,
   routeSlug?: string,
   routeName?: string,
+  scope?: string,
 ): SavedExamState | null {
-  for (const key of routeStorageKeys(routeId, routeSlug)) {
+  for (const key of routeStorageKeys(routeId, routeSlug, scope)) {
     const state = readSavedExam(key)
     if (state && matchesRoute(state, routeId, routeSlug, routeName)) return state
   }
 
-  const legacyState = readSavedExam()
+  const legacyKey = scopedStorageKey(STORAGE_KEY, scope)
+  const legacyState = readSavedExam(legacyKey)
   if (legacyState && matchesRoute(legacyState, routeId, routeSlug, routeName)) {
-    const routeKey = routeStorageKeys(routeId, routeSlug)[0]
+    const routeKey = routeStorageKeys(routeId, routeSlug, scope)[0]
     if (routeKey) {
       try {
         localStorage.setItem(routeKey, JSON.stringify(legacyState))
@@ -162,25 +169,27 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
 export function saveActiveExam(
   state: SavedExamState,
   options: { allowProgressRollback?: boolean } = {},
+  scope?: string,
 ): void {
   try {
     const incoming = { ...state, savedAt: Date.now() }
-    const routeKey = routeStorageKeys(incoming.routeId, incoming.routeSlug)[0]
+    const routeKey = routeStorageKeys(incoming.routeId, incoming.routeSlug, scope)[0]
     if (!routeKey) throw new Error('Cannot save exam state without a route identifier')
-    const legacyState = readSavedExam()
+    const legacyKey = scopedStorageKey(STORAGE_KEY, scope)
+    const legacyState = readSavedExam(legacyKey)
     if (legacyState && !sameRoute(legacyState, incoming)) {
-      const legacyRouteKey = routeStorageKeys(legacyState.routeId, legacyState.routeSlug)[0]
+      const legacyRouteKey = routeStorageKeys(legacyState.routeId, legacyState.routeSlug, scope)[0]
       if (legacyRouteKey && !readSavedExam(legacyRouteKey)) {
         localStorage.setItem(legacyRouteKey, JSON.stringify(legacyState))
       }
     }
     const previous =
-      readSavedExamForRoute(incoming.routeId, incoming.routeSlug, incoming.routeName) ??
+      readSavedExamForRoute(incoming.routeId, incoming.routeSlug, incoming.routeName, scope) ??
       (legacyState && sameRoute(legacyState, incoming) ? legacyState : null)
     const merged = options.allowProgressRollback ? incoming : mergeExamSave(previous, incoming)
     localStorage.setItem(routeKey, JSON.stringify(merged))
     // Keep a legacy latest-session entry for older app versions; route-keyed records are authoritative.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
+    localStorage.setItem(legacyKey, JSON.stringify(merged))
     console.log('💾 Exam state saved:', merged.routeName, merged.routeSlug ?? merged.routeId)
   } catch (err) {
     console.error('Failed to save exam state:', err)
@@ -195,8 +204,9 @@ export function loadActiveExam(
   routeId: string,
   routeSlug?: string,
   routeName?: string,
+  scope?: string,
 ): SavedExamState | null {
-  const state = readSavedExamForRoute(routeId, routeSlug, routeName)
+  const state = readSavedExamForRoute(routeId, routeSlug, routeName, scope)
   if (!state) return null
 
   const age = Date.now() - state.savedAt
@@ -208,9 +218,9 @@ export function loadActiveExam(
  * True when localStorage has an unexpired active exam for this slug.
  * Used before Supabase ids are available (RoutePage first paint).
  */
-export function hasSavedExamForSlug(routeSlug: string, routeName?: string): boolean {
-  const routeKey = `${ROUTE_STORAGE_PREFIX}${encodeURIComponent(routeSlug)}`
-  const state = readSavedExam(routeKey) ?? readSavedExam()
+export function hasSavedExamForSlug(routeSlug: string, routeName?: string, scope?: string): boolean {
+  const routeKey = scopedStorageKey(`${ROUTE_STORAGE_PREFIX}${encodeURIComponent(routeSlug)}`, scope)
+  const state = readSavedExam(routeKey) ?? readSavedExam(scopedStorageKey(STORAGE_KEY, scope))
   if (!state) return false
   if (state.routeSlug) return state.routeSlug === routeSlug
   return !!routeName && state.routeName === routeName
@@ -219,21 +229,31 @@ export function hasSavedExamForSlug(routeSlug: string, routeName?: string): bool
 /**
  * Clear one route's save, or all saves when called without a route.
  */
-export function clearActiveExam(routeId?: string, routeSlug?: string, routeName?: string): void {
+export function clearActiveExam(
+  routeId?: string,
+  routeSlug?: string,
+  routeName?: string,
+  scope?: string,
+): void {
   try {
     if (!routeId && !routeSlug) {
+      const scopePrefix = scope
+        ? `${SCOPE_STORAGE_PREFIX}${encodeURIComponent(scope)}:`
+        : null
       const keys: string[] = []
       for (let index = 0; index < localStorage.length; index += 1) {
         const key = localStorage.key(index)
-        if (key === STORAGE_KEY || key?.startsWith(ROUTE_STORAGE_PREFIX)) keys.push(key)
+        const matchesDefault = !scope && (key === STORAGE_KEY || key?.startsWith(ROUTE_STORAGE_PREFIX))
+        if (matchesDefault || (scopePrefix && key?.startsWith(scopePrefix))) keys.push(key!)
       }
       keys.forEach((key) => localStorage.removeItem(key))
     } else {
       const id = routeId ?? routeSlug!
-      routeStorageKeys(id, routeSlug).forEach((key) => localStorage.removeItem(key))
-      const legacyState = readSavedExam()
+      routeStorageKeys(id, routeSlug, scope).forEach((key) => localStorage.removeItem(key))
+      const legacyKey = scopedStorageKey(STORAGE_KEY, scope)
+      const legacyState = readSavedExam(legacyKey)
       if (legacyState && matchesRoute(legacyState, id, routeSlug, routeName)) {
-        localStorage.removeItem(STORAGE_KEY)
+        localStorage.removeItem(legacyKey)
       }
     }
     console.log('🗑️ Cleared saved exam state', routeSlug ?? routeId ?? '')
@@ -245,8 +265,13 @@ export function clearActiveExam(routeId?: string, routeSlug?: string, routeName?
 /**
  * Check if there's a saved exam for this route
  */
-export function hasSavedExam(routeId: string, routeSlug?: string, routeName?: string): boolean {
-  return loadActiveExam(routeId, routeSlug, routeName) !== null
+export function hasSavedExam(
+  routeId: string,
+  routeSlug?: string,
+  routeName?: string,
+  scope?: string,
+): boolean {
+  return loadActiveExam(routeId, routeSlug, routeName, scope) !== null
 }
 
 /**

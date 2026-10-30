@@ -469,6 +469,7 @@ type Props = {
   nextPin: PinRow | null
   hasGpsFix?: boolean
   mapBadge?: string
+  offlineMaps?: boolean
   onGpsUpdate?: (update: RawGpsUpdate) => void // For parent to send GPS updates
 }
 
@@ -479,6 +480,7 @@ export function ExamLiveMapLeaflet({
   nextPin,
   hasGpsFix = true,
   mapBadge,
+  offlineMaps = false,
   onGpsUpdate,
 }: Props) {
   const [cameraMode, setCameraMode] = useState<CameraMode>('FOLLOW')
@@ -674,7 +676,7 @@ export function ExamLiveMapLeaflet({
           doubleClickZoom="center"
         >
           <MapSizeFix />
-          <MapBasemapLayers tiles={MAP_TILES} detectRetina />
+          <MapBasemapLayers tiles={MAP_TILES} detectRetina enabled={!offlineMaps} />
 
           {pinLine.length >= 2 && <RoutePolyline positions={pinLine} variant="pins" />}
 

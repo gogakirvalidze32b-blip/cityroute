@@ -68,6 +68,26 @@ describe('Premium package selection', () => {
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeTruthy()
   })
 
+  it('keeps the user on plan selection when the secure plan RPC rejects the trial choice', async () => {
+    state.selectPlan.mockResolvedValue('This session is no longer active; sign in again')
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/" element={<h1>Home</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /უფასო/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This session is no longer active; sign in again',
+    )
+    expect(screen.queryByRole('heading', { name: 'Home' })).toBeNull()
+    expect(state.selectPlan).toHaveBeenCalledWith('premium')
+  })
+
   it('lets an active trial open early payment, return to routes, and sign out', async () => {
     state.auth = {
       user: { id: 'user-1' },

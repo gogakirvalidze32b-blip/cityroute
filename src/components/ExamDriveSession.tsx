@@ -8,6 +8,7 @@ import { ExamViewSwitcher, type ExamDriveView } from '@/components/ExamViewSwitc
 import { GpsAccuracyBadge } from '@/components/GpsAccuracyBadge'
 import { RoutePreviewMap } from '@/components/RoutePreviewMap'
 import { usePlanFeatures } from '@/context/AuthContext'
+import type { PlanFeatures } from '@/lib/plan-features'
 import { audioEngine, type PlaybackFailureReason } from '@/lib/audio'
 import {
   createExamSession,
@@ -101,9 +102,10 @@ function restoredHandledOrders(
   saved: SavedExamState,
   pins: readonly PinRow[],
   routeSlug: string,
+  persistenceScope?: string,
 ): Set<number> | null {
   const savedOrders = initialHandledOrders(saved, pins, routeSlug)
-  const routeOrders = loadRoutePinProgress(routeSlug)
+  const routeOrders = loadRoutePinProgress(routeSlug, persistenceScope)
   const savedPinIds = ordersForIds(saved.triggeredPins, pins, routeSlug)
   const hasRecoverableProgress =
     Boolean(savedOrders?.size) ||
@@ -174,18 +176,30 @@ const devLog: typeof console.log = (...args) => {
 type Props = {
   route: RouteWithPins
   onPhaseChange?: (phase: Phase) => void
+  persistenceScope?: string
+  offlineMaps?: boolean
+  planFeaturesOverride?: PlanFeatures
+  debugPanels?: boolean
 }
 
-export function ExamDriveSession({ route, onPhaseChange }: Props) {
-  const features = usePlanFeatures()
+export function ExamDriveSession({
+  route,
+  onPhaseChange,
+  persistenceScope,
+  offlineMaps = false,
+  planFeaturesOverride,
+  debugPanels,
+}: Props) {
+  const features = usePlanFeatures(planFeaturesOverride)
+  const debugPanelEnabled = debugPanels ?? SPEED_LIMIT_DEBUG_PANEL
   
   // Try to restore saved exam state (slug survives local-route-* → Supabase UUID)
   // savedEpoch is bumped by Finish/restart so a stale memo can never resurrect a finished exam.
   const [savedEpoch, setSavedEpoch] = useState(0)
   const savedState = useMemo(
-    () => loadActiveExam(route.id, route.slug, route.name_ka),
+    () => loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [route.id, route.slug, route.name_ka, savedEpoch],
+    [route.id, route.slug, route.name_ka, persistenceScope, savedEpoch],
   )
   const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
   const [previewSelectionMode, setPreviewSelectionMode] = useState<'automatic' | 'manual'>('automatic')
@@ -200,7 +214,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   const [driveView, setDriveView] = useState<ExamDriveView>('map')
   const [exam, setExam] = useState(() => savedState?.exam || createExamSession(route.id, route.name_ka))
   const [examSummary, setExamSummary] = useState<ExamSessionSummary | null>(null)
-  const [lastHistory] = useState(() => loadExamHistory(route.id))
+  const [lastHistory] = useState(() => loadExamHistory(route.id, persistenceScope))
   const [initialAudioQueue] = useState(() =>
     restoreAudioQueue(
       route.pins,
@@ -238,15 +252,15 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   
   // DEBUG: Session diagnostic panel state
   // Production: panel and its 500 ms re-render timer are off. Development: unchanged.
-  const [debugSessionVisible, setDebugSessionVisible] = useState(SPEED_LIMIT_DEBUG_PANEL)
+  const [debugSessionVisible, setDebugSessionVisible] = useState(debugPanelEnabled)
   const [, forceDebugUpdate] = useState(0)
   useEffect(() => {
-    if (!SPEED_LIMIT_DEBUG_PANEL || !debugSessionVisible) return
+    if (!debugPanelEnabled || !debugSessionVisible) return
     const interval = setInterval(() => {
       forceDebugUpdate(v => v + 1)
     }, 500)
     return () => clearInterval(interval)
-  }, [debugSessionVisible])
+  }, [debugPanelEnabled, debugSessionVisible])
 
   const phaseRef = useRef<Phase>(phase)
   useEffect(() => {
@@ -254,7 +268,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   }, [phase])
 
   const finishRouteSlugRef = useRef<string | null>(null)
-  const [initialRoutePinProgress] = useState(() => loadRoutePinProgress(route.slug) ?? [])
+  const [initialRoutePinProgress] = useState(() => loadRoutePinProgress(route.slug, persistenceScope) ?? [])
   const savedProgressOrders = savedState
     ? initialHandledOrders(savedState, route.pins, route.slug)
     : null
@@ -455,13 +469,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       (phaseRef.current === 'summary' && finishRouteSlugRef.current === route.slug)
     ) return
 
-    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
 
     if (saved) {
       if (resumedSlugRef.current !== route.slug) {
         resumedSlugRef.current = route.slug
         const restoredOrders = FIELD_TEST_SLUGS.has(route.slug)
-          ? restoredHandledOrders(saved, sortedPins, route.slug)
+          ? restoredHandledOrders(saved, sortedPins, route.slug, persistenceScope)
           : null
         triggeredRef.current = restoredOrders
           ? pinIdsForOrders(sortedPins, restoredOrders)
@@ -509,7 +523,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
 
     // Slug says a session exists; local id may not have matched yet. Do not reset to preview.
-    if (hasSavedExamForSlug(route.slug, route.name_ka)) {
+    if (hasSavedExamForSlug(route.slug, route.name_ka, persistenceScope)) {
       setPhase('active')
       setDriveView(features.mapNav ? 'map' : 'panel')
       return
@@ -523,7 +537,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setDriveView(features.mapNav ? 'map' : 'panel')
     setGpsError(getGpsEnvironmentIssue())
     setLastSpoken(null)
-    const savedOrders = new Set(loadRoutePinProgress(route.slug) ?? [])
+    const savedOrders = new Set(loadRoutePinProgress(route.slug, persistenceScope) ?? [])
     triggeredRef.current = pinIdsForOrders(sortedPins, savedOrders)
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = savedOrders
     setPendingPinSortOrder(null)
@@ -536,7 +550,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
     setHeading(0)
-  }, [route.id, route.slug, route.name_ka, sortedPins, features.mapNav, setPendingPinSortOrder])
+  }, [route.id, route.slug, route.name_ka, persistenceScope, sortedPins, features.mapNav, setPendingPinSortOrder])
 
   // Local p2-/p3- ids and Supabase UUIDs share sort_order. Progress is kept by sort_order,
   // so a pin list swap re-derives the handled ids instead of dropping or guessing them.
@@ -677,7 +691,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             if (orders === null) return {}
             const sorted = [...orders].sort((a, b) => a - b)
             if (pins.length === 0) {
-              const previous = loadActiveExam(route.id, route.slug, route.name_ka)
+              const previous = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
               return {
                 triggeredSortOrders: sorted,
                 lastPassedSortOrder:
@@ -711,6 +725,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           savedAt: Date.now(),
         },
         { allowProgressRollback },
+        persistenceScope,
       )
     }
 
@@ -730,7 +745,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       if (saveNowRef.current === saveState) saveNowRef.current = null
       if (!finishInProgressRef.current) saveState() // Only save on cleanup if not finishing
     }
-  }, [phase, route.id, route.slug, route.name_ka, exam, userPos, heading, speedKmh, elapsedMs, sortedPins])
+  }, [phase, route.id, route.slug, route.name_ka, persistenceScope, exam, userPos, heading, speedKmh, elapsedMs, sortedPins])
 
   useEffect(() => {
     if (!gpsStarted) return
@@ -748,7 +763,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         
         // Reject invalid readings
         if (!filtered) {
-          if (SPEED_LIMIT_DEBUG_PANEL) {
+          if (debugPanelEnabled) {
             setGpsRejection((prev) => ({
               reason: gpsFilterRef.current.lastRejection ?? 'unknown',
               count: (prev?.count ?? 0) + 1,
@@ -757,7 +772,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
           }
           return
         }
-        if (SPEED_LIMIT_DEBUG_PANEL) {
+        if (debugPanelEnabled) {
           setGpsRejection((prev) => (prev && prev.reason ? { ...prev, reason: null } : prev))
         }
         
@@ -1064,13 +1079,13 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     }
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
-    clearRoutePinProgress(route.slug)
+    clearRoutePinProgress(route.slug, persistenceScope)
     const handled = new Set(
       voicePins
         .filter((pin) => pin.sort_order < startSortOrder)
         .map((pin) => pin.sort_order),
     )
-    if (handled.size > 0) saveRoutePinProgress(route.slug, handled)
+    if (handled.size > 0) saveRoutePinProgress(route.slug, handled, persistenceScope)
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     route3Pin12RoadURef.current = null
@@ -1121,7 +1136,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (savedState) {
       console.log('🔄 Resuming active session - not calling startSession()')
       if (FIELD_TEST_SLUGS.has(route.slug)) {
-        const restoredOrders = restoredHandledOrders(savedState, voicePins, route.slug)
+        const restoredOrders = restoredHandledOrders(savedState, voicePins, route.slug, persistenceScope)
         if (restoredOrders) {
           const orders = persistMostAdvancedPinProgress(restoredOrders)
           handledOrdersRef.current = orders
@@ -1161,7 +1176,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     if (orders === null) return {}
     const sorted = [...orders].sort((a, b) => a - b)
     if (pins.length === 0) {
-      const previous = loadActiveExam(route.id, route.slug, route.name_ka)
+      const previous = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
       return {
         triggeredSortOrders: sorted,
         lastPassedSortOrder:
@@ -1188,10 +1203,10 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   function persistMostAdvancedPinProgress(...candidates: Array<Iterable<number> | null | undefined>) {
     const orders = mostAdvancedPinProgress(
       pinsRef.current,
-      loadRoutePinProgress(route.slug),
+      loadRoutePinProgress(route.slug, persistenceScope),
       ...candidates,
     )
-    saveRoutePinProgress(route.slug, orders)
+    saveRoutePinProgress(route.slug, orders, persistenceScope)
     return orders
   }
 
@@ -1232,7 +1247,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
       ...(FIELD_TEST_SLUGS.has(route.slug) ? fieldTestProgressFields() : {}),
       savedAt: Date.now(),
-    })
+    }, {}, persistenceScope)
   }
 
   /** True when Telavi field-test routes still have an unhandled PIN (mid-route stop). */
@@ -1246,7 +1261,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   function applySavedProgress(saved: SavedExamState) {
     const restoredOrders = FIELD_TEST_SLUGS.has(route.slug)
-      ? restoredHandledOrders(saved, pinsRef.current, route.slug)
+      ? restoredHandledOrders(saved, pinsRef.current, route.slug, persistenceScope)
       : null
     triggeredRef.current = restoredOrders
       ? pinIdsForOrders(pinsRef.current, restoredOrders)
@@ -1312,12 +1327,12 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       persistActiveExamNow()
       setSummaryCanContinue(true)
     } else {
-      clearActiveExam(route.id, route.slug, route.name_ka)
+      clearActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
       setSummaryCanContinue(false)
     }
     setSavedEpoch((v) => v + 1)
     const summary = finishExamSession(exam)
-    saveExamSummary(summary)
+    saveExamSummary(summary, persistenceScope)
     setExamSummary(summary)
     setPhase('summary')
     releaseWake.current?.()
@@ -1328,7 +1343,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   function continueFromSummary() {
     audioEngine.unlock()
-    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
     if (!saved) {
       restartPreview()
       return
@@ -1356,7 +1371,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
 
   function restartPreview() {
     const handled = new Set<number>()
-    clearRoutePinProgress(route.slug)
+    clearRoutePinProgress(route.slug, persistenceScope)
     queuedAudioPinOrdersRef.current = []
     finishInProgressRef.current = true
     finishRouteSlugRef.current = null
@@ -1378,7 +1393,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
     setLastSpoken(null)
     setElapsedMs(0)
     sessionStartRef.current = 0
-    clearActiveExam(route.id, route.slug, route.name_ka) // Clear this route's saved state when restarting
+    clearActiveExam(route.id, route.slug, route.name_ka, persistenceScope) // Clear this route's saved state when restarting
     setSavedEpoch((v) => v + 1)
   }
 
@@ -1404,7 +1419,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
   return (
     <>
     <div
-      className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}${active && SPEED_LIMIT_DEBUG_PANEL ? ' exam-session--sl-debug' : ''}`}
+      className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}${active && debugPanelEnabled ? ' exam-session--sl-debug' : ''}`}
     >
       {active && (
         <>
@@ -1473,7 +1488,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
             </div>
           )}
 
-          {SPEED_LIMIT_DEBUG_PANEL && (
+          {debugPanelEnabled && (
             <SpeedLimitDebugPanel
               routeSlug={route.slug}
               routeId={route.id}
@@ -1496,6 +1511,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
                 heading={heading}
                 nextPin={nextPin}
                 hasGpsFix={userPos !== null}
+                offlineMaps={offlineMaps}
               />
             )}
             {shouldRenderMap && (
@@ -1534,6 +1550,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
         <div className="exam-preview">
           <RoutePreviewMap
             route={route}
+            offlineMaps={offlineMaps}
             selectedPinOrder={
               previewSelectionMode === 'manual'
                 ? previewPin?.sort_order ?? null
@@ -1648,7 +1665,7 @@ export function ExamDriveSession({ route, onPhaseChange }: Props) {
       )}
       
       {/* DEBUG PANEL - Session diagnostic */}
-      {SPEED_LIMIT_DEBUG_PANEL && debugSessionVisible && (
+      {debugPanelEnabled && debugSessionVisible && (
         <div style={{
           position: 'fixed',
           top: '10px',
