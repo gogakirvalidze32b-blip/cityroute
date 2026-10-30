@@ -1,6 +1,7 @@
 begin;
-
+set local role postgres;
 create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
 select plan(10);
 
 insert into auth.users (
@@ -97,6 +98,7 @@ select set_config(
 select is(public.has_current_active_session(), true, 'third-device attempt preserves the second session');
 
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions

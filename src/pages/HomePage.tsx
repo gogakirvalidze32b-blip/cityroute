@@ -13,11 +13,20 @@ import { planName } from '@/data/subscription-plans'
 import { selectableRoutes } from '@/data/selectable-routes'
 
 export function HomePage() {
-  const { profile, hasAccess, deviceBlocked, signOut } = useAuth()
+  const { profile, entitlement, entitlementStatusUnavailable, hasAccess, deviceBlocked, signOut } = useAuth()
   const { routes, source } = useRoutes()
   const visibleRoutes = selectableRoutes(routes)
   const layoutMode = useExamLayoutMode()
-  const onTrial = profile?.subscription_status === 'trial' && hasAccess
+  const onTrial =
+    entitlement?.source === 'trial' &&
+    profile?.subscription_status === 'trial' &&
+    hasAccess
+  const verifiedPlanLabel =
+    entitlement?.source === 'paid' || entitlement?.source === 'legacy'
+      ? accessLabel(profile)
+      : onTrial
+        ? accessLabel(profile)
+        : null
   const [signOutError, setSignOutError] = useState<string | null>(null)
 
   async function handleSignOut() {
@@ -91,10 +100,18 @@ export function HomePage() {
           </Link>
         )}
         <p className="muted home-meta">
-          {!onTrial && profile && accessLabel(profile)}
-          {!onTrial && profile && ' · '}
-          {profile?.subscription_plan && planName(profile.subscription_plan)}
-          {profile?.subscription_plan && ' · '}
+          {entitlementStatusUnavailable
+            ? 'გეგმისა და გადახდის სტატუსი სერვერზე ვერ მოწმდება'
+            : verifiedPlanLabel}
+          {(entitlementStatusUnavailable || verifiedPlanLabel) && ' · '}
+          {!entitlementStatusUnavailable &&
+            entitlement?.source !== 'inactive' &&
+            profile?.subscription_plan &&
+            planName(profile.subscription_plan)}
+          {!entitlementStatusUnavailable &&
+            entitlement?.source !== 'inactive' &&
+            profile?.subscription_plan &&
+            ' · '}
           {routeSourceLabel(source)}
         </p>
         <SupportButton />

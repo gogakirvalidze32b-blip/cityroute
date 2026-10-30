@@ -1,6 +1,7 @@
 begin;
-
+set local role postgres;
 create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
 select plan(5);
 
 insert into auth.users (
@@ -95,6 +96,7 @@ select is(
   'a linked failed BOG payment does not grant Premium access'
 );
 reset role;
+set local role postgres;
 
 select is(
   (select subscription_status from public.profiles where id = '00000000-0000-0000-0000-000000000952'),

@@ -1,6 +1,7 @@
 begin;
-
+set local role postgres;
 create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
 select plan(25);
 
 insert into auth.users (
@@ -82,6 +83,7 @@ select is(
   'verified 99 GEL receipt is accepted'
 );
 reset role;
+set local role postgres;
 
 select is(
   (select subscription_status from public.profiles where id = '00000000-0000-0000-0000-000000000901'),
@@ -130,6 +132,7 @@ select is(
   'duplicate success verification is idempotent'
 );
 reset role;
+set local role postgres;
 
 set local role service_role;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
@@ -142,6 +145,7 @@ select is(
   'verified 179 GEL receipt is accepted'
 );
 reset role;
+set local role postgres;
 
 select is(
   (select subscription_status from public.profiles where id = '00000000-0000-0000-0000-000000000902'),
@@ -191,6 +195,7 @@ select is(
   'bank processing status is recorded without treating it as success'
 );
 reset role;
+set local role postgres;
 set local role service_role;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 select is(
@@ -202,6 +207,7 @@ select is(
   'verified bank refund is recorded'
 );
 reset role;
+set local role postgres;
 select is(
   public.current_verified_premium_device_slots('00000000-0000-0000-0000-000000000902'),
   0,
@@ -236,6 +242,7 @@ select throws_ok(
   'a mismatched bank receipt cannot activate Premium'
 );
 reset role;
+set local role postgres;
 
 select is(
   (select status from public.payment_transactions where payment_id = 'bog-mismatch-179'),

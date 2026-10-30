@@ -49,6 +49,8 @@ type AuthState = {
   user: User | null
 
   profile: Profile | null
+  entitlement: CurrentAccountEntitlement | null
+  entitlementStatusUnavailable: boolean
 
   hasAccess: boolean
 
@@ -72,11 +74,46 @@ type AuthState = {
 
 }
 
+export type CurrentAccountEntitlement = {
+  source: 'trial' | 'paid' | 'legacy' | 'inactive'
+  paymentStatus: string | null
+  paymentAmount: number | null
+  paymentCurrency: string | null
+  deviceLimit: number
+  accessActive: boolean
+}
+
 
 
 const AuthContext = createContext<AuthState | null>(null)
 
+function isEntitlementSource(
+  value: unknown,
+): value is CurrentAccountEntitlement['source'] {
+  return value === 'trial' || value === 'paid' || value === 'legacy' || value === 'inactive'
+}
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string'
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || typeof value === 'number'
+}
+
+function isMissingEntitlementRpc(error: unknown): boolean {
+  if (!isRecord(error)) return false
+  const code = error.code
+  const message = typeof error.message === 'string' ? error.message : ''
+  return (
+    (code === 'PGRST202' || code === '42883') &&
+    message.includes('get_current_account_entitlement')
+  )
+}
 
 async function fetchProfile(userId: string): Promise<Profile | null> {
 
@@ -95,6 +132,44 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
 type SessionActivation = {
   error: string | null
   accessActive: boolean
+}
+
+async function fetchCurrentAccountEntitlement(): Promise<CurrentAccountEntitlement | null> {
+  const { data, error } = await getSupabase().rpc('get_current_account_entitlement')
+  if (error) {
+    if (isMissingEntitlementRpc(error)) return null
+    throw error
+  }
+  if (!isRecord(data)) {
+    throw new Error('Invalid get_current_account_entitlement response')
+  }
+  const source: unknown = data.entitlement
+  const paymentStatus: unknown = data.payment_status
+  const paymentAmount: unknown = data.payment_amount
+  const paymentCurrency: unknown = data.payment_currency
+  const deviceLimit: unknown = data.device_limit
+  const accessActive: unknown = data.access_active
+  if (
+    data.status !== 'ok' ||
+    !isEntitlementSource(source) ||
+    typeof deviceLimit !== 'number' ||
+    !Number.isInteger(deviceLimit) ||
+    deviceLimit < 0 ||
+    typeof accessActive !== 'boolean' ||
+    !isNullableString(paymentStatus) ||
+    !isNullableNumber(paymentAmount) ||
+    !isNullableString(paymentCurrency)
+  ) {
+    throw new Error('Invalid get_current_account_entitlement response')
+  }
+  return {
+    source,
+    paymentStatus,
+    paymentAmount,
+    paymentCurrency,
+    deviceLimit,
+    accessActive,
+  }
 }
 
 async function activateSession(): Promise<SessionActivation> {
@@ -168,6 +243,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const [profile, setProfile] = useState<Profile | null>(null)
 
+  const [entitlement, setEntitlement] = useState<CurrentAccountEntitlement | null>(null)
+
+  const [entitlementStatusUnavailable, setEntitlementStatusUnavailable] = useState(false)
+
   const [profileReady, setProfileReady] = useState(false)
 
   const [deviceBlocked, setDeviceBlocked] = useState<string | null>(null)
@@ -204,36 +283,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadedProfileUserIdRef = useRef<string | null>(null)
   const activatedUserIdRef = useRef<string | null>(null)
 
-  const loadProfile = useCallback(async (userId: string, silent = false) => {
-    const hasProfileForUser = loadedProfileUserIdRef.current === userId
+  const loadProfile = useCallback(async (userId: string) => {
     setDeviceBinding(true)
     try {
       setDeviceBlocked(null)
-      let profileFetchFailed = false
+      let currentProfile: Profile | null
       try {
-        const p = await fetchProfile(userId)
-        loadedProfileUserIdRef.current = p ? userId : null
-        setProfile(p)
+        currentProfile = await fetchProfile(userId)
+        if (!currentProfile) throw new Error('Profile not found')
       } catch (error) {
-        profileFetchFailed = true
         console.error('Profile loading failed:', error)
-        // A failed BACKGROUND refresh must not wipe a good profile (that would redirect to Home).
-        if (!silent) {
-          loadedProfileUserIdRef.current = null
-          setProfile(null)
-          setServerAccess(false)
-        }
+        loadedProfileUserIdRef.current = null
+        activatedUserIdRef.current = null
+        setProfile(null)
+        setEntitlement(null)
+        setEntitlementStatusUnavailable(false)
+        setServerAccess(false)
+        setDeviceBlocked('ანგარიშის მონაცემები სერვერიდან ვერ ჩაიტვირთა. სცადეთ ხელახლა.')
+        return
       }
 
+      loadedProfileUserIdRef.current = userId
+      setProfile(currentProfile)
+
       const activation = await activateSession()
+      let currentEntitlement: CurrentAccountEntitlement | null
+      try {
+        currentEntitlement = await fetchCurrentAccountEntitlement()
+        setEntitlement(currentEntitlement)
+        setEntitlementStatusUnavailable(currentEntitlement === null)
+      } catch (error) {
+        console.error('Account entitlement loading failed:', error)
+        activatedUserIdRef.current = null
+        setServerAccess(false)
+        setEntitlement(null)
+        setEntitlementStatusUnavailable(false)
+        setDeviceBlocked('გამოწერისა და გადახდის სტატუსი სერვერიდან ვერ ჩაიტვირთა. სცადეთ ხელახლა.')
+        return
+      }
+
       if (activation.error) {
         activatedUserIdRef.current = null
         setDeviceBlocked(activation.error)
         setServerAccess(false)
-      } else if (!profileFetchFailed || !hasProfileForUser) {
+      } else {
         activatedUserIdRef.current = userId
         setDeviceBlocked(null)
-        setServerAccess(activation.accessActive)
+        setServerAccess(
+          activation.accessActive &&
+          (currentEntitlement === null || currentEntitlement.accessActive),
+        )
       }
     } finally {
       setDeviceBinding(false)
@@ -248,6 +347,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!session?.user) {
 
       setProfile(null)
+
+      setEntitlement(null)
+      setEntitlementStatusUnavailable(false)
 
       setDeviceBlocked(null)
 
@@ -373,7 +475,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
             // Same user, profile already loaded (token refresh / tab refocus): keep the UI mounted.
 
-            void loadProfile(nextUserId, true)
+            void loadProfile(nextUserId)
 
             return
 
@@ -391,6 +493,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         activatedUserIdRef.current = null
 
         setProfile(null)
+        setEntitlementStatusUnavailable(false)
+        setEntitlementStatusUnavailable(false)
 
         setDeviceBlocked(null)
 
@@ -430,17 +534,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!mounted || checking || document.visibilityState === 'hidden') return
       checking = true
       try {
-        const [sessionResult, accessResult] = await Promise.all([
+        const [sessionResult, currentProfile, currentEntitlement] = await Promise.all([
           supabase.rpc('has_current_active_session'),
-          supabase.rpc('has_active_access', { uid: userId }),
+          fetchProfile(userId),
+          fetchCurrentAccountEntitlement(),
         ])
 
         if (!mounted) return
+        if (!currentProfile) throw new Error('Profile not found during revalidation')
 
         if (sessionResult.error || sessionResult.data !== true) {
           if (sessionResult.error) console.error('Session revalidation failed:', sessionResult.error)
           activatedUserIdRef.current = null
           setServerAccess(false)
+          setEntitlement(currentEntitlement)
+          setEntitlementStatusUnavailable(currentEntitlement === null)
           setDeviceBlocked(
             sessionResult.error
               ? 'სესიის სტატუსის გადამოწმება ვერ მოხერხდა. წვდომა დროებით შეზღუდულია.'
@@ -454,19 +562,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        if (accessResult.error || typeof accessResult.data !== 'boolean') {
-          if (accessResult.error) console.error('Premium entitlement revalidation failed:', accessResult.error)
-          setServerAccess(false)
-          setDeviceBlocked('Premium წვდომის სანდო შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.')
-          return
+        loadedProfileUserIdRef.current = userId
+        setProfile(currentProfile)
+        setEntitlement(currentEntitlement)
+        setEntitlementStatusUnavailable(currentEntitlement === null)
+        if (currentEntitlement) {
+          setServerAccess(currentEntitlement.accessActive)
+        } else {
+          const { data: existingAccess, error: existingAccessError } = await supabase.rpc(
+            'has_active_access',
+            { uid: userId },
+          )
+          if (existingAccessError || typeof existingAccess !== 'boolean') {
+            throw existingAccessError ?? new Error('Invalid has_active_access response')
+          }
+          setServerAccess(existingAccess)
         }
-
-        setServerAccess(accessResult.data)
         setDeviceBlocked(null)
       } catch (error) {
         console.error('Server access revalidation failed:', error)
         if (mounted) {
+          loadedProfileUserIdRef.current = null
           setServerAccess(false)
+          setProfile(null)
+          setEntitlement(null)
+          setEntitlementStatusUnavailable(false)
           setDeviceBlocked('სერვერთან კავშირი ვერ მოხერხდა. წვდომა დროებით შეზღუდულია.')
         }
       } finally {
@@ -498,6 +618,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSignOutWarning(null)
     setSession(null)
     setProfile(null)
+    setEntitlement(null)
+    setEntitlementStatusUnavailable(false)
     setServerAccess(false)
     setDeviceBlocked(null)
     setDeviceBinding(false)
@@ -505,8 +627,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadedProfileUserIdRef.current = null
     activatedUserIdRef.current = null
 
+    let revocationTimeout: ReturnType<typeof setTimeout> | undefined
     try {
-      const { data, error } = await supabase.rpc('deactivate_current_session')
+      const { data, error } = await Promise.race([
+        supabase.rpc('deactivate_current_session'),
+        new Promise<never>((_, reject) => {
+          revocationTimeout = setTimeout(
+            () => reject(new Error('Session revocation timed out')),
+            8000,
+          )
+        }),
+      ])
       if (error) throw error
       if (
         typeof data !== 'object' ||
@@ -529,6 +660,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSignOutWarning(
         'ანგარიშიდან გახვედით, მაგრამ ყველა მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა. შემდეგი შესვლისას წვდომა ხელახლა შემოწმდება.',
       )
+    } finally {
+      if (revocationTimeout !== undefined) clearTimeout(revocationTimeout)
     }
 
     const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' })
@@ -635,6 +768,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       profile,
 
+      entitlement,
+      entitlementStatusUnavailable,
+
       hasAccess,
 
       needsPlanSelection,
@@ -664,6 +800,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       session,
 
       profile,
+
+      entitlement,
+      entitlementStatusUnavailable,
 
       hasAccess,
 

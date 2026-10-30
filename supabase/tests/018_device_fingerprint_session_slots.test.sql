@@ -1,6 +1,7 @@
 begin;
-
+set local role postgres;
 create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
 select plan(47);
 
 select ok(
@@ -103,6 +104,7 @@ select is(
 );
 
 reset role;
+set local role postgres;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000801', true);
@@ -182,6 +184,7 @@ select set_config(
 );
 select is(public.has_current_active_session(), true, 'device B remains active after device A re-login');
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
@@ -213,6 +216,7 @@ select set_config(
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-b"}', true);
 select is(public.has_current_active_session(), true, 'blocked third device does not revoke device B');
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
@@ -241,6 +245,7 @@ select set_config(
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-b"}', true);
 select is(public.has_current_active_session(), true, 'newer 179 GEL session retains access after the stale-session attempt');
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
@@ -260,6 +265,7 @@ select set_config(
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-a"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'refresh of the same auth session is idempotent');
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
@@ -280,6 +286,7 @@ select is(
   'logout deactivates both account device sessions and reports the count'
 );
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
@@ -309,6 +316,7 @@ select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-
 select is(public.activate_current_session()->>'status', 'active', 'new login activates after account-wide logout');
 select is(public.has_current_active_session(), true, 'new login has app access after account-wide logout');
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
@@ -337,6 +345,7 @@ select set_config(
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-c"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'valid device remains active after expired-row cleanup');
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions
@@ -424,6 +433,7 @@ select set_config(
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-99-b"}', true);
 select is(public.has_current_active_session(), true, 'newer 99 GEL session retains access after the stale-session attempt');
 reset role;
+set local role postgres;
 select is(
   (select count(*)::integer
    from public.profile_active_sessions

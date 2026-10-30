@@ -1,7 +1,7 @@
 /**
  * Tab refocus (Return): supabase-js re-emits SIGNED_IN for the SAME user. That must not flip the
- * app to "loading" (which unmounts the active exam), must not wipe a good profile when the
- * background profile fetch fails, and SIGNED_OUT / a different user must still be handled.
+ * app to "loading" (which unmounts the active exam), must fail closed when a fresh profile fetch
+ * fails, and SIGNED_OUT / a different user must still be handled.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act, screen, waitFor } from '@testing-library/react'
@@ -13,6 +13,16 @@ const h = vi.hoisted(() => ({
   profileFetch: null as null | (() => Promise<{ data: unknown; error: unknown }>),
   sessionResponse: null as unknown,
   sessionError: null as unknown,
+  entitlementResponse: {
+    status: 'ok',
+    entitlement: 'legacy',
+    payment_status: null,
+    payment_amount: null,
+    payment_currency: null,
+    device_limit: 2,
+    access_active: true,
+  } as unknown,
+  entitlementError: null as unknown,
   activeSessionResponse: true as unknown,
   accessResponse: true as unknown,
   accessError: null as unknown,
@@ -68,6 +78,9 @@ vi.mock('@/lib/supabase', () => ({
       if (name === 'has_active_access') {
         return { data: h.accessResponse, error: h.accessError }
       }
+      if (name === 'get_current_account_entitlement') {
+        return { data: h.entitlementResponse, error: h.entitlementError }
+      }
       if (name === 'select_subscription_plan') {
         return {
           data: h.planError ? null : { status: 'ok', plan: 'premium' },
@@ -86,6 +99,24 @@ const profile = (id: string) => ({
   subscription_plan: 'full',
 })
 
+it('denies access when the authoritative entitlement snapshot cannot be loaded', async () => {
+  h.profileFetch = async () => ({ data: profile('u1'), error: null })
+  h.entitlementError = { message: 'snapshot unavailable' }
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  render(
+    <AuthProvider>
+      <Gate />
+      <EntitlementProbe />
+    </AuthProvider>,
+  )
+
+  await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
+  expect(screen.getByTestId('s').textContent).toContain(
+    'გამოწერისა და გადახდის სტატუსი სერვერიდან ვერ ჩაიტვირთა',
+  )
+  expect(screen.getByTestId('entitlement').textContent).toContain('no-entitlement')
+})
+
 const seen: boolean[] = []
 let mounts = 0
 let unmounts = 0
@@ -101,11 +132,18 @@ function Probe() {
   )
 }
 function EntitlementProbe() {
-  const { profile, hasAccess } = useAuth()
+  const { profile, entitlement, entitlementStatusUnavailable, hasAccess } = useAuth()
   return (
+    <>
     <div data-testid="entitlement">
-      {profile?.subscription_status}:{profile?.subscription_expires_at}:{profile?.subscription_plan ?? 'no-plan'}:{hasAccess ? 'access' : 'denied'}
+      {profile?.subscription_status}:{profile?.subscription_expires_at}:{profile?.subscription_plan ?? 'no-plan'}:
+      {entitlement?.source ?? 'no-entitlement'}:{entitlement?.paymentStatus ?? 'no-payment'}:
+      {entitlement?.deviceLimit ?? 'no-limit'}:{hasAccess ? 'access' : 'denied'}
     </div>
+    <output data-testid="entitlement-status">
+      {entitlementStatusUnavailable ? 'unknown' : 'verified'}
+    </output>
+    </>
   )
 }
 function Child() {
@@ -152,6 +190,16 @@ describe('AuthContext – tab refocus', () => {
     h.cb = null
     h.sessionResponse = { status: 'active', access_active: true }
     h.sessionError = null
+    h.entitlementResponse = {
+      status: 'ok',
+      entitlement: 'legacy',
+      payment_status: null,
+      payment_amount: null,
+      payment_currency: null,
+      device_limit: 2,
+      access_active: true,
+    }
+    h.entitlementError = null
     h.activeSessionResponse = true
     h.accessResponse = true
     h.accessError = null
@@ -241,8 +289,38 @@ describe('AuthContext – tab refocus', () => {
     await tick()
 
     expect(screen.getByTestId('entitlement').textContent).toContain('expired:')
-    expect(screen.getByTestId('entitlement').textContent).toContain(':no-plan:denied')
+    expect(screen.getByTestId('entitlement').textContent).toContain(
+      ':no-plan:legacy:no-payment:2:denied',
+    )
     expect(screen.getByTestId('s').textContent).toBe('noaccess:u1')
+  })
+
+  it('preserves existing session access but marks entitlement unknown when the snapshot RPC is not installed', async () => {
+    h.profileFetch = async () => ({
+      data: {
+        ...profile('u1'),
+        subscription_status: 'trial',
+      },
+      error: null,
+    })
+    h.entitlementError = {
+      code: 'PGRST202',
+      message: 'Could not find function public.get_current_account_entitlement in schema cache',
+    }
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+    await tick()
+    await tick()
+
+    expect(screen.getByTestId('s').textContent).toBe('access:u1')
+    expect(screen.getByTestId('entitlement').textContent).toContain(':no-entitlement:')
+    expect(screen.getByTestId('entitlement-status').textContent).toBe('unknown')
+    expect(h.rpcCalls).toContain('has_active_access')
+    expect(h.rpcCalls).not.toContain('deactivate_current_session')
   })
 
   it('SIGNED_IN for the same user does NOT unmount the app subtree', async () => {
@@ -266,17 +344,22 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByTestId('s').textContent).toBe('access:u1')
     expect(mounts).toBe(1)
     expect(unmounts).toBe(0)
+    expect(h.rpcCalls).not.toContain('deactivate_current_session')
   })
 
-  it('a failing BACKGROUND profile fetch keeps the profile (no redirect to Home)', async () => {
+  it('denies access and clears stale profile data when a BACKGROUND profile fetch fails', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
-    render(<AuthProvider><Gate /></AuthProvider>)
+    render(<AuthProvider><Gate /><EntitlementProbe /></AuthProvider>)
     await tick(); await tick()
     h.profileFetch = async () => ({ data: null, error: new Error('network') })
     vi.spyOn(console, 'error').mockImplementation(() => {})
     await act(async () => { h.cb!('SIGNED_IN', { user: { id: 'u1' } }) })
     await tick()
-    expect(screen.getByTestId('s').textContent).toBe('access:u1')
+    expect(screen.getByTestId('s').textContent).toContain('noaccess:u1')
+    expect(screen.getByTestId('s').textContent).toContain('ანგარიშის მონაცემები სერვერიდან ვერ ჩაიტვირთა')
+    expect(screen.getByTestId('entitlement').textContent).toContain(
+      'no-entitlement:no-payment:no-limit:denied',
+    )
     expect(unmounts).toBe(0)
   })
 
@@ -335,7 +418,10 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByTestId('s').textContent).toContain('device limit reached')
     expect(screen.getByTestId('entitlement').textContent).toContain('active:')
     expect(screen.getByTestId('entitlement').textContent).toContain(':denied')
-    expect(h.rpcCalls).toEqual(['activate_current_session'])
+    expect(h.rpcCalls).toEqual([
+      'activate_current_session',
+      'get_current_account_entitlement',
+    ])
 
     h.sessionResponse = { status: 'active', access_active: true }
     await act(async () => { screen.getByRole('button', { name: 'Refresh profile' }).click() })
@@ -380,7 +466,10 @@ describe('AuthContext – tab refocus', () => {
 
     await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
     expect(screen.getByTestId('s').textContent).toContain('სესიის შემოწმება ვერ მოხერხდა')
-    expect(h.rpcCalls).toEqual(['activate_current_session'])
+    expect(h.rpcCalls).toEqual([
+      'activate_current_session',
+      'get_current_account_entitlement',
+    ])
   })
 
   it('denies access when session activation returns an unexpected response', async () => {

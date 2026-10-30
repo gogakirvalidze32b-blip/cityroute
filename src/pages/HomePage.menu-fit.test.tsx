@@ -22,6 +22,8 @@ const homeState = vi.hoisted(() => ({
     subscription_expires_at?: string
     device_slots: number
   },
+  entitlement: null as null | { source: 'trial' | 'paid' | 'legacy' | 'inactive' },
+  entitlementStatusUnavailable: false,
   hasAccess: true,
   deviceBlocked: null as string | null,
   signOut: vi.fn(),
@@ -77,6 +79,8 @@ describe('HomePage outer menu fit (Android landscape)', () => {
       device_slots: 1,
     }
     homeState.hasAccess = true
+    homeState.entitlement = null
+    homeState.entitlementStatusUnavailable = false
     homeState.deviceBlocked = null
   })
   afterEach(() => {
@@ -126,6 +130,7 @@ describe('HomePage outer menu fit (Android landscape)', () => {
       subscription_expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
       device_slots: 1,
     }
+    homeState.entitlement = { source: 'trial' }
     renderHome()
 
     expect(screen.getByTestId('home-early-payment').getAttribute('href')).toBe(

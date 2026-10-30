@@ -116,6 +116,10 @@ export type Database = {
         Args: { uid: string }
         Returns: boolean
       }
+      get_current_account_entitlement: {
+        Args: Record<string, never>
+        Returns: Json
+      }
       select_subscription_plan: {
         Args: { chosen: string }
         Returns: Json
