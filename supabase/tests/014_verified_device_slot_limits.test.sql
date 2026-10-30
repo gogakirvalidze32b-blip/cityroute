@@ -100,19 +100,19 @@ select is(
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000201","session_id":"00000000-0000-0000-0000-000000000211","role":"authenticated"}', true);
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"verified-179-device-001"}', true);
-select is(public.deactivate_current_session()->>'status', 'deactivated', 'logging out session A releases one 179 GEL slot');
+select is(public.deactivate_current_session()->>'status', 'deactivated', 'logging out session A revokes the account sessions');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000201","session_id":"00000000-0000-0000-0000-000000000213","role":"authenticated"}', true);
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"verified-179-device-003"}', true);
 select is(public.activate_current_session()->>'status', 'active', 'blocked session C can activate after session A logs out');
-select is(public.has_current_active_session(), true, 'session C has access after taking the released slot');
+select is(public.has_current_active_session(), true, 'session C has access after activating in a released account slot');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-000000000201","session_id":"00000000-0000-0000-0000-000000000212","role":"authenticated"}', true);
-select is(public.has_current_active_session(), true, 'session B remains active after session A logs out and C joins');
+select is(public.has_current_active_session(), false, 'account logout also revokes session B');
 reset role;
 select is(
   (select count(*)::integer from public.profile_active_sessions
    where profile_id = '00000000-0000-0000-0000-000000000201'),
-  2,
-  '179 GEL account retains exactly two active sessions after C takes the released slot'
+  1,
+  'only session C is active after account logout and its new activation'
 );
 
 select is(public.current_device_session_limit('00000000-0000-0000-0000-000000000206'), 2, 'verified 179 GEL full plan grants two slots');

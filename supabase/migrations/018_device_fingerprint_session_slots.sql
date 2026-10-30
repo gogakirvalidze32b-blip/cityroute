@@ -218,18 +218,6 @@ begin
   where active.profile_id = uid
     and active.session_id = current_session_id;
 
-  insert into public.profile_revoked_sessions (profile_id, session_id)
-  select active.profile_id, active.session_id
-  from public.profile_active_sessions active
-  where active.profile_id = uid
-    and active.device_fingerprint is null
-    and active.session_id <> current_session_id
-  on conflict (profile_id, session_id) do nothing;
-
-  delete from public.profile_active_sessions active
-  where active.profile_id = uid
-    and active.device_fingerprint is null;
-
   with ranked_sessions as (
     select active.session_id,
            pg_catalog.row_number() over (

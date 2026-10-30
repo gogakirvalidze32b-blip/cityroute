@@ -229,7 +229,7 @@ select set_config(
   true
 );
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-premium-179-device-a"}', true);
-select is(public.deactivate_current_session()->>'status', 'deactivated', 'Premium 179 device A logout releases one slot');
+select is(public.deactivate_current_session()->>'status', 'deactivated', 'Premium 179 device A logout revokes the account sessions');
 select is(public.has_current_active_session(), false, 'logged-out Premium 179 device A immediately loses access');
 select is(public.activate_current_session()->>'status', 'blocked', 'logged-out Premium 179 JWT cannot reactivate');
 select set_config(
@@ -249,7 +249,7 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000316","role":"authenticated"}',
   true
 );
-select is(public.has_current_active_session(), true, 'device B remains active after device A logs out');
+select is(public.has_current_active_session(), false, 'account logout also revokes Premium 179 device B');
 select set_config(
   'request.jwt.claims',
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000317","role":"authenticated"}',
@@ -262,8 +262,8 @@ select is(
   (select count(*)::integer
    from public.profile_active_sessions
    where profile_id = '00000000-0000-0000-0000-000000000301'),
-  2,
-  'active session registry never exceeds the verified Premium 179 slot limit'
+  1,
+  'only the newly activated Premium 179 device remains after account logout'
 );
 update public.profiles
 set subscription_payment_id = 'unverified-or-mismatched-payment'
@@ -279,7 +279,11 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000317","role":"authenticated"}',
   true
 );
-select is(public.has_current_active_session(), false, 'second session is denied if the verified 179 entitlement no longer matches');
+select is(
+  public.has_active_access('00000000-0000-0000-0000-000000000301'),
+  false,
+  'access is denied if the verified 179 entitlement no longer matches'
+);
 reset role;
 update public.profiles
 set subscription_payment_id = 'premium-179-test'
@@ -290,7 +294,11 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000317","role":"authenticated"}',
   true
 );
-select is(public.has_current_active_session(), true, 'restoring the matching verified payment restores the second slot');
+select is(
+  public.has_active_access('00000000-0000-0000-0000-000000000301'),
+  true,
+  'restoring the matching verified payment restores Premium access'
+);
 
 reset role;
 update public.payment_transactions

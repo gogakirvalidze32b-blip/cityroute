@@ -126,6 +126,11 @@ as $$
             p.subscription_status = 'trial'
             and p.subscription_expires_at > pg_catalog.now()
           )
+          or (
+            p.subscription_status = 'active'
+            and p.subscription_payment_id is null
+            and (p.subscription_expires_at is null or p.subscription_expires_at > pg_catalog.now())
+          )
           or public.current_verified_premium_device_slots(p.id) > 0
         )
     );
@@ -274,18 +279,6 @@ begin
       updated_at = pg_catalog.now()
   where active.profile_id = uid
     and active.session_id = current_session_id;
-
-  insert into public.profile_revoked_sessions (profile_id, session_id)
-  select active.profile_id, active.session_id
-  from public.profile_active_sessions active
-  where active.profile_id = uid
-    and active.device_fingerprint is null
-    and active.session_id <> current_session_id
-  on conflict (profile_id, session_id) do nothing;
-
-  delete from public.profile_active_sessions active
-  where active.profile_id = uid
-    and active.device_fingerprint is null;
 
   with ranked_sessions as (
     select active.session_id,

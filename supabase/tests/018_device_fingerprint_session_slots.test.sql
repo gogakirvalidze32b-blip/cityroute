@@ -126,21 +126,21 @@ select set_config(
   '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000816","role":"authenticated"}',
   true
 );
-select set_config('request.headers', '{"x-cityroute-device-fingerprint":"legacy-device"}', true);
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-b"}', true);
 select is(
   public.activate_current_session()->>'status',
-  'blocked',
-  'legacy session without a fingerprint is revoked and cannot reactivate'
+  'active',
+  'the second legacy session is preserved and activates with its fingerprint'
 );
 select is(
   public.activate_current_session()->>'status',
-  'blocked',
-  'a revoked legacy session cannot reactivate on a later request'
+  'active',
+  'the second legacy session remains active on refresh'
 );
 select is(
   public.has_current_active_session(),
-  false,
-  'revoked legacy session remains inactive after a repeated activation attempt'
+  true,
+  'the second legacy session remains eligible after activation'
 );
 select set_config(
   'request.jwt.claims',
@@ -155,8 +155,8 @@ select set_config(
   true
 );
 select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-b"}', true);
-select is(public.activate_current_session()->>'status', 'active', 'second 179 GEL device activates');
-select is(public.has_current_active_session(), true, 'second 179 GEL device has access');
+select is(public.activate_current_session()->>'status', 'active', 'new 179 GEL session replaces the old session on device B');
+select is(public.has_current_active_session(), true, 'new session on device B has access');
 
 select set_config(
   'request.jwt.claims',
