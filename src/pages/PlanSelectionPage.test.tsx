@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
     loading: false,
     hasAccess: true,
     needsPlanSelection: true,
+    deviceBlocked: null as string | null,
     profile: null as null | {
       subscription_status: string
       subscription_plan: string | null
@@ -44,6 +45,7 @@ describe('Premium package selection', () => {
       loading: false,
       hasAccess: true,
       needsPlanSelection: true,
+      deviceBlocked: null,
       profile: null,
     }
   })
@@ -60,6 +62,7 @@ describe('Premium package selection', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: /2 მანქანა/ }))
     expect(screen.getAllByText(/179/).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Pay for 2' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /უფასო/ }))
     await waitFor(() => expect(state.selectPlan).toHaveBeenCalledWith('premium'))
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeTruthy()
@@ -71,6 +74,7 @@ describe('Premium package selection', () => {
       loading: false,
       hasAccess: true,
       needsPlanSelection: false,
+      deviceBlocked: null,
       profile: {
         subscription_status: 'trial',
         subscription_plan: 'premium',
@@ -103,6 +107,30 @@ describe('Premium package selection', () => {
       </MemoryRouter>,
     )
 
+    fireEvent.click(screen.getByRole('button', { name: 'ანგარიშიდან გასვლა' }))
+    expect(await screen.findByRole('heading', { name: 'Login' })).toBeTruthy()
+    expect(state.signOut).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a blocked session on the plan screen and allows a safe sign-out', async () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: false,
+      needsPlanSelection: false,
+      deviceBlocked: 'session limit reached',
+      profile: null,
+    }
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/login" element={<h1>Login</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('session limit reached')
     fireEvent.click(screen.getByRole('button', { name: 'ანგარიშიდან გასვლა' }))
     expect(await screen.findByRole('heading', { name: 'Login' })).toBeTruthy()
     expect(state.signOut).toHaveBeenCalledOnce()

@@ -11,37 +11,50 @@ type Cb = (event: string, session: unknown) => void
 const h = vi.hoisted(() => ({
   cb: null as null | ((event: string, session: unknown) => void),
   profileFetch: null as null | (() => Promise<{ data: unknown; error: unknown }>),
-  bindResponse: null as unknown,
-  bindError: null as unknown,
+  sessionResponse: null as unknown,
+  sessionError: null as unknown,
+  deactivateError: null as unknown,
+  signOutOptions: null as unknown,
+  signOut: null as null | (() => Promise<void>),
   rpcCalls: [] as string[],
+  rpcArgs: [] as Array<{ name: string; args: unknown }>,
+  profileUpdates: [] as unknown[],
 }))
 
-vi.mock('@/lib/device', () => ({
-  getDeviceFingerprint: () => 'fp',
-  parseDeviceBindResult: (data: { status?: string; message?: string } | null) => {
-    if (data?.status === 'blocked') {
-      return { status: 'blocked', message: data.message ?? 'მოწყობილობა დაბლოკილია' }
-    }
-    if (data?.status === 'ok' || data?.status === 'bound') {
-      return { status: data.status }
-    }
-    throw new Error('Invalid bind_device response')
-  },
-}))
 vi.mock('@/lib/supabase', () => ({
   isSupabaseConfigured: true,
   getSupabase: () => ({
     auth: {
       getSession: async () => ({ data: { session: { user: { id: 'u1' } } } }),
+      signOut: async (options: unknown) => {
+        h.signOutOptions = options
+        return { error: null }
+      },
       onAuthStateChange: (cb: Cb) => {
         h.cb = cb
         return { data: { subscription: { unsubscribe() {} } } }
       },
     },
-    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: () => h.profileFetch!() }) }) }),
-    rpc: async (name: string) => {
+    from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: () => h.profileFetch!() }) }),
+      update: (values: unknown) => {
+        h.profileUpdates.push(values)
+        return { eq: async () => ({ error: null }) }
+      },
+    }),
+    rpc: async (name: string, args: unknown) => {
       h.rpcCalls.push(name)
-      return { data: h.bindResponse, error: h.bindError }
+      h.rpcArgs.push({ name, args })
+      if (name === 'deactivate_current_session') {
+        return {
+          data: { status: 'deactivated' },
+          error: h.deactivateError,
+        }
+      }
+      if (name === 'select_subscription_plan') {
+        return { data: { status: 'ok', plan: 'premium' }, error: null }
+      }
+      return { data: h.sessionResponse, error: h.sessionError }
     },
   }),
 }))
@@ -58,9 +71,14 @@ let mounts = 0
 let unmounts = 0
 import { useEffect } from 'react'
 function Probe() {
-  const { loading, hasAccess, user } = useAuth()
+  const { loading, hasAccess, user, deviceBlocked } = useAuth()
   seen.push(loading)
-  return <div data-testid="s">{loading ? 'loading' : hasAccess ? 'access' : 'noaccess'}:{user?.id ?? 'none'}</div>
+  return (
+    <div data-testid="s">
+      {loading ? 'loading' : hasAccess ? 'access' : 'noaccess'}:{user?.id ?? 'none'}
+      {deviceBlocked && <span>{deviceBlocked}</span>}
+    </div>
+  )
 }
 function EntitlementProbe() {
   const { profile, hasAccess } = useAuth()
@@ -77,9 +95,20 @@ function Child() {
   }, [])
   return null
 }
+function SignOutProbe() {
+  const { signOut } = useAuth()
+  useEffect(() => {
+    h.signOut = signOut
+  }, [signOut])
+  return null
+}
+function PlanSelector() {
+  const { selectPlan } = useAuth()
+  return <button onClick={() => void selectPlan('premium')}>Save Premium plan</button>
+}
 function Gate() {
   const { loading } = useAuth()
-  return loading ? <p>loading</p> : <><Child /><Probe /></>
+  return loading ? <p>loading</p> : <><Child /><Probe /><SignOutProbe /></>
 }
 
 const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 20)) })
@@ -90,9 +119,36 @@ describe('AuthContext – tab refocus', () => {
     mounts = 0
     unmounts = 0
     h.cb = null
-    h.bindResponse = { status: 'ok' }
-    h.bindError = null
+    h.sessionResponse = { status: 'active' }
+    h.sessionError = null
+    h.deactivateError = null
+    h.signOutOptions = null
+    h.signOut = null
     h.rpcCalls.length = 0
+    h.rpcArgs.length = 0
+    h.profileUpdates.length = 0
+  })
+
+  it('saves the Trial plan through its session-guarded RPC without directly updating profiles', async () => {
+    h.profileFetch = async () => ({
+      data: {
+        ...profile('u1'),
+        subscription_status: 'trial',
+        device_slots: 2,
+      },
+      error: null,
+    })
+    render(<AuthProvider><Gate /><PlanSelector /></AuthProvider>)
+    await tick()
+    await tick()
+
+    await act(async () => { screen.getByRole('button', { name: 'Save Premium plan' }).click() })
+
+    expect(h.rpcArgs).toContainEqual({
+      name: 'select_subscription_plan',
+      args: { chosen: 'premium' },
+    })
+    expect(h.profileUpdates).toEqual([])
   })
 
   it('SIGNED_IN for the same user does NOT unmount the app subtree', async () => {
@@ -170,35 +226,56 @@ describe('AuthContext – tab refocus', () => {
     )
   })
 
-  it('denies access when bind_device returns blocked', async () => {
+  it('denies access and shows the server reason when session activation is blocked', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
-    h.bindResponse = { status: 'blocked', message: 'device limit reached' }
+    h.sessionResponse = { status: 'blocked', message: 'device limit reached' }
     render(<AuthProvider><Gate /></AuthProvider>)
 
-    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'))
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
+    expect(screen.getByTestId('s').textContent).toContain('device limit reached')
+    expect(h.rpcCalls).toEqual(['activate_current_session'])
   })
 
-  it('denies access when bind_device returns an RPC error', async () => {
-    const expiresAt = '2027-01-01T00:00:00.000Z'
-    h.profileFetch = async () => ({
-      data: { ...profile('u1'), subscription_expires_at: expiresAt },
-      error: null,
-    })
-    h.bindError = { message: 'network unavailable' }
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-    render(<AuthProvider><Gate /><EntitlementProbe /></AuthProvider>)
-
-    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'))
-    expect(screen.getByTestId('entitlement').textContent).toBe(`active:${expiresAt}:denied`)
-    expect(h.rpcCalls).toEqual(['bind_device'])
-  })
-
-  it('denies access when bind_device returns an unexpected response', async () => {
+  it('denies access when session activation returns an RPC error', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
-    h.bindResponse = { status: 'unknown' }
+    h.sessionError = { message: 'network unavailable' }
     vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<AuthProvider><Gate /></AuthProvider>)
 
-    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('noaccess:u1'))
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
+    expect(screen.getByTestId('s').textContent).toContain('სესიის შემოწმება ვერ მოხერხდა')
+    expect(h.rpcCalls).toEqual(['activate_current_session'])
+  })
+
+  it('denies access when session activation returns an unexpected response', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.sessionResponse = { status: 'unknown' }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
+  })
+
+  it('deactivates the session before signing out locally', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick(); await tick()
+
+    await act(async () => { await h.signOut?.() })
+
+    expect(h.rpcCalls).toContain('deactivate_current_session')
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+  })
+
+  it('does not sign out locally when server-side session deactivation fails', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.deactivateError = { message: 'network unavailable' }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick(); await tick()
+
+    await expect(h.signOut?.()).rejects.toMatchObject({ message: 'network unavailable' })
+    expect(h.rpcCalls).toContain('deactivate_current_session')
+    expect(h.signOutOptions).toBeNull()
   })
 })

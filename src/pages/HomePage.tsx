@@ -22,12 +22,23 @@ export function HomePage() {
   const onTrial = profile?.subscription_status === 'trial' && hasAccess
   const [selectionMode, setSelectionMode] = useState<'automatic' | 'manual'>('automatic')
   const [selectedRouteSlug, setSelectedRouteSlug] = useState<string | null>(null)
+  const [signOutError, setSignOutError] = useState<string | null>(null)
   const routeToStart = selectionMode === 'automatic'
     ? visibleRoutes.find((route) => hasSavedExamForSlug(route.slug, route.name_ka)) ?? visibleRoutes[0]
     : visibleRoutes.find((route) => route.slug === selectedRouteSlug)
 
   function handleStartExam() {
     if (routeToStart) navigate(`/route/${routeToStart.slug}`)
+  }
+
+  async function handleSignOut() {
+    setSignOutError(null)
+    try {
+      await signOut()
+    } catch (error) {
+      console.error('Sign out failed:', error)
+      setSignOutError('ანგარიშიდან გასვლა ვერ მოხერხდა. სცადე თავიდან.')
+    }
   }
 
   if (deviceBlocked) {
@@ -37,7 +48,8 @@ export function HomePage() {
         <p>{deviceBlocked}</p>
         <p className="muted">1 ანგარიში = მაქსიმუმ 2 მანქანა. მხარდაჭერასთან დაუკავშირდი მოწყობილობის გადატვირთვისთვის.</p>
         <SupportButton />
-        <button type="button" onClick={() => void signOut()}>
+        {signOutError && <p role="alert">{signOutError}</p>}
+        <button type="button" onClick={() => void handleSignOut()}>
           გასვლა
         </button>
       </div>
@@ -139,7 +151,8 @@ export function HomePage() {
           {routeSourceLabel(source)}
         </p>
         <SupportButton />
-        <button type="button" className="home-signout" onClick={() => void signOut()}>
+        {signOutError && <p role="alert">{signOutError}</p>}
+        <button type="button" className="home-signout" onClick={() => void handleSignOut()}>
           გასვლა
         </button>
         <SupportFooterLinks />

@@ -24,8 +24,6 @@ import type { SubscriptionPlan } from '@/data/subscription-plans'
 
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
 
-import { getDeviceFingerprint, parseDeviceBindResult } from '@/lib/device'
-
 import {
 
   needsPlanSelection as profileNeedsPlan,
@@ -156,51 +154,38 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
 
 
 
-async function bindDevice(): Promise<string | null> {
-
+async function activateSession(): Promise<string | null> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined
-
   try {
-
-    const supabase = getSupabase()
-
-    const fp = getDeviceFingerprint()
-
     const { data, error } = await Promise.race([
-
-      supabase.rpc('bind_device', { fp }),
-
+      getSupabase().rpc('activate_current_session'),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error('timeout')), 3000)
       }),
-
     ])
-
     if (error) {
-
-      console.error('bind_device RPC failed:', error)
-      return 'მოწყობილობის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.'
-
+      console.error('activate_current_session RPC failed:', error)
+      return 'სესიის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.'
     }
-
-    const result = parseDeviceBindResult(data)
-
-    if (result.status === 'blocked') return result.message
-
-    return null
-
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      throw new Error('Invalid activate_current_session response')
+    }
+    if ('status' in data && data.status === 'active') return null
+    if (
+      'status' in data &&
+      data.status === 'blocked' &&
+      'message' in data &&
+      typeof data.message === 'string'
+    ) {
+      return data.message
+    }
+    throw new Error('Invalid activate_current_session response status')
   } catch (err) {
-
-    console.error('bindDevice error:', err)
-
-    return 'მოწყობილობის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.'
-
+    console.error('activateSession error:', err)
+    return 'სესიის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.'
   } finally {
-
     if (timeoutId !== undefined) clearTimeout(timeoutId)
-
   }
-
 }
 
 
@@ -266,48 +251,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadedProfileUserIdRef = useRef<string | null>(null)
 
   const loadProfile = useCallback(async (userId: string, silent = false) => {
-
     setDeviceBinding(true)
-
     try {
-
-      const p = await fetchProfile(userId)
-
-      loadedProfileUserIdRef.current = p ? userId : null
-
-      setProfile(p)
-
       setDeviceBlocked(null)
-
-      if (p && isAccessActive(p)) {
-
-        setDeviceBlocked(await bindDevice())
-
+      const sessionError = await activateSession()
+      if (sessionError) {
+        setDeviceBlocked(sessionError)
+        if (!silent) {
+          loadedProfileUserIdRef.current = null
+          setProfile(null)
+        }
+        return
       }
-
+      const p = await fetchProfile(userId)
+      loadedProfileUserIdRef.current = p ? userId : null
+      setProfile(p)
+      setDeviceBlocked(null)
     } catch (e) {
-
       console.error(e)
-
       // A failed BACKGROUND refresh must not wipe a good profile (that would redirect to Home).
       if (!silent) {
-
         loadedProfileUserIdRef.current = null
-
         setProfile(null)
-
         setDeviceBlocked(null)
-
       }
-
     } finally {
-
       setDeviceBinding(false)
-
       setProfileReady(true)
-
     }
-
   }, [])
 
 
@@ -485,19 +456,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
   const signOut = useCallback(async () => {
-
     const supabase = getSupabase()
-
-    await supabase.auth.signOut()
-
+    const { data, error } = await supabase.rpc('deactivate_current_session')
+    if (error) {
+      console.error('deactivate_current_session RPC failed:', error)
+      throw error
+    }
+    if (
+      typeof data !== 'object' ||
+      data === null ||
+      Array.isArray(data) ||
+      !('status' in data) ||
+      (data.status !== 'deactivated' && data.status !== 'inactive')
+    ) {
+      throw new Error('სესიის გაუქმება ვერ მოხერხდა')
+    }
+    const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' })
+    if (signOutError) throw signOutError
     setProfile(null)
-
     setDeviceBlocked(null)
-
     setDeviceBinding(false)
-
     setProfileReady(true)
-
   }, [])
 
 

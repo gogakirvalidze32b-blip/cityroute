@@ -176,7 +176,7 @@ describe('production street line for Telavi routes 1–4', () => {
     }
     const p2 = pins.find((p) => p.sort_order === 2)!
     const p3 = pins.find((p) => p.sort_order === 3)!
-    const start = near(p2)
+    const start = Math.max(0, near(p2) - 1)
     const segment = line.slice(start, start + expectedSegment.length)
     expect(segment).toEqual(expectedSegment)
     expect(

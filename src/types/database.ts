@@ -83,9 +83,33 @@ export type Database = {
     }
     Views: Record<string, never>
     Functions: {
+      activate_current_session: {
+        Args: Record<string, never>
+        Returns: Json
+      }
       bind_device: {
         Args: { fp: string }
         Returns: Json
+      }
+      current_device_session_limit: {
+        Args: { p_profile_id: string }
+        Returns: number
+      }
+      deactivate_current_session: {
+        Args: Record<string, never>
+        Returns: Json
+      }
+      grant_device_session_limit_override: {
+        Args: { p_profile_id: string; p_reason: string }
+        Returns: { override_id: number; granted_at: string }[]
+      }
+      has_current_active_session: {
+        Args: Record<string, never>
+        Returns: boolean
+      }
+      revoke_device_session_limit_override: {
+        Args: { p_override_id: number; p_reason: string }
+        Returns: undefined
       }
       has_active_access: {
         Args: { uid: string }
