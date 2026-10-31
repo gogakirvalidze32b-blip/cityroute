@@ -312,8 +312,8 @@ select set_config(
 );
 select is(
   (public.deactivate_current_session()->>'deactivated_sessions')::integer,
-  2,
-  'logout revokes every active device session on the account'
+  1,
+  'logout revokes only the current active device session'
 );
 reset role;
 set local role postgres;
@@ -322,8 +322,8 @@ select is(
   (select count(*)::integer
    from public.profile_active_sessions
    where profile_id = '00000000-0000-0000-0000-000000000901'),
-  0,
-  'account-wide logout removes all active session rows'
+  1,
+  'device-scoped logout preserves the other active session row'
 );
 select is(
   (select count(*)::integer
@@ -333,8 +333,8 @@ select is(
        '00000000-0000-0000-0000-000000000921',
        '00000000-0000-0000-0000-000000000922'
      )),
-  2,
-  'account-wide logout records every device session as revoked'
+  1,
+  'device-scoped logout revokes only the current device session'
 );
 
 set local role service_role;

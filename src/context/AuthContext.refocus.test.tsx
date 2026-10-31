@@ -11,7 +11,9 @@ type Cb = (event: string, session: unknown) => void
 const h = vi.hoisted(() => ({
   cb: null as null | ((event: string, session: unknown) => void),
   profileFetch: null as null | (() => Promise<{ data: unknown; error: unknown }>),
-  sessionResponse: null as unknown,
+  authSession: { user: { id: 'u1' }, access_token: 'token-u1' } as unknown,
+  authSessionError: null as unknown,
+  sessionResponse: { status: 'active', access_active: true } as unknown,
   sessionError: null as unknown,
   entitlementResponse: {
     status: 'ok',
@@ -28,7 +30,7 @@ const h = vi.hoisted(() => ({
   accessError: null as unknown,
   planError: null as unknown,
   deactivateError: null as unknown,
-  deactivateResponse: { status: 'deactivated', deactivated_sessions: 2 } as unknown,
+  deactivateResponse: { status: 'deactivated', deactivated_sessions: 1 } as unknown,
   deactivateWait: null as null | (() => Promise<{ data: unknown; error: unknown }>),
   signOutCallback: false,
   signOutOptions: null as unknown,
@@ -36,6 +38,7 @@ const h = vi.hoisted(() => ({
   rpcCalls: [] as string[],
   rpcArgs: [] as Array<{ name: string; args: unknown }>,
   events: [] as string[],
+  flow: [] as string[],
   profileUpdates: [] as unknown[],
 }))
 
@@ -43,7 +46,10 @@ vi.mock('@/lib/supabase', () => ({
   isSupabaseConfigured: true,
   getSupabase: () => ({
     auth: {
-      getSession: async () => ({ data: { session: { user: { id: 'u1' } } } }),
+      getSession: async () => {
+        h.flow.push('getSession')
+        return { data: { session: h.authSession }, error: h.authSessionError }
+      },
       signOut: async (options: unknown) => {
         h.events.push('local signOut')
         h.signOutOptions = options
@@ -56,7 +62,14 @@ vi.mock('@/lib/supabase', () => ({
       },
     },
     from: () => ({
-      select: () => ({ eq: () => ({ maybeSingle: () => h.profileFetch!() }) }),
+      select: () => ({
+        eq: () => ({
+          maybeSingle: () => {
+            h.flow.push('profile')
+            return h.profileFetch!()
+          },
+        }),
+      }),
       update: (values: unknown) => {
         h.profileUpdates.push(values)
         return { eq: async () => ({ error: null }) }
@@ -65,6 +78,7 @@ vi.mock('@/lib/supabase', () => ({
     rpc: async (name: string, args: unknown) => {
       h.rpcCalls.push(name)
       h.rpcArgs.push({ name, args })
+      if (name === 'activate_current_session') h.flow.push('activate')
       if (name === 'deactivate_current_session') {
         h.events.push('deactivate_current_session')
         return h.deactivateWait ? h.deactivateWait() : {
@@ -79,6 +93,7 @@ vi.mock('@/lib/supabase', () => ({
         return { data: h.accessResponse, error: h.accessError }
       }
       if (name === 'get_current_account_entitlement') {
+        h.flow.push('entitlement')
         return { data: h.entitlementResponse, error: h.entitlementError }
       }
       if (name === 'select_subscription_plan') {
@@ -188,6 +203,8 @@ describe('AuthContext – tab refocus', () => {
     unmounts = 0
     localStorage.clear()
     h.cb = null
+    h.authSession = { user: { id: 'u1' }, access_token: 'token-u1' }
+    h.authSessionError = null
     h.sessionResponse = { status: 'active', access_active: true }
     h.sessionError = null
     h.entitlementResponse = {
@@ -205,7 +222,7 @@ describe('AuthContext – tab refocus', () => {
     h.accessError = null
     h.planError = null
     h.deactivateError = null
-    h.deactivateResponse = { status: 'deactivated', deactivated_sessions: 2 }
+    h.deactivateResponse = { status: 'deactivated', deactivated_sessions: 1 }
     h.deactivateWait = null
     h.signOutCallback = false
     h.signOutOptions = null
@@ -213,7 +230,60 @@ describe('AuthContext – tab refocus', () => {
     h.rpcCalls.length = 0
     h.rpcArgs.length = 0
     h.events.length = 0
+    h.flow.length = 0
     h.profileUpdates.length = 0
+  })
+
+  it('activates the current Auth session before loading profile and entitlement', async () => {
+    h.profileFetch = async () => ({
+      data: { ...profile('u1'), subscription_status: 'trial' },
+      error: null,
+    })
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('access:u1'))
+
+    const activationIndex = h.flow.indexOf('activate')
+    const profileIndex = h.flow.indexOf('profile')
+    const entitlementIndex = h.flow.indexOf('entitlement')
+    expect(activationIndex).toBeGreaterThan(-1)
+    expect(activationIndex).toBeLessThan(profileIndex)
+    expect(profileIndex).toBeLessThan(entitlementIndex)
+    expect(h.rpcCalls[0]).toBe('activate_current_session')
+    expect(screen.getByTestId('entitlement').textContent).toContain('trial:')
+  })
+
+  it('loads paid Premium only after the current session is activated', async () => {
+    h.profileFetch = async () => ({
+      data: { ...profile('u1'), subscription_status: 'active', subscription_plan: 'premium' },
+      error: null,
+    })
+    h.entitlementResponse = {
+      status: 'ok',
+      entitlement: 'paid',
+      payment_status: 'verified',
+      payment_amount: 9900,
+      payment_currency: 'GEL',
+      device_limit: 1,
+      access_active: true,
+    }
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('access:u1'))
+
+    expect(h.flow.indexOf('activate')).toBeLessThan(h.flow.indexOf('profile'))
+    expect(h.flow.indexOf('profile')).toBeLessThan(h.flow.indexOf('entitlement'))
+    expect(screen.getByTestId('entitlement').textContent).toContain('paid:verified:1:access')
   })
 
   it('saves the Trial plan through its session-guarded RPC without directly updating profiles', async () => {
@@ -376,6 +446,7 @@ describe('AuthContext – tab refocus', () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     render(<AuthProvider><Gate /></AuthProvider>)
     await tick(); await tick()
+    h.authSession = { user: { id: 'u2' }, access_token: 'token-u2' }
     h.profileFetch = async () => { await new Promise((r) => setTimeout(r, 30)); return { data: profile('u2'), error: null } }
     await act(async () => { h.cb!('SIGNED_IN', { user: { id: 'u2' } }) })
     await act(async () => { await new Promise((r) => setTimeout(r, 5)) })
@@ -416,12 +487,11 @@ describe('AuthContext – tab refocus', () => {
 
     await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
     expect(screen.getByTestId('s').textContent).toContain('device limit reached')
-    expect(screen.getByTestId('entitlement').textContent).toContain('active:')
+    expect(screen.getByTestId('entitlement').textContent).toContain('no-entitlement')
     expect(screen.getByTestId('entitlement').textContent).toContain(':denied')
-    expect(h.rpcCalls).toEqual([
-      'activate_current_session',
-      'get_current_account_entitlement',
-    ])
+    expect(h.rpcCalls).toEqual(['activate_current_session'])
+    expect(h.flow).not.toContain('profile')
+    expect(h.flow).not.toContain('entitlement')
 
     h.sessionResponse = { status: 'active', access_active: true }
     await act(async () => { screen.getByRole('button', { name: 'Refresh profile' }).click() })
@@ -429,7 +499,7 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByTestId('entitlement').textContent).toContain('active:')
   })
 
-  it('preserves a loaded premium entitlement when a later session check is blocked', async () => {
+  it('clears loaded entitlement when a refreshed activation is blocked', async () => {
     h.profileFetch = async () => ({
       data: {
         ...profile('u1'),
@@ -453,9 +523,9 @@ describe('AuthContext – tab refocus', () => {
     await act(async () => { screen.getByRole('button', { name: 'Refresh profile' }).click() })
     await tick()
 
-    expect(screen.getByTestId('entitlement').textContent).toContain('active:')
-    expect(screen.getByTestId('entitlement').textContent).toContain(':denied')
+    expect(screen.getByTestId('entitlement').textContent).toContain('no-entitlement')
     expect(screen.getByTestId('s').textContent).toContain('device limit reached')
+    expect(h.flow.slice(-1)).toEqual(['activate'])
   })
 
   it('denies access when session activation returns an RPC error', async () => {
@@ -465,11 +535,12 @@ describe('AuthContext – tab refocus', () => {
     render(<AuthProvider><Gate /></AuthProvider>)
 
     await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
-    expect(screen.getByTestId('s').textContent).toContain('სესიის შემოწმება ვერ მოხერხდა')
-    expect(h.rpcCalls).toEqual([
-      'activate_current_session',
-      'get_current_account_entitlement',
-    ])
+    expect(screen.getByTestId('s').textContent).toContain(
+      'სესიის გააქტიურება ვერ მოხერხდა: network unavailable',
+    )
+    expect(h.rpcCalls).toEqual(['activate_current_session'])
+    expect(h.flow).not.toContain('profile')
+    expect(h.flow).not.toContain('entitlement')
   })
 
   it('denies access when session activation returns an unexpected response', async () => {
@@ -479,6 +550,25 @@ describe('AuthContext – tab refocus', () => {
     render(<AuthProvider><Gate /></AuthProvider>)
 
     await waitFor(() => expect(screen.getByTestId('s').textContent).toContain('noaccess:u1'))
+    expect(h.flow).not.toContain('profile')
+    expect(h.flow).not.toContain('entitlement')
+  })
+
+  it('does not activate or load account data when the current Auth session belongs to another user', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick()
+    await tick()
+
+    h.authSession = { user: { id: 'u2' }, access_token: 'token-u2' }
+    await act(async () => { h.cb!('SIGNED_IN', { user: { id: 'u1' } }) })
+    await tick()
+
+    expect(h.rpcCalls.filter((name) => name === 'activate_current_session')).toHaveLength(1)
+    expect(h.flow.slice(-1)).toEqual(['getSession'])
+    expect(screen.getByTestId('s').textContent).toContain(
+      'მოქმედი Auth სესია ვერ დადასტურდა',
+    )
   })
 
   it('deactivates the session before signing out locally', async () => {
@@ -495,7 +585,7 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
   })
 
-  it('clears authorized UI while waiting for account-wide server revocation', async () => {
+  it('clears authorized UI while waiting for current-device server revocation', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     let resolveRevocation: ((result: { data: unknown; error: unknown }) => void) | null = null
     h.deactivateWait = () => new Promise((resolve) => { resolveRevocation = resolve })
@@ -513,7 +603,7 @@ describe('AuthContext – tab refocus', () => {
 
     await act(async () => {
       resolveRevocation?.({
-        data: { status: 'deactivated', deactivated_sessions: 2 },
+        data: { status: 'deactivated', deactivated_sessions: 1 },
         error: null,
       })
       await pendingSignOut
@@ -546,14 +636,14 @@ describe('AuthContext – tab refocus', () => {
     expect(h.rpcCalls).toContain('deactivate_current_session')
     expect(h.signOutOptions).toEqual({ scope: 'local' })
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
-      'ყველა მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
+      'ამ მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
     )
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
       'შემდეგი შესვლისას წვდომა ხელახლა შემოწმდება',
     )
   })
 
-  it('requests account-wide session revocation before local logout', async () => {
+  it('requests current-device session revocation before local logout', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     render(<AuthProvider><Gate /></AuthProvider>)
     await tick(); await tick()
@@ -579,7 +669,7 @@ describe('AuthContext – tab refocus', () => {
 
     expect(h.signOutOptions).toEqual({ scope: 'local' })
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
-      'ყველა მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
+      'ამ მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
     )
   })
 

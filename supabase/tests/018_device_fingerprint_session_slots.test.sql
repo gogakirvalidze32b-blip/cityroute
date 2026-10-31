@@ -282,39 +282,9 @@ select set_config(
 );
 select is(
   (public.deactivate_current_session()->>'deactivated_sessions')::integer,
-  2,
-  'logout deactivates both account device sessions and reports the count'
+  1,
+  'logout deactivates only the current device session and reports the count'
 );
-reset role;
-set local role postgres;
-select is(
-  (select count(*)::integer
-   from public.profile_active_sessions
-   where profile_id = '00000000-0000-0000-0000-000000000801'),
-  0,
-  'logout removes all active-device rows for the account'
-);
-set local role authenticated;
-select is(
-  public.deactivate_current_session()->>'status',
-  'inactive',
-  'repeated account-wide logout succeeds when no active rows remain'
-);
-select is(public.has_current_active_session(), false, 'logged-out device A loses access');
-select set_config(
-  'request.jwt.claims',
-  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000812","role":"authenticated"}',
-  true
-);
-select is(public.has_current_active_session(), false, 'logout revokes the other device session too');
-select set_config(
-  'request.jwt.claims',
-  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000814","role":"authenticated"}',
-  true
-);
-select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-c"}', true);
-select is(public.activate_current_session()->>'status', 'active', 'new login activates after account-wide logout');
-select is(public.has_current_active_session(), true, 'new login has app access after account-wide logout');
 reset role;
 set local role postgres;
 select is(
@@ -322,7 +292,37 @@ select is(
    from public.profile_active_sessions
    where profile_id = '00000000-0000-0000-0000-000000000801'),
   1,
-  'only the newly logged-in device is active after account-wide logout'
+  'logout preserves the other active-device row'
+);
+set local role authenticated;
+select is(
+  public.deactivate_current_session()->>'status',
+  'inactive',
+  'repeated logout succeeds when the current device is already inactive'
+);
+select is(public.has_current_active_session(), false, 'logged-out device A loses access');
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000812","role":"authenticated"}',
+  true
+);
+select is(public.has_current_active_session(), true, 'logout preserves the other device session');
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"00000000-0000-0000-0000-000000000801","session_id":"00000000-0000-0000-0000-000000000814","role":"authenticated"}',
+  true
+);
+select set_config('request.headers', '{"x-cityroute-device-fingerprint":"device-179-c"}', true);
+select is(public.activate_current_session()->>'status', 'active', 'new login activates after another device logs out');
+select is(public.has_current_active_session(), true, 'new login has app access after another device logs out');
+reset role;
+set local role postgres;
+select is(
+  (select count(*)::integer
+   from public.profile_active_sessions
+   where profile_id = '00000000-0000-0000-0000-000000000801'),
+  2,
+  'the existing second device and the newly logged-in device remain active'
 );
 
 insert into public.profile_active_sessions (

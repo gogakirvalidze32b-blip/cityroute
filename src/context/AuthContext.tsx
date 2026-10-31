@@ -172,11 +172,32 @@ async function fetchCurrentAccountEntitlement(): Promise<CurrentAccountEntitleme
   }
 }
 
-async function activateSession(): Promise<SessionActivation> {
+async function activateSession(userId: string): Promise<SessionActivation> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined
   try {
+    const supabase = getSupabase()
+    const {
+      data: { session: currentSession },
+      error: authError,
+    } = await supabase.auth.getSession()
+    if (authError) {
+      return {
+        error: `მოქმედი Auth სესიის შემოწმება ვერ მოხერხდა: ${authError.message}`,
+        accessActive: false,
+      }
+    }
+    if (
+      !currentSession?.access_token ||
+      currentSession.user.id !== userId
+    ) {
+      return {
+        error: 'მოქმედი Auth სესია ვერ დადასტურდა. ხელახლა შედით ანგარიშში.',
+        accessActive: false,
+      }
+    }
+
     const { data, error } = await Promise.race([
-      getSupabase().rpc('activate_current_session'),
+      supabase.rpc('activate_current_session'),
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => reject(new Error('timeout')), 3000)
       }),
@@ -184,12 +205,15 @@ async function activateSession(): Promise<SessionActivation> {
     if (error) {
       console.error('activate_current_session RPC failed:', error)
       return {
-        error: 'სესიის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.',
+        error: `სესიის გააქტიურება ვერ მოხერხდა: ${error.message}`,
         accessActive: false,
       }
     }
     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-      throw new Error('Invalid activate_current_session response')
+      return {
+        error: 'სერვერმა სესიის გააქტიურებაზე არასწორი პასუხი დააბრუნა.',
+        accessActive: false,
+      }
     }
     if (
       'status' in data &&
@@ -207,11 +231,17 @@ async function activateSession(): Promise<SessionActivation> {
     ) {
       return { error: data.message, accessActive: false }
     }
-    throw new Error('Invalid activate_current_session response status')
+    return {
+      error: 'სერვერმა სესიის გააქტიურებაზე უცნობი სტატუსი დააბრუნა.',
+      accessActive: false,
+    }
   } catch (err) {
     console.error('activateSession error:', err)
+    const message = err instanceof Error ? err.message : 'უცნობი შეცდომა'
     return {
-      error: 'სესიის შემოწმება ვერ მოხერხდა. სცადეთ ხელახლა.',
+      error: message === 'timeout'
+        ? 'სესიის გააქტიურების პასუხის მიღების დრო ამოიწურა. სცადეთ ხელახლა.'
+        : `სესიის გააქტიურება ვერ მოხერხდა: ${message}`,
       accessActive: false,
     }
   } finally {
@@ -287,6 +317,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setDeviceBinding(true)
     try {
       setDeviceBlocked(null)
+      const activation = await activateSession(userId)
+      if (activation.error) {
+        loadedProfileUserIdRef.current = null
+        activatedUserIdRef.current = null
+        setProfile(null)
+        setEntitlement(null)
+        setEntitlementStatusUnavailable(false)
+        setServerAccess(false)
+        setDeviceBlocked(activation.error)
+        return
+      }
+
       let currentProfile: Profile | null
       try {
         currentProfile = await fetchProfile(userId)
@@ -306,7 +348,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loadedProfileUserIdRef.current = userId
       setProfile(currentProfile)
 
-      const activation = await activateSession()
       let currentEntitlement: CurrentAccountEntitlement | null
       try {
         currentEntitlement = await fetchCurrentAccountEntitlement()
@@ -322,18 +363,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      if (activation.error) {
-        activatedUserIdRef.current = null
-        setDeviceBlocked(activation.error)
-        setServerAccess(false)
-      } else {
-        activatedUserIdRef.current = userId
-        setDeviceBlocked(null)
-        setServerAccess(
-          activation.accessActive &&
-          (currentEntitlement === null || currentEntitlement.accessActive),
-        )
-      }
+      activatedUserIdRef.current = userId
+      setDeviceBlocked(null)
+      setServerAccess(
+        activation.accessActive &&
+        (currentEntitlement === null || currentEntitlement.accessActive),
+      )
     } finally {
       setDeviceBinding(false)
       setProfileReady(true)
@@ -657,7 +692,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('deactivate_current_session RPC failed:', error)
       setSignOutWarning(
-        'ანგარიშიდან გახვედით, მაგრამ ყველა მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა. შემდეგი შესვლისას წვდომა ხელახლა შემოწმდება.',
+        'ანგარიშიდან გახვედით, მაგრამ ამ მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა. შემდეგი შესვლისას წვდომა ხელახლა შემოწმდება.',
       )
     } finally {
       if (revocationTimeout !== undefined) clearTimeout(revocationTimeout)

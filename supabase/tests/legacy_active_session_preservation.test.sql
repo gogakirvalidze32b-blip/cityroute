@@ -212,8 +212,8 @@ select is(public.has_active_access('00000000-0000-0000-0000-000000000951'), true
   'the first Legacy Premium session retains application access');
 select is(
   (public.deactivate_current_session()->>'deactivated_sessions')::integer,
-  2,
-  'logout deactivates both preserved device sessions'
+  1,
+  'logout deactivates only the current preserved device session'
 );
 select is(public.has_current_active_session(), false, 'logout removes access from the first session');
 
@@ -223,8 +223,8 @@ select is(
   (select count(*)::integer
    from public.profile_active_sessions
    where profile_id = '00000000-0000-0000-0000-000000000951'),
-  0,
-  'logout removes both active session rows'
+  1,
+  'logout preserves the other legacy active session row'
 );
 select is(
   (select count(*)::integer
@@ -234,8 +234,8 @@ select is(
        '00000000-0000-0000-0000-000000000961',
        '00000000-0000-0000-0000-000000000962'
      )),
-  2,
-  'logout records both sessions as revoked'
+  1,
+  'logout records only the current legacy session as revoked'
 );
 select * from finish();
 rollback;
