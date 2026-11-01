@@ -5,7 +5,9 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, act, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './AuthContext'
+import { ProtectedRoute } from '@/components/ProtectedRoute'
 
 type Cb = (event: string, session: unknown) => void
 const h = vi.hoisted(() => ({
@@ -673,23 +675,34 @@ describe('AuthContext – tab refocus', () => {
     )
   })
 
-  it('signs out locally when another device revokes the current session', async () => {
+  it('redirects to login promptly when another device revokes the current session', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.signOutCallback = true
-    render(<AuthProvider><Gate /></AuthProvider>)
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/protected']}>
+          <Routes>
+            <Route path="/login" element={<p>Login page</p>} />
+            <Route element={<ProtectedRoute />}>
+              <Route path="/protected" element={<p>Protected page</p>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+        <EntitlementProbe />
+        <SignOutProbe />
+      </AuthProvider>,
+    )
     await tick()
     await tick()
 
     h.activeSessionResponse = false
-    await act(async () => {
-      window.dispatchEvent(new Event('focus'))
-      await new Promise((resolve) => setTimeout(resolve, 20))
-    })
+    await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 5000 })
 
     expect(h.signOutOptions).toEqual({ scope: 'local' })
-    expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
+    expect(screen.getByTestId('entitlement').textContent).toContain('no-plan:no-entitlement')
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
       'ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.',
     )
+    expect(h.rpcCalls).not.toContain('deactivate_current_session')
   })
 })

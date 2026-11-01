@@ -526,8 +526,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         loadedProfileUserIdRef.current = null
         activatedUserIdRef.current = null
-
         setProfile(null)
+        setEntitlement(null)
         setEntitlementStatusUnavailable(false)
 
         setDeviceBlocked(null)
@@ -562,7 +562,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let mounted = true
     let checking = false
+    let checkingSession = false
+    let sessionRevoked = false
     const supabase = getSupabase()
+
+    const signOutRevokedSession = async () => {
+      if (!mounted || sessionRevoked) return
+      sessionRevoked = true
+      activatedUserIdRef.current = null
+      setServerAccess(false)
+      setDeviceBlocked('ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.')
+      setSignOutWarning('ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.')
+
+      const { error } = await supabase.auth.signOut({ scope: 'local' })
+      if (error) {
+        console.error('Local sign out after session revocation failed:', error)
+        if (!mounted) return
+        loadedProfileUserIdRef.current = null
+        setSession(null)
+        setProfile(null)
+        setEntitlement(null)
+        setEntitlementStatusUnavailable(false)
+        setServerAccess(false)
+        setDeviceBinding(false)
+        setProfileReady(true)
+      }
+    }
+
+    const validateCurrentSession = async () => {
+      if (!mounted || checkingSession || document.visibilityState === 'hidden') return
+      checkingSession = true
+      try {
+        const { data, error } = await supabase.rpc('has_current_active_session')
+        if (!mounted) return
+        if (error) {
+          console.error('Session heartbeat failed:', error)
+          return
+        }
+        if (data !== true) await signOutRevokedSession()
+      } catch (error) {
+        console.error('Session heartbeat failed:', error)
+      } finally {
+        checkingSession = false
+      }
+    }
 
     const validateServerState = async () => {
       if (!mounted || checking || document.visibilityState === 'hidden') return
@@ -588,11 +631,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               ? 'სესიის სტატუსის გადამოწმება ვერ მოხერხდა. წვდომა დროებით შეზღუდულია.'
               : 'ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.',
           )
-          if (!sessionResult.error) {
-            setSignOutWarning('ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.')
-            const { error } = await supabase.auth.signOut({ scope: 'local' })
-            if (error) console.error('Local sign out after session revocation failed:', error)
-          }
+          if (!sessionResult.error) await signOutRevokedSession()
           return
         }
 
@@ -632,6 +671,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState === 'visible') void validateServerState()
     }
     const intervalId = window.setInterval(() => void validateServerState(), 30_000)
+    const sessionIntervalId = window.setInterval(() => void validateCurrentSession(), 2_000)
     window.addEventListener('focus', validateServerState)
     document.addEventListener('visibilitychange', onVisibilityChange)
     void validateServerState()
@@ -639,6 +679,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false
       window.clearInterval(intervalId)
+      window.clearInterval(sessionIntervalId)
       window.removeEventListener('focus', validateServerState)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
