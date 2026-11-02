@@ -33,6 +33,8 @@ on:
       - supabase/tests/024_reconcile_subscription_plan_check.test.sql
       - supabase/tests/025_nullable_subscription_expires_at.test.sql
       - supabase/tests/026_device_session_activity_heartbeat.test.sql
+      - supabase/tests/027_single_device_takeover.test.sql
+      - .github/scripts/parallel-login-race.sh
       - supabase/tests/legacy_active_session_preservation.test.sql
 
 jobs:
@@ -95,6 +97,7 @@ jobs:
           cp supabase/tests/024_reconcile_subscription_plan_check.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/025_nullable_subscription_expires_at.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/026_device_session_activity_heartbeat.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/027_single_device_takeover.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/legacy_active_session_preservation.test.sql .ci-supabase/supabase/tests/
 
       - name: Start isolated Supabase database
@@ -102,6 +105,9 @@ jobs:
 
       - name: Run device-lock pgTAP regressions
         run: supabase test db --local --workdir .ci-supabase
+
+      - name: Run parallel login race checks
+        run: bash .github/scripts/parallel-login-race.sh
 
       - name: Stop isolated Supabase database
         if: always()

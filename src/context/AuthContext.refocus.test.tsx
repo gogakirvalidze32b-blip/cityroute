@@ -28,6 +28,8 @@ const h = vi.hoisted(() => ({
   } as unknown,
   entitlementError: null as unknown,
   activeSessionResponse: true as unknown,
+  heartbeatResponse: { status: 'active' } as unknown,
+  heartbeatError: null as unknown,
   accessResponse: true as unknown,
   accessError: null as unknown,
   planError: null as unknown,
@@ -92,6 +94,9 @@ vi.mock('@/lib/supabase', () => ({
       }
       if (name === 'has_current_active_session') {
         return { data: h.activeSessionResponse, error: null, status: 200 }
+      }
+      if (name === 'heartbeat_current_session') {
+        return { data: h.heartbeatResponse, error: h.heartbeatError, status: 200 }
       }
       if (name === 'has_active_access') {
         return { data: h.accessResponse, error: h.accessError }
@@ -222,6 +227,8 @@ describe('AuthContext – tab refocus', () => {
     }
     h.entitlementError = null
     h.activeSessionResponse = true
+    h.heartbeatResponse = { status: 'active' }
+    h.heartbeatError = null
     h.accessResponse = true
     h.accessError = null
     h.planError = null
@@ -261,6 +268,31 @@ describe('AuthContext – tab refocus', () => {
     expect(profileIndex).toBeLessThan(entitlementIndex)
     expect(h.rpcCalls[0]).toBe('activate_current_session')
     expect(screen.getByTestId('entitlement').textContent).toContain('trial:')
+  })
+
+  it('sends an activity heartbeat and reactivates an idle session when the user returns', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.heartbeatResponse = { status: 'inactive' }
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('access:u1'))
+    h.rpcCalls.length = 0
+
+    await act(async () => {
+      window.dispatchEvent(new Event('pointerdown'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await waitFor(() => {
+      expect(h.rpcCalls).toContain('heartbeat_current_session')
+      expect(h.rpcCalls).toContain('activate_current_session')
+      expect(screen.getByTestId('s').textContent).toBe('access:u1')
+    })
   })
 
   it('loads paid Premium only after the current session is activated', async () => {
@@ -782,7 +814,7 @@ describe('AuthContext – tab refocus', () => {
     )
   })
 
-  it('redirects to login promptly when another device revokes the current session', async () => {
+  it('redirects to login when the activity heartbeat confirms that another device revoked the session', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.signOutCallback = true
     render(
@@ -803,13 +835,70 @@ describe('AuthContext – tab refocus', () => {
     await tick()
 
     h.activeSessionResponse = false
+    h.heartbeatResponse = { status: 'revoked' }
+    await act(async () => {
+      window.dispatchEvent(new Event('pointerdown'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
     await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 5000 })
 
     expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(h.rpcCalls).toContain('heartbeat_current_session')
     expect(screen.getByTestId('entitlement').textContent).toContain('no-plan:no-entitlement')
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
       'ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.',
     )
+    expect(h.rpcCalls).not.toContain('deactivate_current_session')
+  })
+
+  it('signs the old device out through background polling after a 99 GEL takeover, without user activity', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.signOutCallback = true
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/protected']}>
+          <Routes>
+            <Route path="/login" element={<p>Login page</p>} />
+            <Route element={<ProtectedRoute />}>
+              <Route path="/protected" element={<p>Protected page</p>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+    await tick()
+    await tick()
+    expect(screen.getByText('Protected page')).toBeTruthy()
+
+    h.activeSessionResponse = false
+    h.heartbeatResponse = { status: 'revoked' }
+    h.rpcCalls.length = 0
+
+    await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 8000 })
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(h.rpcCalls).not.toContain('activate_current_session')
+    expect(h.rpcCalls).not.toContain('deactivate_current_session')
+  }, 15000)
+
+  it('does not sign out a device whose slot was only released by idleness', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.heartbeatResponse = { status: 'inactive' }
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('access:u1'))
+
+    h.activeSessionResponse = false
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(h.signOutOptions).toBeNull()
     expect(h.rpcCalls).not.toContain('deactivate_current_session')
   })
 })

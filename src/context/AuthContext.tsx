@@ -596,7 +596,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let mounted = true
     let checking = false
-    let checkingSession = false
+    let activityHeartbeatInFlight = false
+    let lastActivityHeartbeatAt = 0
     let sessionRevoked = false
     const supabase = getSupabase()
 
@@ -623,26 +624,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const validateCurrentSession = async () => {
-      if (!mounted || checkingSession || document.visibilityState === 'hidden') return
-      checkingSession = true
-      try {
-        const { data, error } = await supabase.rpc('has_current_active_session')
-        if (!mounted) return
-        if (error) {
-          console.error('Session heartbeat failed:', error)
+    const recordCurrentActivity = () => {
+      const now = Date.now()
+      if (
+        !mounted ||
+        activityHeartbeatInFlight ||
+        document.visibilityState === 'hidden' ||
+        now - lastActivityHeartbeatAt < 60_000
+      ) return
+
+      activityHeartbeatInFlight = true
+      lastActivityHeartbeatAt = now
+      void (async () => {
+        const { data, error } = await supabase.rpc('heartbeat_current_session')
+        if (error) throw error
+        if (!isRecord(data) || typeof data.status !== 'string') {
+          throw new Error('Unexpected heartbeat_current_session response')
+        }
+        if (data.status === 'active') return
+        if (data.status === 'revoked') {
+          await signOutRevokedSession()
           return
         }
-        if (data !== true) await signOutRevokedSession()
+
+        const activation = await activateSession(userId)
+        if (!mounted) return
+        if (activation.error) {
+          setServerAccess(false)
+          setDeviceBlocked(activation.error)
+          return
+        }
+        setServerAccess(activation.accessActive)
+        setDeviceBlocked(null)
+      })().catch((error) => {
+        console.error('Current device activity heartbeat failed:', error)
+        if (mounted) {
+          setServerAccess(false)
+          setDeviceBlocked('სესიის აქტივობის განახლება ვერ მოხერხდა. წვდომა დროებით შეზღუდულია.')
+        }
+      }).finally(() => {
+        activityHeartbeatInFlight = false
+      })
+    }
+
+    // The heartbeat RPC only reports 'revoked' without writing while the session is inactive.
+    const isSessionRevokedByAnotherDevice = async () => {
+      const { data, error } = await supabase.rpc('heartbeat_current_session')
+      return !error && isRecord(data) && data.status === 'revoked'
+    }
+
+    let polling = false
+    const pollSessionRevocation = async () => {
+      if (!mounted || checking || polling || sessionRevoked || document.visibilityState === 'hidden') return
+      polling = true
+      try {
+        const { data, error } = await supabase.rpc('has_current_active_session')
+        if (!mounted || error || data !== false) return
+        if (await isSessionRevokedByAnotherDevice()) await signOutRevokedSession()
       } catch (error) {
-        console.error('Session heartbeat failed:', error)
+        console.error('Session revocation poll failed:', error)
       } finally {
-        checkingSession = false
+        polling = false
       }
     }
 
     const validateServerState = async () => {
-      if (!mounted || checking || document.visibilityState === 'hidden') return
+      if (!mounted || checking || sessionRevoked || document.visibilityState === 'hidden') return
       checking = true
       try {
         const [sessionResult, currentProfile, currentEntitlement] = await Promise.all([
@@ -654,18 +701,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!mounted) return
         if (!currentProfile) throw new Error('Profile not found during revalidation')
 
+        if (!sessionResult.error && sessionResult.data === false && await isSessionRevokedByAnotherDevice()) {
+          await signOutRevokedSession()
+          return
+        }
+
         if (sessionResult.error || sessionResult.data !== true) {
           if (sessionResult.error) console.error('Session revalidation failed:', sessionResult.error)
-          activatedUserIdRef.current = null
           setServerAccess(false)
           setEntitlement(currentEntitlement)
           setEntitlementStatusUnavailable(currentEntitlement === null)
           setDeviceBlocked(
             sessionResult.error
               ? 'სესიის სტატუსის გადამოწმება ვერ მოხერხდა. წვდომა დროებით შეზღუდულია.'
-              : 'ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.',
+              : 'მოწყობილობა უმოქმედობის გამო დროებით გათავისუფლდა. გამოიყენეთ გვერდი წვდომის აღსადგენად.',
           )
-          if (!sessionResult.error) await signOutRevokedSession()
           return
         }
 
@@ -702,10 +752,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void validateServerState()
+      if (document.visibilityState === 'visible') {
+        recordCurrentActivity()
+        void validateServerState()
+      }
     }
     const intervalId = window.setInterval(() => void validateServerState(), 30_000)
-    const sessionIntervalId = window.setInterval(() => void validateCurrentSession(), 2_000)
+    const revocationPollId = window.setInterval(() => void pollSessionRevocation(), 5_000)
+    window.addEventListener('pointerdown', recordCurrentActivity)
+    window.addEventListener('pointermove', recordCurrentActivity)
+    window.addEventListener('keydown', recordCurrentActivity)
+    window.addEventListener('touchstart', recordCurrentActivity, { passive: true })
+    window.addEventListener('wheel', recordCurrentActivity, { passive: true })
+    window.addEventListener('focus', recordCurrentActivity)
     window.addEventListener('focus', validateServerState)
     document.addEventListener('visibilitychange', onVisibilityChange)
     void validateServerState()
@@ -713,7 +772,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false
       window.clearInterval(intervalId)
-      window.clearInterval(sessionIntervalId)
+      window.clearInterval(revocationPollId)
+      window.removeEventListener('pointerdown', recordCurrentActivity)
+      window.removeEventListener('pointermove', recordCurrentActivity)
+      window.removeEventListener('keydown', recordCurrentActivity)
+      window.removeEventListener('touchstart', recordCurrentActivity)
+      window.removeEventListener('wheel', recordCurrentActivity)
+      window.removeEventListener('focus', recordCurrentActivity)
       window.removeEventListener('focus', validateServerState)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
