@@ -32,9 +32,14 @@ insert into auth.users (id, instance_id, aud, role, email, encrypted_password, e
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values ('$uid', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
   'race-$tag@example.test', '', now(), '{}', '{}', now(), now());
-insert into public.profiles (id, subscription_status, subscription_plan, subscription_expires_at,
-  device_slots, subscription_payment_id)
-values ('$uid', 'active', 'full', now() + interval '30 days', $slots, 'race-$tag');
+-- The on_auth_user_created trigger already created this profile; configure it for the plan.
+update public.profiles
+set subscription_status = 'active',
+    subscription_plan = 'full',
+    subscription_expires_at = now() + interval '30 days',
+    device_slots = $slots,
+    subscription_payment_id = 'race-$tag'
+where id = '$uid';
 insert into public.payment_transactions (user_id, provider, payment_id, merchant_payment_id, amount,
   currency, status, metadata, paid_at)
 values ('$uid', 'bog', 'race-$tag', 'merchant-race-$tag', $amount, 'GEL', 'success',
