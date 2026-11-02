@@ -19,7 +19,7 @@ export type Database = {
           full_name: string | null
           trial_started_at: string
           subscription_status: 'trial' | 'active' | 'expired' | 'cancelled'
-          subscription_expires_at: string
+          subscription_expires_at: string | null
           subscription_plan: SubscriptionPlan | null
           device_slots: number
           subscription_payment_id: string | null
@@ -138,15 +138,20 @@ export type RouteWithPins = RouteRow & { pins: PinRow[] }
 
 export function isAccessActive(profile: Profile | null): boolean {
   if (!profile) return false
-  const expires = new Date(profile.subscription_expires_at).getTime()
-  if (profile.subscription_status === 'active') return expires > Date.now() || !profile.subscription_expires_at
-  if (profile.subscription_status === 'trial') return expires > Date.now()
+  const expiresAt = profile.subscription_expires_at
+  if (profile.subscription_status === 'active') {
+    return expiresAt === null || new Date(expiresAt).getTime() > Date.now()
+  }
+  if (profile.subscription_status === 'trial') {
+    return expiresAt !== null && new Date(expiresAt).getTime() > Date.now()
+  }
   return false
 }
 
 export function accessLabel(profile: Profile | null): string {
   if (!profile) return ''
   if (profile.subscription_status === 'trial') {
+    if (profile.subscription_expires_at === null) return 'საცდელი პერიოდი დასრულებულია'
     const ms = new Date(profile.subscription_expires_at).getTime() - Date.now()
     if (ms <= 0) return 'საცდელი პერიოდი დასრულებულია'
     const h = Math.floor(ms / 3600000)

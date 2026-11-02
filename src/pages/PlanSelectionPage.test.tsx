@@ -26,7 +26,7 @@ const state = vi.hoisted(() => ({
     profile: null as null | {
       subscription_status: string
       subscription_plan: string | null
-      subscription_expires_at: string
+      subscription_expires_at: string | null
       device_slots: 1 | 2
       subscription_payment_id?: string | null
     },
@@ -230,7 +230,7 @@ describe('Premium package selection', () => {
     await waitFor(() => expect(state.refreshProfile).toHaveBeenCalledOnce())
   })
 
-  it('distinguishes an active legacy subscription from paid Premium', () => {
+  it('returns an active lifetime legacy subscription to the routes page', () => {
     state.auth = {
       user: { id: 'user-1' },
       loading: false,
@@ -249,7 +249,7 @@ describe('Premium package selection', () => {
       profile: {
         subscription_status: 'active',
         subscription_plan: 'premium',
-        subscription_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        subscription_expires_at: null,
         device_slots: 1,
         subscription_payment_id: null,
       },
@@ -264,7 +264,8 @@ describe('Premium package selection', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('ძველი გამოწერა აქტიურია')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Home' })).toBeTruthy()
+    expect(screen.queryByText('ძველი გამოწერა აქტიურია')).toBeNull()
     expect(screen.queryByText('გადახდილი Premium აქტიურია')).toBeNull()
   })
 

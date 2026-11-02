@@ -288,6 +288,40 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByTestId('entitlement').textContent).toContain('paid:verified:1:access')
   })
 
+  it('grants active legacy Premium access when the expiry is NULL', async () => {
+    h.profileFetch = async () => ({
+      data: {
+        ...profile('u1'),
+        subscription_status: 'active',
+        subscription_plan: 'premium',
+        subscription_expires_at: null,
+        subscription_payment_id: null,
+      },
+      error: null,
+    })
+    h.entitlementResponse = {
+      status: 'ok',
+      entitlement: 'legacy',
+      payment_status: null,
+      payment_amount: null,
+      payment_currency: null,
+      device_limit: 1,
+      access_active: true,
+    }
+
+    render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('s').textContent).toBe('access:u1'))
+    expect(screen.getByTestId('entitlement').textContent).toContain(
+      'active::premium:legacy:no-payment:1:access',
+    )
+  })
+
   it('saves the Trial plan through its session-guarded RPC without directly updating profiles', async () => {
     h.profileFetch = async () => ({
       data: {

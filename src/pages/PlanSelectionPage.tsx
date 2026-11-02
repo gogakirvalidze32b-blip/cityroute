@@ -32,6 +32,7 @@ export function PlanSelectionPage() {
   const trialActive =
     entitlement?.source === 'trial' &&
     profile?.subscription_status === 'trial' &&
+    profile.subscription_expires_at !== null &&
     new Date(profile.subscription_expires_at).getTime() > Date.now()
   const activeSubscription =
     profile?.subscription_status === 'active' && isAccessActive(profile)
@@ -44,6 +45,15 @@ export function PlanSelectionPage() {
   const activeTrial = trialActive && hasAccess
   const earlyPayment = new URLSearchParams(location.search).get('earlyPayment') === '1'
   const totalPrice = calculatePrice(chosen, deviceSlots)
+
+  if (
+    hasAccess &&
+    !needsPlanSelection &&
+    !entitlementStatusUnavailable &&
+    !(earlyPayment && activeTrial)
+  ) {
+    return <Navigate to="/" replace />
+  }
 
   async function onContinue() {
     setSubmitting(true)
