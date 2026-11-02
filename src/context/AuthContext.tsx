@@ -206,6 +206,29 @@ async function fetchCurrentAccountEntitlement(): Promise<CurrentAccountEntitleme
   }
 }
 
+const PRESENCE_PING_INTERVAL_MS = 30_000
+const NETWORK_GRACE_MS = 90_000
+
+// A failed request is only evidence of a connectivity problem, never of a revoked or inactive session.
+// PostgREST answers PGRST202 only when the RPC is absent from its schema cache (database without migration 027).
+function isMissingRpcError(error: unknown): boolean {
+  return isRecord(error) && error.code === 'PGRST202'
+}
+
+const PRESENCE_RPC_RETRY_MS = 300_000
+
+function isTransientNetworkFailure(error: unknown): boolean {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true
+  if (error instanceof TypeError) return true
+  const candidate = typeof error === 'object' && error !== null
+    ? (error as { message?: unknown; status?: unknown })
+    : null
+  const status = typeof candidate?.status === 'number' ? candidate.status : null
+  if (status === 0 || (status !== null && status >= 502 && status <= 504)) return true
+  const message = typeof candidate?.message === 'string' ? candidate.message : ''
+  return /failed to fetch|networkerror|network request failed|load failed|timed? ?out/i.test(message)
+}
+
 async function activateSession(userId: string): Promise<SessionActivation> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined
   try {
@@ -596,9 +619,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let mounted = true
     let checking = false
-    let checkingSession = false
+    let activityHeartbeatInFlight = false
+    let lastActivityHeartbeatAt = 0
     let sessionRevoked = false
+    let lastServerContactAt = Date.now()
+    let presenceInFlight = false
+    let presenceRpcMissingSince = 0
     const supabase = getSupabase()
+
+    // Falls back to heartbeat_current_session (migration 026) only when PostgREST reports the
+    // presence RPC as missing. Any other error is returned unchanged and never triggers the fallback.
+    const callPresence = async () => {
+      if (!presenceRpcMissingSince || Date.now() - presenceRpcMissingSince > PRESENCE_RPC_RETRY_MS) {
+        const result = await supabase.rpc('presence_current_session')
+        if (!isMissingRpcError(result.error)) {
+          presenceRpcMissingSince = 0
+          return result
+        }
+        presenceRpcMissingSince = Date.now()
+      }
+      return supabase.rpc('heartbeat_current_session')
+    }
+    const withinNetworkGrace = (error: unknown) =>
+      isTransientNetworkFailure(error) && Date.now() - lastServerContactAt < NETWORK_GRACE_MS
 
     const signOutRevokedSession = async () => {
       if (!mounted || sessionRevoked) return
@@ -623,26 +666,102 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const validateCurrentSession = async () => {
-      if (!mounted || checkingSession || document.visibilityState === 'hidden') return
-      checkingSession = true
-      try {
-        const { data, error } = await supabase.rpc('has_current_active_session')
-        if (!mounted) return
-        if (error) {
-          console.error('Session heartbeat failed:', error)
+    const reactivateCurrentSession = async () => {
+      const activation = await activateSession(userId)
+      if (!mounted) return
+      if (activation.error) {
+        setServerAccess(false)
+        setDeviceBlocked(activation.error)
+        return
+      }
+      setServerAccess(activation.accessActive)
+      setDeviceBlocked(null)
+    }
+
+    const recordCurrentActivity = () => {
+      const now = Date.now()
+      if (
+        !mounted ||
+        activityHeartbeatInFlight ||
+        document.visibilityState === 'hidden' ||
+        now - lastActivityHeartbeatAt < 60_000
+      ) return
+
+      activityHeartbeatInFlight = true
+      lastActivityHeartbeatAt = now
+      void (async () => {
+        const { data, error } = await supabase.rpc('heartbeat_current_session')
+        if (error) throw error
+        if (!isRecord(data) || typeof data.status !== 'string') {
+          throw new Error('Unexpected heartbeat_current_session response')
+        }
+        lastServerContactAt = Date.now()
+        if (data.status === 'active') return
+        if (data.status === 'revoked') {
+          await signOutRevokedSession()
           return
         }
-        if (data !== true) await signOutRevokedSession()
+        await reactivateCurrentSession()
+      })().catch((error) => {
+        if (withinNetworkGrace(error)) {
+          console.warn('Current device activity heartbeat skipped during a temporary network failure:', error)
+          return
+        }
+        console.error('Current device activity heartbeat failed:', error)
+        if (mounted) {
+          setServerAccess(false)
+          setDeviceBlocked('სესიის აქტივობის განახლება ვერ მოხერხდა. წვდომა დროებით შეზღუდულია.')
+        }
+      }).finally(() => {
+        activityHeartbeatInFlight = false
+      })
+    }
+
+    // Liveness signal only: it keeps the slot of an open tab (visible or hidden) but never extends
+    // the 30-minute inactivity window, and a failed request never changes access.
+    const sendPresence = async () => {
+      if (!mounted || sessionRevoked || presenceInFlight) return
+      presenceInFlight = true
+      try {
+        const { data, error } = await callPresence()
+        if (!mounted || error || !isRecord(data) || typeof data.status !== 'string') return
+        lastServerContactAt = Date.now()
+        if (data.status === 'revoked') {
+          await signOutRevokedSession()
+        } else if (data.status === 'inactive' && document.visibilityState !== 'hidden') {
+          await reactivateCurrentSession()
+        }
       } catch (error) {
-        console.error('Session heartbeat failed:', error)
+        console.warn('Device presence ping failed:', error)
       } finally {
-        checkingSession = false
+        presenceInFlight = false
+      }
+    }
+
+    // presence_current_session reports 'revoked' without extending the 30-minute inactivity window.
+    const isSessionRevokedByAnotherDevice = async () => {
+      const { data, error } = await callPresence()
+      return !error && isRecord(data) && data.status === 'revoked'
+    }
+
+    let polling = false
+    const pollSessionRevocation = async () => {
+      // Runs while the tab is hidden too: the check is read-only and never extends the idle window.
+      if (!mounted || checking || polling || sessionRevoked) return
+      polling = true
+      try {
+        const { data, error } = await supabase.rpc('has_current_active_session')
+        if (!mounted || error || data !== false) return
+        if (await isSessionRevokedByAnotherDevice()) await signOutRevokedSession()
+      } catch (error) {
+        console.error('Session revocation poll failed:', error)
+      } finally {
+        polling = false
       }
     }
 
     const validateServerState = async () => {
-      if (!mounted || checking || document.visibilityState === 'hidden') return
+      if (!mounted || checking || sessionRevoked || document.visibilityState === 'hidden') return
       checking = true
       try {
         const [sessionResult, currentProfile, currentEntitlement] = await Promise.all([
@@ -654,18 +773,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!mounted) return
         if (!currentProfile) throw new Error('Profile not found during revalidation')
 
+        if (!sessionResult.error && sessionResult.data === false && await isSessionRevokedByAnotherDevice()) {
+          await signOutRevokedSession()
+          return
+        }
+
+        if (sessionResult.error && withinNetworkGrace(sessionResult.error)) {
+          console.warn('Session revalidation skipped during a temporary network failure:', sessionResult.error)
+          return
+        }
+
         if (sessionResult.error || sessionResult.data !== true) {
           if (sessionResult.error) console.error('Session revalidation failed:', sessionResult.error)
-          activatedUserIdRef.current = null
           setServerAccess(false)
           setEntitlement(currentEntitlement)
           setEntitlementStatusUnavailable(currentEntitlement === null)
           setDeviceBlocked(
             sessionResult.error
               ? 'სესიის სტატუსის გადამოწმება ვერ მოხერხდა. წვდომა დროებით შეზღუდულია.'
-              : 'ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.',
+              : 'მოწყობილობა უმოქმედობის გამო დროებით გათავისუფლდა. გამოიყენეთ გვერდი წვდომის აღსადგენად.',
           )
-          if (!sessionResult.error) await signOutRevokedSession()
           return
         }
 
@@ -686,7 +813,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setServerAccess(existingAccess)
         }
         setDeviceBlocked(null)
+        lastServerContactAt = Date.now()
       } catch (error) {
+        if (withinNetworkGrace(error)) {
+          console.warn('Server access revalidation skipped during a temporary network failure:', error)
+          return
+        }
         console.error('Server access revalidation failed:', error)
         if (mounted) {
           loadedProfileUserIdRef.current = null
@@ -702,10 +834,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void validateServerState()
+      if (document.visibilityState === 'visible') {
+        recordCurrentActivity()
+        void validateServerState()
+      }
     }
     const intervalId = window.setInterval(() => void validateServerState(), 30_000)
-    const sessionIntervalId = window.setInterval(() => void validateCurrentSession(), 2_000)
+    const revocationPollId = window.setInterval(() => void pollSessionRevocation(), 5_000)
+    const presenceId = window.setInterval(() => void sendPresence(), PRESENCE_PING_INTERVAL_MS)
+    window.addEventListener('pointerdown', recordCurrentActivity)
+    window.addEventListener('pointermove', recordCurrentActivity)
+    window.addEventListener('keydown', recordCurrentActivity)
+    window.addEventListener('touchstart', recordCurrentActivity, { passive: true })
+    window.addEventListener('wheel', recordCurrentActivity, { passive: true })
+    window.addEventListener('focus', recordCurrentActivity)
     window.addEventListener('focus', validateServerState)
     document.addEventListener('visibilitychange', onVisibilityChange)
     void validateServerState()
@@ -713,7 +855,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       mounted = false
       window.clearInterval(intervalId)
-      window.clearInterval(sessionIntervalId)
+      window.clearInterval(revocationPollId)
+      window.clearInterval(presenceId)
+      window.removeEventListener('pointerdown', recordCurrentActivity)
+      window.removeEventListener('pointermove', recordCurrentActivity)
+      window.removeEventListener('keydown', recordCurrentActivity)
+      window.removeEventListener('touchstart', recordCurrentActivity)
+      window.removeEventListener('wheel', recordCurrentActivity)
+      window.removeEventListener('focus', recordCurrentActivity)
       window.removeEventListener('focus', validateServerState)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }

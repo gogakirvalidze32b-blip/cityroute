@@ -22,7 +22,7 @@ insert into public.profiles (
 )
 values (
   '00000000-0000-0000-0000-000000000931',
-  'active', 'full', pg_catalog.now() + interval '30 days',
+  'active', 'premium', pg_catalog.now() + interval '30 days',
   2, 'session-limit-019-payment'
 )
 on conflict (id) do update

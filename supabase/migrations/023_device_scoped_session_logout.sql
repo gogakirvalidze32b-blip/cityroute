@@ -30,6 +30,18 @@ begin
     );
   end if;
 
+  if not exists (
+    select 1
+    from auth.sessions s
+    where s.id = current_session_id
+      and s.user_id = uid
+  ) then
+    return pg_catalog.jsonb_build_object(
+      'status', 'inactive',
+      'deactivated_sessions', 0
+    );
+  end if;
+
   insert into public.profile_revoked_sessions (profile_id, session_id)
   select active.profile_id, active.session_id
   from public.profile_active_sessions active
@@ -57,7 +69,8 @@ begin
 end;
 $$;
 
-revoke all on function public.deactivate_current_session() from public, anon;
+revoke all on function public.deactivate_current_session()
+  from public, anon, service_role;
 grant execute on function public.deactivate_current_session() to authenticated;
 
 commit;

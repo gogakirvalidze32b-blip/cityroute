@@ -1,0 +1,123 @@
+name: Session lock pgTAP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/production-device-lock-99-179-20261102
+      - production-candidate/device-lock-99-179-20261102
+    paths:
+      - .github/workflows/session-lock-pgtap.yml
+      - supabase/migrations/013_device_slot_enforcement.sql
+      - supabase/migrations/014_verified_device_slot_limits.sql
+      - supabase/migrations/015_single_active_auth_session.sql
+      - supabase/migrations/017_admin_session_limit_override.sql
+      - supabase/migrations/018_device_fingerprint_session_slots.sql
+      - supabase/migrations/019_full_plan_session_limit.sql
+      - supabase/migrations/020_authoritative_device_sessions.sql
+      - supabase/migrations/021_preserve_legacy_entitlements.sql
+      - supabase/migrations/022_current_account_entitlement_snapshot.sql
+      - supabase/migrations/023_device_scoped_session_logout.sql
+      - supabase/migrations/024_reconcile_subscription_plan_check.sql
+      - supabase/migrations/025_nullable_subscription_expires_at.sql
+      - supabase/migrations/026_device_session_activity_heartbeat.sql
+      - supabase/migrations/027_device_session_presence.sql
+      - supabase/tests/013_bind_device_slots.test.sql
+      - supabase/tests/014_verified_device_slot_limits.test.sql
+      - supabase/tests/015_single_active_auth_session.test.sql
+      - supabase/tests/017_admin_session_limit_override.test.sql
+      - supabase/tests/018_device_fingerprint_session_slots.test.sql
+      - supabase/tests/019_full_plan_session_limit.test.sql
+      - supabase/tests/020_verified_bog_premium_activation.test.sql
+      - supabase/tests/021_preserve_legacy_entitlements.test.sql
+      - supabase/tests/022_current_account_entitlement_snapshot.test.sql
+      - supabase/tests/023_device_scoped_session_logout.test.sql
+      - supabase/tests/024_reconcile_subscription_plan_check.test.sql
+      - supabase/tests/025_nullable_subscription_expires_at.test.sql
+      - supabase/tests/026_device_session_activity_heartbeat.test.sql
+      - supabase/tests/027_single_device_takeover.test.sql
+      - supabase/tests/028_device_session_presence.test.sql
+      - .github/scripts/parallel-login-race.sh
+      - .github/scripts/verify-027-rollback-and-upgrade.sh
+      - supabase/rollbacks/027_device_session_presence.rollback.sql
+      - supabase/tests/legacy_active_session_preservation.test.sql
+
+jobs:
+  pgtap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out release candidate
+        uses: actions/checkout@v4
+
+      - name: Check out immutable schema fixtures
+        uses: actions/checkout@v4
+        with:
+          ref: 94d277d9c802d28cd06a19d8a1d6acd0e7913b63
+          path: rc-fixtures
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Prepare isolated database test project
+        shell: bash
+        run: |
+          mkdir -p .ci-supabase/supabase/migrations .ci-supabase/supabase/tests
+          cp rc-fixtures/supabase/config.toml .ci-supabase/supabase/config.toml
+
+          for migration in rc-fixtures/supabase/migrations/*.sql; do
+            case "$(basename "$migration")" in
+              019_*|020_*|021_*|022_*|023_*|024_*)
+                continue
+                ;;
+            esac
+            cp "$migration" .ci-supabase/supabase/migrations/
+          done
+
+          cp supabase/migrations/013_device_slot_enforcement.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/014_verified_device_slot_limits.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/015_single_active_auth_session.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/017_admin_session_limit_override.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/018_device_fingerprint_session_slots.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/019_full_plan_session_limit.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/020_authoritative_device_sessions.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/021_preserve_legacy_entitlements.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/022_current_account_entitlement_snapshot.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/023_device_scoped_session_logout.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/024_reconcile_subscription_plan_check.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/025_nullable_subscription_expires_at.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/026_device_session_activity_heartbeat.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/027_device_session_presence.sql .ci-supabase/supabase/migrations/
+          cp supabase/tests/013_bind_device_slots.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/014_verified_device_slot_limits.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/015_single_active_auth_session.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/017_admin_session_limit_override.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/018_device_fingerprint_session_slots.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/019_full_plan_session_limit.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/020_verified_bog_premium_activation.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/021_preserve_legacy_entitlements.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/022_current_account_entitlement_snapshot.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/023_device_scoped_session_logout.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/024_reconcile_subscription_plan_check.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/025_nullable_subscription_expires_at.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/026_device_session_activity_heartbeat.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/027_single_device_takeover.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/028_device_session_presence.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/legacy_active_session_preservation.test.sql .ci-supabase/supabase/tests/
+
+      - name: Start isolated Supabase database
+        run: supabase start --workdir .ci-supabase
+
+      - name: Run device-lock pgTAP regressions
+        run: supabase test db --local --workdir .ci-supabase
+
+      - name: Run parallel login race checks
+        run: bash .github/scripts/parallel-login-race.sh
+
+      - name: Verify migration 027 rollback and upgrade
+        run: bash .github/scripts/verify-027-rollback-and-upgrade.sh
+      - name: Stop isolated Supabase database
+        if: always()
+        run: supabase stop --workdir .ci-supabase
