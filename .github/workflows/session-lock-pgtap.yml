@@ -20,6 +20,7 @@ on:
       - supabase/migrations/024_reconcile_subscription_plan_check.sql
       - supabase/migrations/025_nullable_subscription_expires_at.sql
       - supabase/migrations/026_device_session_activity_heartbeat.sql
+      - supabase/migrations/027_device_session_presence.sql
       - supabase/tests/013_bind_device_slots.test.sql
       - supabase/tests/014_verified_device_slot_limits.test.sql
       - supabase/tests/015_single_active_auth_session.test.sql
@@ -34,7 +35,10 @@ on:
       - supabase/tests/025_nullable_subscription_expires_at.test.sql
       - supabase/tests/026_device_session_activity_heartbeat.test.sql
       - supabase/tests/027_single_device_takeover.test.sql
+      - supabase/tests/028_device_session_presence.test.sql
       - .github/scripts/parallel-login-race.sh
+      - .github/scripts/verify-027-rollback-and-upgrade.sh
+      - supabase/rollbacks/027_device_session_presence.rollback.sql
       - supabase/tests/legacy_active_session_preservation.test.sql
 
 jobs:
@@ -84,6 +88,7 @@ jobs:
           cp supabase/migrations/024_reconcile_subscription_plan_check.sql .ci-supabase/supabase/migrations/
           cp supabase/migrations/025_nullable_subscription_expires_at.sql .ci-supabase/supabase/migrations/
           cp supabase/migrations/026_device_session_activity_heartbeat.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/027_device_session_presence.sql .ci-supabase/supabase/migrations/
           cp supabase/tests/013_bind_device_slots.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/014_verified_device_slot_limits.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/015_single_active_auth_session.test.sql .ci-supabase/supabase/tests/
@@ -98,6 +103,7 @@ jobs:
           cp supabase/tests/025_nullable_subscription_expires_at.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/026_device_session_activity_heartbeat.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/027_single_device_takeover.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/028_device_session_presence.test.sql .ci-supabase/supabase/tests/
           cp supabase/tests/legacy_active_session_preservation.test.sql .ci-supabase/supabase/tests/
 
       - name: Start isolated Supabase database
@@ -109,6 +115,8 @@ jobs:
       - name: Run parallel login race checks
         run: bash .github/scripts/parallel-login-race.sh
 
+      - name: Verify migration 027 rollback and upgrade
+        run: bash .github/scripts/verify-027-rollback-and-upgrade.sh
       - name: Stop isolated Supabase database
         if: always()
         run: supabase stop --workdir .ci-supabase

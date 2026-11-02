@@ -120,6 +120,14 @@ export type Database = {
         Args: Record<string, never>
         Returns: Json
       }
+      heartbeat_current_session: {
+        Args: Record<string, never>
+        Returns: Json
+      }
+      presence_current_session: {
+        Args: Record<string, never>
+        Returns: Json
+      }
       select_subscription_plan: {
         Args: { chosen: string }
         Returns: Json

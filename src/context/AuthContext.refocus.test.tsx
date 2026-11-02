@@ -3,7 +3,7 @@
  * app to "loading" (which unmounts the active exam), must fail closed when a fresh profile fetch
  * fails, and SIGNED_OUT / a different user must still be handled.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, act, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './AuthContext'
@@ -28,6 +28,9 @@ const h = vi.hoisted(() => ({
   } as unknown,
   entitlementError: null as unknown,
   activeSessionResponse: true as unknown,
+  activeSessionError: null as unknown,
+  presenceResponse: { status: 'active' } as unknown,
+  presenceError: null as unknown,
   heartbeatResponse: { status: 'active' } as unknown,
   heartbeatError: null as unknown,
   accessResponse: true as unknown,
@@ -97,10 +100,13 @@ vi.mock('@/lib/supabase', () => ({
         }
       }
       if (name === 'has_current_active_session') {
-        return { data: h.activeSessionResponse, error: null, status: 200 }
+        return { data: h.activeSessionError ? null : h.activeSessionResponse, error: h.activeSessionError, status: 200 }
       }
       if (name === 'heartbeat_current_session') {
         return { data: h.heartbeatResponse, error: h.heartbeatError, status: 200 }
+      }
+      if (name === 'presence_current_session') {
+        return { data: h.presenceResponse, error: h.presenceError, status: 200 }
       }
       if (name === 'has_active_access') {
         return { data: h.accessResponse, error: h.accessError }
@@ -231,6 +237,9 @@ describe('AuthContext – tab refocus', () => {
     }
     h.entitlementError = null
     h.activeSessionResponse = true
+    h.activeSessionError = null
+    h.presenceResponse = { status: 'active' }
+    h.presenceError = null
     h.heartbeatResponse = { status: 'active' }
     h.heartbeatError = null
     h.accessResponse = true
@@ -841,6 +850,7 @@ describe('AuthContext – tab refocus', () => {
 
     h.activeSessionResponse = false
     h.heartbeatResponse = { status: 'revoked' }
+    h.presenceResponse = { status: 'revoked' }
     await act(async () => {
       window.dispatchEvent(new Event('pointerdown'))
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -878,6 +888,7 @@ describe('AuthContext – tab refocus', () => {
 
     h.activeSessionResponse = false
     h.heartbeatResponse = { status: 'revoked' }
+    h.presenceResponse = { status: 'revoked' }
     h.rpcCalls.length = 0
 
     await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 8000 })
@@ -889,6 +900,7 @@ describe('AuthContext – tab refocus', () => {
   it('does not sign out a device whose slot was only released by idleness', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.heartbeatResponse = { status: 'inactive' }
+    h.presenceResponse = { status: 'inactive' }
     render(
       <AuthProvider>
         <Gate />
@@ -928,7 +940,7 @@ describe('AuthContext – tab refocus', () => {
             : { data: { status: 'blocked', message: 'ეს სესია გასულია. ხელახლა შედით.' }, error: null }
         }
         if (name === 'has_current_active_session') return { data: active.has(sessionId), error: null }
-        if (name === 'heartbeat_current_session') {
+        if (name === 'heartbeat_current_session' || name === 'presence_current_session') {
           return {
             data: { status: revoked.has(sessionId) ? 'revoked' : active.has(sessionId) ? 'active' : 'inactive' },
             error: null,
@@ -1012,4 +1024,312 @@ describe('AuthContext – tab refocus', () => {
       expect(h.signOutOptions).toEqual({ scope: 'local' })
     }, 15000)
   })
-})
+
+  describe('device presence, closed tabs and temporary network failures', () => {
+    const load = async () => {
+      await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+    }
+    const text = () => screen.getByTestId('s').textContent
+    const elapse = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+
+    // Models activate/has_current/presence for a plan with `limit` device slots.
+    // presenceMissing models a database that has migration 026 but not 027.
+    function createSlotServer(limit: number, presenceMissing = false) {
+      const active = new Set<string>()
+      const revoked = new Set<string>()
+      const login = (sessionId: string) => {
+        if (revoked.has(sessionId)) return false
+        if (active.has(sessionId)) return true
+        if (limit === 1) {
+          for (const id of active) revoked.add(id)
+          active.clear()
+        } else if (active.size >= limit) {
+          return false
+        }
+        active.add(sessionId)
+        return true
+      }
+      h.serverModel = (name) => {
+        const sessionId = h.currentDeviceSession
+        if (name === 'activate_current_session') {
+          return login(sessionId)
+            ? { data: { status: 'active', device_limit: limit, access_active: true }, error: null }
+            : {
+              data: {
+                status: 'blocked',
+                message: `ამ ანგარიშზე ერთდროულად მაქსიმუმ ${limit} მოწყობილობა შეიძლება იყოს აქტიური.`,
+              },
+              error: null,
+            }
+        }
+        if (name === 'has_current_active_session') return { data: active.has(sessionId), error: null }
+        if (name === 'presence_current_session' && presenceMissing) {
+          return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.presence_current_session' } }
+        }
+        if (name === 'heartbeat_current_session' || name === 'presence_current_session') {
+          return {
+            data: { status: revoked.has(sessionId) ? 'revoked' : active.has(sessionId) ? 'active' : 'inactive' },
+            error: null,
+          }
+        }
+        return undefined
+      }
+      return {
+        login,
+        // A closed tab stops sending presence; the server frees its registry row.
+        release: (id: string) => { active.delete(id) },
+        isActive: (id: string) => active.has(id),
+      }
+    }
+
+    const renderDevice = (sessionId: string) => {
+      h.currentDeviceSession = sessionId
+      h.signOutCallback = true
+      h.signOutOptions = null
+      return render(
+        <AuthProvider>
+          <MemoryRouter initialEntries={['/protected']}>
+            <Routes>
+              <Route path="/login" element={<p>Login page</p>} />
+              <Route element={<ProtectedRoute />}>
+                <Route path="/protected" element={<p>Protected page</p>} />
+              </Route>
+              <Route path="*" element={<p>Blocked page</p>} />
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>,
+      )
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    })
+    afterEach(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      vi.useRealTimers()
+    })
+
+    it('sends a presence ping every 30 seconds, also while the tab is hidden', async () => {
+      render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+      expect(text()).toBe('access:u1')
+
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      h.rpcCalls.length = 0
+      await elapse(30_000)
+      expect(h.rpcCalls.filter((name) => name === 'presence_current_session')).toHaveLength(1)
+      await elapse(30_000)
+      expect(h.rpcCalls.filter((name) => name === 'presence_current_session')).toHaveLength(2)
+      expect(h.rpcCalls).not.toContain('heartbeat_current_session')
+      expect(text()).toBe('access:u1')
+    })
+
+    it('signs the device out when its presence ping reports a revoked session', async () => {
+      renderDevice('session-A')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+
+      h.presenceResponse = { status: 'revoked' }
+      await elapse(30_000)
+      expect(screen.getByText('Login page')).toBeTruthy()
+      expect(h.signOutOptions).toEqual({ scope: 'local' })
+    })
+
+    it('does not block an active device when presence pings fail temporarily', async () => {
+      render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+      h.presenceError = { message: 'TypeError: Failed to fetch' }
+      await elapse(65_000)
+      expect(h.rpcCalls.filter((name) => name === 'presence_current_session').length).toBeGreaterThan(1)
+      expect(text()).toBe('access:u1')
+      expect(h.signOutOptions).toBeNull()
+    })
+
+    it('keeps access through a short network outage and denies it once the grace period is exceeded', async () => {
+      render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      h.activeSessionError = { message: 'TypeError: Failed to fetch' }
+      h.presenceError = { message: 'TypeError: Failed to fetch' }
+      await elapse(31_000)
+      expect(text()).toBe('access:u1')
+      await elapse(30_000)
+      expect(text()).toBe('access:u1')
+      expect(h.signOutOptions).toBeNull()
+
+      await elapse(35_000)
+      await elapse(35_000)
+      expect(text()).toContain('noaccess:u1')
+      expect(h.signOutOptions).toBeNull()
+    })
+
+    it('does not treat a temporary heartbeat network failure as inactive or revoked', async () => {
+      render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      h.heartbeatError = { message: 'TypeError: Failed to fetch' }
+      await act(async () => {
+        window.dispatchEvent(new Event('pointerdown'))
+        await vi.advanceTimersByTimeAsync(100)
+      })
+      expect(h.rpcCalls).toContain('heartbeat_current_session')
+      expect(text()).toBe('access:u1')
+      expect(h.rpcCalls).not.toContain('deactivate_current_session')
+    })
+
+    it('179 GEL: A and B work together, C is blocked and neither A nor B is signed out', async () => {
+      const server = createSlotServer(2)
+      renderDevice('session-A')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+
+      expect(server.login('session-B')).toBe(true)
+      expect(server.login('session-C')).toBe(false)
+      await elapse(65_000)
+
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      expect(server.isActive('session-A')).toBe(true)
+      expect(server.isActive('session-B')).toBe(true)
+      expect(server.isActive('session-C')).toBe(false)
+      expect(h.signOutOptions).toBeNull()
+    })
+
+    it('179 GEL: C is blocked, then admitted after A closes, while B stays active', async () => {
+      const server = createSlotServer(2)
+      h.currentDeviceSession = 'session-A'
+      const deviceA = render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+      expect(text()).toBe('access:u1')
+      server.login('session-B')
+      deviceA.unmount()
+
+      h.currentDeviceSession = 'session-C'
+      const deviceC = render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+      expect(text()).toContain('noaccess:u1')
+      expect(server.isActive('session-A')).toBe(true)
+      expect(server.isActive('session-B')).toBe(true)
+      deviceC.unmount()
+
+      server.release('session-A')
+      render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+      expect(text()).toBe('access:u1')
+      expect(server.isActive('session-B')).toBe(true)
+      expect(server.isActive('session-C')).toBe(true)
+    })
+    it('99 GEL: a new device is admitted once the closed device left a stale slot', async () => {
+      const server = createSlotServer(1)
+      const deviceA = renderDevice('session-A')
+      await load()
+      deviceA.unmount()
+      server.release('session-A')
+
+      renderDevice('session-B')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      expect(server.isActive('session-B')).toBe(true)
+    })
+
+    it('falls back to heartbeat_current_session when presence_current_session is missing (PGRST202)', async () => {
+      renderDevice('session-A')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+
+      h.presenceError = { code: 'PGRST202', message: 'Could not find the function public.presence_current_session' }
+      h.heartbeatResponse = { status: 'revoked' }
+      h.rpcCalls.length = 0
+      await elapse(30_000)
+      expect(h.rpcCalls).toContain('presence_current_session')
+      expect(h.rpcCalls).toContain('heartbeat_current_session')
+      expect(screen.getByText('Login page')).toBeTruthy()
+      expect(h.signOutOptions).toEqual({ scope: 'local' })
+    })
+
+    it('does not fall back to heartbeat for other presence RPC errors', async () => {
+      renderDevice('session-A')
+      await load()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      h.presenceError = { code: 'PGRST301', message: 'JWT expired' }
+      h.heartbeatResponse = { status: 'revoked' }
+      h.rpcCalls.length = 0
+      await elapse(65_000)
+      expect(h.rpcCalls).toContain('presence_current_session')
+      expect(h.rpcCalls).not.toContain('heartbeat_current_session')
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      expect(h.signOutOptions).toBeNull()
+    })
+
+    it('a network failure on the presence RPC is neither a fallback trigger nor a logout or block', async () => {
+      render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+      h.presenceError = new TypeError('Failed to fetch')
+      h.rpcCalls.length = 0
+      await elapse(65_000)
+      expect(h.rpcCalls).not.toContain('heartbeat_current_session')
+      expect(text()).toBe('access:u1')
+      expect(h.signOutOptions).toBeNull()
+    })
+
+    it('99 GEL on a database without migration 027: A → B → A still takes over automatically', async () => {
+      const server = createSlotServer(1, true)
+      const deviceA = renderDevice('session-A')
+      await load()
+      server.login('session-B')
+      await elapse(10_000)
+      expect(screen.getByText('Login page')).toBeTruthy()
+      expect(h.rpcCalls).toContain('heartbeat_current_session')
+      deviceA.unmount()
+
+      const deviceB = renderDevice('session-B')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      server.login('session-A2')
+      await elapse(10_000)
+      expect(screen.getByText('Login page')).toBeTruthy()
+      deviceB.unmount()
+
+      renderDevice('session-A2')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      expect(server.isActive('session-B')).toBe(false)
+    })
+
+    it('179 GEL on a database without migration 027: A and B stay active and C is blocked', async () => {
+      const server = createSlotServer(2, true)
+      renderDevice('session-A')
+      await load()
+      server.login('session-B')
+      expect(server.login('session-C')).toBe(false)
+      await elapse(65_000)
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      expect(server.isActive('session-A')).toBe(true)
+      expect(server.isActive('session-B')).toBe(true)
+      expect(h.signOutOptions).toBeNull()
+    })
+    it('99 GEL: A → B → A takes over each time without refresh or logout', async () => {
+      const server = createSlotServer(1)
+      const deviceA = renderDevice('session-A')
+      await load()
+      server.login('session-B')
+      await elapse(10_000)
+      expect(screen.getByText('Login page')).toBeTruthy()
+      deviceA.unmount()
+
+      const deviceB = renderDevice('session-B')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      server.login('session-A2')
+      await elapse(10_000)
+      expect(screen.getByText('Login page')).toBeTruthy()
+      deviceB.unmount()
+
+      renderDevice('session-A2')
+      await load()
+      expect(screen.getByText('Protected page')).toBeTruthy()
+      expect(server.isActive('session-B')).toBe(false)
+    })
+  })})
