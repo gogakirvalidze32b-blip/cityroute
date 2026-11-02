@@ -22,6 +22,7 @@ const PLAN_MATRIX: Record<SubscriptionPlan, PlanFeatures> = {
 export function isTrialActive(profile: Profile | null): boolean {
   if (!profile) return false
   if (profile.subscription_status !== 'trial') return false
+  if (profile.subscription_expires_at === null) return false
   return new Date(profile.subscription_expires_at).getTime() > Date.now()
 }
 

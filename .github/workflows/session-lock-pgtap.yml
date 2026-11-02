@@ -1,0 +1,78 @@
+name: Session lock pgTAP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release/production-device-lock-99-179-20261102
+    paths:
+      - .github/workflows/session-lock-pgtap.yml
+      - supabase/migrations/019_full_plan_session_limit.sql
+      - supabase/migrations/020_authoritative_device_sessions.sql
+      - supabase/migrations/021_preserve_legacy_entitlements.sql
+      - supabase/migrations/022_current_account_entitlement_snapshot.sql
+      - supabase/migrations/023_device_scoped_session_logout.sql
+      - supabase/migrations/025_nullable_subscription_expires_at.sql
+      - supabase/tests/019_full_plan_session_limit.test.sql
+      - supabase/tests/020_verified_bog_premium_activation.test.sql
+      - supabase/tests/021_preserve_legacy_entitlements.test.sql
+      - supabase/tests/022_current_account_entitlement_snapshot.test.sql
+      - supabase/tests/023_device_scoped_session_logout.test.sql
+      - supabase/tests/025_nullable_subscription_expires_at.test.sql
+
+jobs:
+  pgtap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out release candidate
+        uses: actions/checkout@v4
+
+      - name: Check out immutable schema fixtures
+        uses: actions/checkout@v4
+        with:
+          ref: 94d277d9c802d28cd06a19d8a1d6acd0e7913b63
+          path: rc-fixtures
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Prepare isolated database test project
+        shell: bash
+        run: |
+          mkdir -p .ci-supabase/supabase/migrations .ci-supabase/supabase/tests
+          cp rc-fixtures/supabase/config.toml .ci-supabase/supabase/config.toml
+
+          for migration in rc-fixtures/supabase/migrations/*.sql; do
+            case "$(basename "$migration")" in
+              019_*|020_*|021_*|022_*|023_*|024_*)
+                continue
+                ;;
+            esac
+            cp "$migration" .ci-supabase/supabase/migrations/
+          done
+
+          cp supabase/migrations/019_full_plan_session_limit.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/020_authoritative_device_sessions.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/021_preserve_legacy_entitlements.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/022_current_account_entitlement_snapshot.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/023_device_scoped_session_logout.sql .ci-supabase/supabase/migrations/
+          cp supabase/migrations/025_nullable_subscription_expires_at.sql .ci-supabase/supabase/migrations/
+          cp supabase/tests/019_full_plan_session_limit.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/020_verified_bog_premium_activation.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/021_preserve_legacy_entitlements.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/022_current_account_entitlement_snapshot.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/023_device_scoped_session_logout.test.sql .ci-supabase/supabase/tests/
+          cp supabase/tests/025_nullable_subscription_expires_at.test.sql .ci-supabase/supabase/tests/
+
+      - name: Start isolated Supabase database
+        run: supabase start --workdir .ci-supabase
+
+      - name: Run device-lock pgTAP regressions
+        run: supabase test db --local --workdir .ci-supabase
+
+      - name: Stop isolated Supabase database
+        if: always()
+        run: supabase stop --workdir .ci-supabase

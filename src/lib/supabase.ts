@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { getDeviceFingerprint } from '@/lib/device'
 import type { Database } from '@/types/database'
 
 export function normalizeSupabaseProjectUrl(configuredUrl: string | undefined): string | undefined {
@@ -39,6 +40,9 @@ export function getSupabase() {
         storage: typeof window !== 'undefined' ? window.localStorage : undefined,
       },
       global: {
+        headers: {
+          'x-cityroute-device-fingerprint': getDeviceFingerprint(),
+        },
         fetch: (url, options = {}) => {
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 წამი timeout

@@ -7,16 +7,28 @@ import { PlanSelectionPage } from './PlanSelectionPage'
 const state = vi.hoisted(() => ({
   selectPlan: vi.fn(async () => null as string | null),
   signOut: vi.fn(async () => {}),
+  refreshProfile: vi.fn(async () => {}),
   auth: {
     user: { id: 'user-1' as string } as { id: string } | null,
     loading: false,
     hasAccess: true,
     needsPlanSelection: true,
+    deviceBlocked: null as string | null,
+    entitlementStatusUnavailable: false,
+    entitlement: null as null | {
+      source: 'trial' | 'paid' | 'legacy' | 'inactive'
+      paymentStatus: string | null
+      paymentAmount: number | null
+      paymentCurrency: string | null
+      deviceLimit: number
+      accessActive: boolean
+    },
     profile: null as null | {
       subscription_status: string
       subscription_plan: string | null
-      subscription_expires_at: string
+      subscription_expires_at: string | null
       device_slots: 1 | 2
+      subscription_payment_id?: string | null
     },
   },
 }))
@@ -26,6 +38,7 @@ vi.mock('@/context/AuthContext', () => ({
     ...state.auth,
     selectPlan: state.selectPlan,
     signOut: state.signOut,
+    refreshProfile: state.refreshProfile,
   }),
 }))
 
@@ -39,16 +52,20 @@ describe('Premium package selection', () => {
   beforeEach(() => {
     state.selectPlan.mockClear()
     state.signOut.mockClear()
+    state.refreshProfile.mockClear()
     state.auth = {
       user: { id: 'user-1' },
       loading: false,
       hasAccess: true,
       needsPlanSelection: true,
+      deviceBlocked: null,
+      entitlementStatusUnavailable: false,
+      entitlement: null,
       profile: null,
     }
   })
 
-  it('saves the selected device slots and preserves the 12-hour trial path', async () => {
+  it('preserves selected package pricing and the 12-hour trial path', async () => {
     render(
       <MemoryRouter initialEntries={['/plans']}>
         <Routes>
@@ -60,9 +77,30 @@ describe('Premium package selection', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: /2 მანქანა/ }))
     expect(screen.getAllByText(/179/).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'Pay for 2' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /უფასო/ }))
-    await waitFor(() => expect(state.selectPlan).toHaveBeenCalledWith('premium', 2))
+    await waitFor(() => expect(state.selectPlan).toHaveBeenCalledWith('premium'))
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeTruthy()
+  })
+
+  it('keeps the user on plan selection when the secure plan RPC rejects the trial choice', async () => {
+    state.selectPlan.mockResolvedValue('This session is no longer active; sign in again')
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/" element={<h1>Home</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /უფასო/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This session is no longer active; sign in again',
+    )
+    expect(screen.queryByRole('heading', { name: 'Home' })).toBeNull()
+    expect(state.selectPlan).toHaveBeenCalledWith('premium')
   })
 
   it('lets an active trial open early payment, return to routes, and sign out', async () => {
@@ -71,6 +109,16 @@ describe('Premium package selection', () => {
       loading: false,
       hasAccess: true,
       needsPlanSelection: false,
+      deviceBlocked: null,
+      entitlementStatusUnavailable: false,
+      entitlement: {
+        source: 'trial',
+        paymentStatus: null,
+        paymentAmount: null,
+        paymentCurrency: null,
+        deviceLimit: 1,
+        accessActive: true,
+      },
       profile: {
         subscription_status: 'trial',
         subscription_plan: 'premium',
@@ -106,5 +154,190 @@ describe('Premium package selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ანგარიშიდან გასვლა' }))
     expect(await screen.findByRole('heading', { name: 'Login' })).toBeTruthy()
     expect(state.signOut).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a blocked session on the plan screen and allows a safe sign-out', async () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: false,
+      needsPlanSelection: false,
+      deviceBlocked: 'session limit reached',
+      entitlementStatusUnavailable: false,
+      entitlement: {
+        source: 'paid',
+        paymentStatus: 'success',
+        paymentAmount: 99,
+        paymentCurrency: 'GEL',
+        deviceLimit: 1,
+        accessActive: false,
+      },
+      profile: null,
+    }
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/login" element={<h1>Login</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('session limit reached')
+    fireEvent.click(screen.getByRole('button', { name: 'ანგარიშიდან გასვლა' }))
+    expect(await screen.findByRole('heading', { name: 'Login' })).toBeTruthy()
+    expect(state.signOut).toHaveBeenCalledOnce()
+  })
+
+  it('shows active Premium separately from a blocked device session and offers a safe retry', async () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: false,
+      needsPlanSelection: false,
+      deviceBlocked: 'session limit reached',
+      entitlementStatusUnavailable: false,
+      entitlement: {
+        source: 'paid',
+        paymentStatus: 'success',
+        paymentAmount: 99,
+        paymentCurrency: 'GEL',
+        deviceLimit: 1,
+        accessActive: false,
+      },
+      profile: {
+        subscription_status: 'active',
+        subscription_plan: 'premium',
+        subscription_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        device_slots: 1,
+        subscription_payment_id: 'verified-payment-1',
+      },
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/login" element={<h1>Login</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('გადახდილი Premium აქტიურია')).toBeTruthy()
+    expect(screen.getByRole('alert')).toHaveTextContent('გამოწერა აქტიურია')
+    expect(screen.queryByText('საცდელი პერიოდი დასრულებულია')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'სესიის ხელახლა შემოწმება' }))
+    await waitFor(() => expect(state.refreshProfile).toHaveBeenCalledOnce())
+  })
+
+  it('returns an active lifetime legacy subscription to the routes page', () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: true,
+      needsPlanSelection: false,
+      deviceBlocked: null,
+      entitlementStatusUnavailable: false,
+      entitlement: {
+        source: 'legacy',
+        paymentStatus: null,
+        paymentAmount: null,
+        paymentCurrency: null,
+        deviceLimit: 1,
+        accessActive: true,
+      },
+      profile: {
+        subscription_status: 'active',
+        subscription_plan: 'premium',
+        subscription_expires_at: null,
+        device_slots: 1,
+        subscription_payment_id: null,
+      },
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/" element={<h1>Home</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('heading', { name: 'Home' })).toBeTruthy()
+    expect(screen.queryByText('ძველი გამოწერა აქტიურია')).toBeNull()
+    expect(screen.queryByText('გადახდილი Premium აქტიურია')).toBeNull()
+  })
+
+  it('does not label a profile with a failed linked payment as Paid Premium', () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: false,
+      needsPlanSelection: false,
+      deviceBlocked: null,
+      entitlementStatusUnavailable: false,
+      entitlement: {
+        source: 'inactive',
+        paymentStatus: 'failed',
+        paymentAmount: 99,
+        paymentCurrency: 'GEL',
+        deviceLimit: 1,
+        accessActive: false,
+      },
+      profile: {
+        subscription_status: 'active',
+        subscription_plan: 'premium',
+        subscription_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        device_slots: 1,
+        subscription_payment_id: 'failed-payment',
+      },
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/" element={<h1>Home</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('გადახდა ვერ დადასტურდა')).toBeTruthy()
+    expect(screen.queryByText('გადახდილი Premium აქტიურია')).toBeNull()
+  })
+
+  it('does not infer Trial or Premium from the profile when the server snapshot RPC is unavailable', () => {
+    state.auth = {
+      user: { id: 'user-1' },
+      loading: false,
+      hasAccess: true,
+      needsPlanSelection: false,
+      deviceBlocked: null,
+      entitlementStatusUnavailable: true,
+      entitlement: null,
+      profile: {
+        subscription_status: 'trial',
+        subscription_plan: 'premium',
+        subscription_expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+        device_slots: 1,
+      },
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/" element={<h1>Home</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('გეგმის სტატუსი სერვერზე ვერ მოწმდება')).toBeTruthy()
+    expect(screen.queryByText('უფასო Trial აქტიურია')).toBeNull()
+    expect(screen.queryByText('გადახდილი Premium აქტიურია')).toBeNull()
+    expect(screen.queryByText('12 საათიანი უფასო წვდომის დაწყება')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'მარშრუტებზე გადასვლა' }))
+    expect(screen.getByRole('heading', { name: 'Home' })).toBeTruthy()
   })
 })
