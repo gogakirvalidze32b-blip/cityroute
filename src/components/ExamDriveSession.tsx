@@ -59,6 +59,12 @@ import {
   decidePinAudio,
   recordSegmentApproach,
 } from '@/lib/pin-audio'
+import { resolveAutoStart } from '@/lib/auto-start-pin'
+import {
+  clearManualPinSelection,
+  loadManualPinSelection,
+  saveManualPinSelection,
+} from '@/lib/manual-pin-selection'
 import { examRoadTrace } from '@/lib/pin-route-line'
 import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
 import { finishSectionStartIndex } from '@/data/route-finish'
@@ -202,11 +208,26 @@ export function ExamDriveSession({
     [route.id, route.slug, route.name_ka, persistenceScope, savedEpoch],
   )
   const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
-  const [previewSelectionMode, setPreviewSelectionMode] = useState<'automatic' | 'manual'>('automatic')
+  // The manual choice is kept per route (slug + scope), so a refresh keeps it and another route never sees it.
+  const [previewSelectionMode, setPreviewSelectionMode] = useState<'automatic' | 'manual'>(() =>
+    loadManualPinSelection(route.slug, persistenceScope) !== null ? 'manual' : 'automatic',
+  )
   const [previewPinSelection, setPreviewPinSelection] = useState<{
     routeId: string
     sortOrder: number
-  } | null>(null)
+  } | null>(() => {
+    const stored = loadManualPinSelection(route.slug, persistenceScope)
+    return stored !== null ? { routeId: route.id, sortOrder: stored } : null
+  })
+  useEffect(() => {
+    const stored = loadManualPinSelection(route.slug, persistenceScope)
+    setPreviewSelectionMode(stored !== null ? 'manual' : 'automatic')
+    setPreviewPinSelection(stored !== null ? { routeId: route.id, sortOrder: stored } : null)
+  }, [route.id, route.slug, persistenceScope])
+  function selectManualPin(sortOrder: number) {
+    setPreviewPinSelection({ routeId: route.id, sortOrder })
+    saveManualPinSelection(route.slug, sortOrder, persistenceScope)
+  }
   // Same-render sync: slug match after local→UUID must not paint preview+saved (empty map).
   if (savedState && phase === 'preview') {
     setPhase('active')
@@ -345,6 +366,21 @@ export function ExamDriveSession({
   // roadU disambiguates Route 4 (and any route) where the same street is driven more than once.
   const speedLimitRoad = useMemo(() => examRoadTrace(route.slug, voicePins), [route.slug, voicePins])
   speedLimitRoadRef.current = speedLimitRoad
+  // Automatic start: see resolveAutoStart. Read progress fresh from storage so a finished/restarted
+  // route never reuses progress from mount time.
+  const computeAutoStart = (fix: GpsPosition | null) =>
+    resolveAutoStart(
+      sortedPins,
+      mostAdvancedPinProgress(sortedPins, loadRoutePinProgress(route.slug, persistenceScope)),
+      fix,
+      speedLimitRoad,
+    )
+  const autoStart = useMemo(
+    () => computeAutoStart(phase === 'preview' ? rawPos : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sortedPins, route.slug, persistenceScope, savedEpoch, phase, rawPos, speedLimitRoad],
+  )
+  const autoStartPin = autoStart.pin
   const speedLimitKmh = useMemo(
     () =>
       speedLimitFixSlug === route.slug
@@ -1080,6 +1116,7 @@ export function ExamDriveSession({
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
     clearRoutePinProgress(route.slug, persistenceScope)
+    clearManualPinSelection(route.slug, persistenceScope)
     const handled = new Set(
       voicePins
         .filter((pin) => pin.sort_order < startSortOrder)
@@ -1163,10 +1200,18 @@ export function ExamDriveSession({
     // No saved state - this is a NEW session. Resume returned above.
     const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
     if (gpsResult.denied) return
+    if (previewSelectionMode === 'automatic' && !rawPos) {
+      // The fix just arrived, so the map may now show a different PIN: confirm it with a second press
+      // so the PIN on the map is always the PIN that starts.
+      const resolved = computeAutoStart(gpsResult.fix).pin
+      if (resolved?.sort_order !== autoStartPin?.sort_order) return
+    }
     const selectedSortOrder =
-      previewSelectionMode === 'manual' && previewPinSelection?.routeId === route.id
-        ? previewPin?.sort_order ?? 1
-        : 1
+      previewSelectionMode === 'manual'
+        ? previewPinSelection?.routeId === route.id
+          ? previewPin?.sort_order ?? 1
+          : 1
+        : autoStartPin?.sort_order ?? 1
     startSession(selectedSortOrder)
   }
 
@@ -1320,16 +1365,11 @@ export function ExamDriveSession({
     const handledOrders = persistMostAdvancedPinProgress(getHandledPinOrders())
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = handledOrders
     triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrders)
-    // Mid-route stop must keep progress so a later start resumes (even from the agency GPS).
-    // Only a fully handled route (or non-field-test) clears — same as explicit თავიდან.
-    const keepForResume = routeHasRemainingPins()
-    if (keepForResume) {
-      persistActiveExamNow()
-      setSummaryCanContinue(true)
-    } else {
-      clearActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
-      setSummaryCanContinue(false)
-    }
+    // Finishing resets the timer and drops the active exam; PIN progress stays saved so the next start
+    // (Auto or Manual) continues from it. Only the explicit თავიდან action clears progress.
+    const hasRemainingPins = routeHasRemainingPins()
+    clearActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
+    setSummaryCanContinue(hasRemainingPins)
     setSavedEpoch((v) => v + 1)
     const summary = finishExamSession(exam)
     saveExamSummary(summary, persistenceScope)
@@ -1337,41 +1377,44 @@ export function ExamDriveSession({
     setPhase('summary')
     releaseWake.current?.()
     audioEngine.stopAll()
-    if (!keepForResume) resumedSlugRef.current = null
+    resumedSlugRef.current = null
+    sessionStartRef.current = 0
+    setElapsedMs(0)
     // Session-success voice disabled: do not play EXAM_SUCCESS_AUDIO.
   }
 
   function continueFromSummary() {
     audioEngine.unlock()
-    const saved = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
-    if (!saved) {
-      restartPreview()
-      return
-    }
-    finishInProgressRef.current = false
+    // No active exam is kept after finishing: go back to the start page with the saved PIN progress.
+    const orders = new Set(loadRoutePinProgress(route.slug, persistenceScope) ?? [])
+    finishInProgressRef.current = true
     finishRouteSlugRef.current = null
     audioSessionGenerationRef.current++
+    queuedAudioPinOrdersRef.current = []
+    setPendingPinSortOrder(null)
     setSummaryCanContinue(false)
     setExamSummary(null)
-    const resumedAt = Date.now()
-    const elapsedAtPause = Number.isFinite(saved.elapsedMs)
-      ? Math.max(0, saved.elapsedMs)
-      : examElapsedMsNow(saved)
-    const continuation = {
-      ...saved,
-      savedAt: resumedAt,
-      exam: { ...saved.exam, startedAt: resumedAt - elapsedAtPause },
-    }
-    applySavedProgress(continuation)
-    setDriveView(features.mapNav ? 'map' : 'panel')
-    setPhase('active')
+    setExam(createExamSession(route.id, route.name_ka))
+    triggeredRef.current = pinIdsForOrders(sortedPins, orders)
+    pinApproachRef.current = new Map()
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = orders
+    const next = sortedPins.find((pin) => !orders.has(pin.sort_order)) ?? sortedPins[0] ?? null
+    setPreviewPinSelection(next ? { routeId: route.id, sortOrder: next.sort_order } : null)
+    resumedSlugRef.current = null
+    resumePendingRef.current = false
+    setRouteComplete(false)
+    setNextPin(next)
+    setLastSpoken(null)
+    setElapsedMs(0)
+    sessionStartRef.current = 0
+    setPhase('preview')
     setSavedEpoch((v) => v + 1)
-    if (!gpsStarted) void enableGps(true)
   }
 
   function restartPreview() {
     const handled = new Set<number>()
     clearRoutePinProgress(route.slug, persistenceScope)
+    clearManualPinSelection(route.slug, persistenceScope)
     queuedAudioPinOrdersRef.current = []
     finishInProgressRef.current = true
     finishRouteSlugRef.current = null
@@ -1554,11 +1597,11 @@ export function ExamDriveSession({
             selectedPinOrder={
               previewSelectionMode === 'manual'
                 ? previewPin?.sort_order ?? null
-                : sortedPins[0]?.sort_order ?? null
+                : autoStartPin?.sort_order ?? null
             }
             onPinSelect={
               previewSelectionMode === 'manual'
-                ? (sortOrder) => setPreviewPinSelection({ routeId: route.id, sortOrder })
+                ? (sortOrder) => selectManualPin(sortOrder)
                 : undefined
             }
           />
@@ -1576,6 +1619,7 @@ export function ExamDriveSession({
                 onClick={() => {
                   setPreviewSelectionMode('automatic')
                   setPreviewPinSelection(null)
+                  clearManualPinSelection(route.slug, persistenceScope)
                 }}
               >
                 PIN-ის არჩევა ავტომატურად
@@ -1584,7 +1628,10 @@ export function ExamDriveSession({
                 type="button"
                 className={`exam-preview__mode-button${previewSelectionMode === 'manual' ? ' is-active' : ''}`}
                 aria-pressed={previewSelectionMode === 'manual'}
-                onClick={() => setPreviewSelectionMode('manual')}
+                onClick={() => {
+                  setPreviewSelectionMode('manual')
+                  if (previewPin) selectManualPin(previewPin.sort_order)
+                }}
               >
                 PIN-ის არჩევა ხელით
               </button>
@@ -1596,12 +1643,7 @@ export function ExamDriveSession({
                   id="exam-preview-pin"
                   aria-label="PIN-ების არჩევა"
                   value={previewPin.sort_order}
-                  onChange={(event) =>
-                    setPreviewPinSelection({
-                      routeId: route.id,
-                      sortOrder: Number(event.currentTarget.value),
-                    })
-                  }
+                  onChange={(event) => selectManualPin(Number(event.currentTarget.value))}
                 >
                   {sortedPins.map((pin) => (
                     <option key={pin.id} value={pin.sort_order}>
