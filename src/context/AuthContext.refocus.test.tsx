@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   accessError: null as unknown,
   planError: null as unknown,
   deactivateError: null as unknown,
+  deactivateHttpStatus: 204,
   deactivateResponse: { status: 'deactivated', deactivated_sessions: 1 } as unknown,
   deactivateWait: null as null | (() => Promise<{ data: unknown; error: unknown }>),
   signOutCallback: false,
@@ -86,10 +87,11 @@ vi.mock('@/lib/supabase', () => ({
         return h.deactivateWait ? h.deactivateWait() : {
           data: h.deactivateResponse,
           error: h.deactivateError,
+          status: h.deactivateHttpStatus,
         }
       }
       if (name === 'has_current_active_session') {
-        return { data: h.activeSessionResponse, error: null }
+        return { data: h.activeSessionResponse, error: null, status: 200 }
       }
       if (name === 'has_active_access') {
         return { data: h.accessResponse, error: h.accessError }
@@ -224,6 +226,7 @@ describe('AuthContext – tab refocus', () => {
     h.accessError = null
     h.planError = null
     h.deactivateError = null
+    h.deactivateHttpStatus = 204
     h.deactivateResponse = { status: 'deactivated', deactivated_sessions: 1 }
     h.deactivateWait = null
     h.signOutCallback = false
@@ -609,6 +612,7 @@ describe('AuthContext – tab refocus', () => {
 
   it('deactivates the session before signing out locally', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    const diagnostic = vi.spyOn(console, 'info').mockImplementation(() => {})
     render(<AuthProvider><Gate /></AuthProvider>)
     await tick(); await tick()
 
@@ -619,6 +623,19 @@ describe('AuthContext – tab refocus', () => {
     expect(h.events).toEqual(['deactivate_current_session', 'local signOut'])
     expect(h.signOutOptions).toEqual({ scope: 'local' })
     expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
+    expect(diagnostic).toHaveBeenCalledWith(
+      'Device session logout diagnostic',
+      expect.objectContaining({
+        outcome: 'success',
+        httpStatus: 204,
+        responseShape: {
+          type: 'object',
+          fields: { deactivated_sessions: 'number', status: 'string' },
+        },
+        jwtSessionMatchesActiveSession: true,
+      }),
+    )
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('token-u1')
   })
 
   it('clears authorized UI while waiting for current-device server revocation', async () => {
@@ -662,8 +679,11 @@ describe('AuthContext – tab refocus', () => {
 
   it('signs out locally and warns when server-side session deactivation fails', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
-    h.deactivateError = { message: 'network unavailable' }
+    h.deactivateError = { code: '42501', message: 'permission denied' }
+    h.deactivateHttpStatus = 403
+    h.deactivateResponse = null
     vi.spyOn(console, 'error').mockImplementation(() => {})
+    const diagnostic = vi.spyOn(console, 'warn').mockImplementation(() => {})
     render(<AuthProvider><Gate /></AuthProvider>)
     await tick(); await tick()
 
@@ -677,7 +697,43 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
       'შემდეგი შესვლისას წვდომა ხელახლა შემოწმდება',
     )
+    expect(diagnostic).toHaveBeenCalledWith(
+      'Device session logout diagnostic',
+      expect.objectContaining({
+        outcome: 'rpc_error',
+        httpStatus: 403,
+        error: { code: '42501', message: 'permission denied' },
+        jwtSessionMatchesActiveSession: true,
+        responseShape: { type: 'null' },
+      }),
+    )
   })
+
+  it('classifies a session deactivation timeout separately', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.deactivateWait = () => new Promise(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const diagnostic = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick(); await tick()
+
+    await act(async () => { await h.signOut?.() })
+
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(diagnostic).toHaveBeenCalledWith(
+      'Device session logout diagnostic',
+      expect.objectContaining({
+        outcome: 'timeout',
+        httpStatus: null,
+        error: {
+          code: null,
+          message: 'Session revocation timed out',
+        },
+        responseShape: null,
+        jwtSessionMatchesActiveSession: true,
+      }),
+    )
+  }, 10000)
 
   it('requests current-device session revocation before local logout', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
@@ -698,6 +754,7 @@ describe('AuthContext – tab refocus', () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.deactivateResponse = { status: 'unknown' }
     vi.spyOn(console, 'error').mockImplementation(() => {})
+    const diagnostic = vi.spyOn(console, 'warn').mockImplementation(() => {})
     render(<AuthProvider><Gate /></AuthProvider>)
     await tick(); await tick()
 
@@ -706,6 +763,22 @@ describe('AuthContext – tab refocus', () => {
     expect(h.signOutOptions).toEqual({ scope: 'local' })
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
       'ამ მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
+    )
+    expect(diagnostic).toHaveBeenCalledWith(
+      'Device session logout diagnostic',
+      expect.objectContaining({
+        outcome: 'malformed_response',
+        httpStatus: 204,
+        error: {
+          code: 'MALFORMED_RESPONSE',
+          message: 'Unexpected deactivate_current_session response',
+        },
+        responseShape: {
+          type: 'object',
+          fields: { status: 'string' },
+        },
+        jwtSessionMatchesActiveSession: true,
+      }),
     )
   })
 

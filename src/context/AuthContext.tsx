@@ -105,6 +105,40 @@ function isNullableNumber(value: unknown): value is number | null {
   return value === null || typeof value === 'number'
 }
 
+function getSessionDiagnosticError(error: unknown) {
+  const record = isRecord(error) ? error : null
+  const message = record && typeof record.message === 'string'
+    ? record.message
+        .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+        .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]')
+        .slice(0, 500)
+    : error instanceof Error
+      ? error.message.slice(0, 500)
+      : String(error).slice(0, 500)
+
+  return {
+    code: record && typeof record.code === 'string' ? record.code : null,
+    message,
+  }
+}
+
+function getJsonShape(value: unknown) {
+  if (Array.isArray(value)) {
+    return { type: 'array', length: value.length }
+  }
+  if (isRecord(value)) {
+    return {
+      type: 'object',
+      fields: Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [key, Array.isArray(value[key]) ? 'array' : typeof value[key]]),
+      ),
+    }
+  }
+  return { type: value === null ? 'null' : typeof value }
+}
+
 function isMissingEntitlementRpc(error: unknown): boolean {
   if (!isRecord(error)) return false
   const code = error.code
@@ -690,6 +724,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     const supabase = getSupabase()
     let serverSessionsDeactivated = false
+    let activeSessionMatch: boolean | null = null
+    let activeSessionCheckError: ReturnType<typeof getSessionDiagnosticError> | null = null
     setSignOutWarning(null)
     setSession(null)
     setProfile(null)
@@ -702,36 +738,110 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loadedProfileUserIdRef.current = null
     activatedUserIdRef.current = null
 
-    let revocationTimeout: ReturnType<typeof setTimeout> | undefined
+    let activeSessionCheckTimeout: ReturnType<typeof setTimeout> | undefined
     try {
-      const { data, error } = await Promise.race([
+      const activeSessionCheck = await Promise.race([
+        supabase.rpc('has_current_active_session'),
+        new Promise<null>((resolve) => {
+          activeSessionCheckTimeout = setTimeout(() => resolve(null), 1500)
+        }),
+      ])
+      if (activeSessionCheck === null) {
+        activeSessionCheckError = { code: 'DIAGNOSTIC_TIMEOUT', message: 'Active-session check timed out' }
+      } else if (activeSessionCheck.error) {
+        activeSessionCheckError = getSessionDiagnosticError(activeSessionCheck.error)
+      } else if (typeof activeSessionCheck.data === 'boolean') {
+        activeSessionMatch = activeSessionCheck.data
+      } else {
+        activeSessionCheckError = {
+          code: 'MALFORMED_RESPONSE',
+          message: 'Unexpected has_current_active_session response',
+        }
+      }
+    } catch (error) {
+      activeSessionCheckError = getSessionDiagnosticError(error)
+    } finally {
+      if (activeSessionCheckTimeout !== undefined) clearTimeout(activeSessionCheckTimeout)
+    }
+
+    let revocationTimeout: ReturnType<typeof setTimeout> | undefined
+    let revocationTimedOut = false
+    let revocationFailure: 'rpc_error' | 'malformed_response' | null = null
+    let responseShape: ReturnType<typeof getJsonShape> | null = null
+    let httpStatus: number | null = null
+    const revocationStartedAt = performance.now()
+    try {
+      const response = await Promise.race([
         supabase.rpc('deactivate_current_session'),
         new Promise<never>((_, reject) => {
           revocationTimeout = setTimeout(
-            () => reject(new Error('Session revocation timed out')),
+            () => {
+              revocationTimedOut = true
+              reject(new Error('Session revocation timed out'))
+            },
             8000,
           )
         }),
       ])
-      if (error) throw error
+      httpStatus = response.status
+      responseShape = getJsonShape(response.data)
+      if (response.error) {
+        revocationFailure = 'rpc_error'
+        throw response.error
+      }
       if (
-        typeof data !== 'object' ||
-        data === null ||
-        Array.isArray(data) ||
-        !('status' in data) ||
-        !('deactivated_sessions' in data) ||
-        typeof data.deactivated_sessions !== 'number' ||
-        !Number.isInteger(data.deactivated_sessions) ||
-        data.deactivated_sessions < 0 ||
-        (data.status !== 'deactivated' && data.status !== 'inactive') ||
-        (data.status === 'inactive' && data.deactivated_sessions !== 0) ||
-        (data.status === 'deactivated' && data.deactivated_sessions === 0)
+        typeof response.data !== 'object' ||
+        response.data === null ||
+        Array.isArray(response.data) ||
+        !('status' in response.data) ||
+        !('deactivated_sessions' in response.data) ||
+        typeof response.data.deactivated_sessions !== 'number' ||
+        !Number.isInteger(response.data.deactivated_sessions) ||
+        response.data.deactivated_sessions < 0 ||
+        (response.data.status !== 'deactivated' && response.data.status !== 'inactive') ||
+        (response.data.status === 'inactive' && response.data.deactivated_sessions !== 0) ||
+        (response.data.status === 'deactivated' && response.data.deactivated_sessions === 0)
       ) {
-        throw new Error('Unexpected deactivate_current_session response')
+        revocationFailure = 'malformed_response'
+        throw Object.assign(new Error('Unexpected deactivate_current_session response'), {
+          code: 'MALFORMED_RESPONSE',
+        })
       }
       serverSessionsDeactivated = true
+      console.info('Device session logout diagnostic', {
+        outcome: 'success',
+        httpStatus,
+        elapsedMs: Math.round(performance.now() - revocationStartedAt),
+        responseShape,
+        jwtSessionMatchesActiveSession: activeSessionMatch,
+        activeSessionCheckError,
+      })
     } catch (error) {
-      console.error('deactivate_current_session RPC failed:', error)
+      if (revocationTimedOut) {
+        console.warn('Device session logout diagnostic', {
+          outcome: 'timeout',
+          httpStatus,
+          elapsedMs: Math.round(performance.now() - revocationStartedAt),
+          error: getSessionDiagnosticError(error),
+          responseShape,
+          jwtSessionMatchesActiveSession: activeSessionMatch,
+          activeSessionCheckError,
+        })
+      } else {
+        const outcome = revocationFailure ?? 'rpc_error'
+        console.warn('Device session logout diagnostic', {
+          outcome,
+          httpStatus,
+          elapsedMs: Math.round(performance.now() - revocationStartedAt),
+          error: outcome === 'malformed_response'
+            ? { code: 'MALFORMED_RESPONSE', message: 'Unexpected deactivate_current_session response' }
+            : getSessionDiagnosticError(error),
+          responseShape,
+          jwtSessionMatchesActiveSession: activeSessionMatch,
+          activeSessionCheckError,
+        })
+      }
+      console.error('deactivate_current_session RPC failed:', getSessionDiagnosticError(error))
       setSignOutWarning(
         'ანგარიშიდან გახვედით, მაგრამ ამ მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა. შემდეგი შესვლისას წვდომა ხელახლა შემოწმდება.',
       )
