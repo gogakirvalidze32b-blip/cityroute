@@ -675,7 +675,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let polling = false
     const pollSessionRevocation = async () => {
-      if (!mounted || checking || polling || sessionRevoked || document.visibilityState === 'hidden') return
+      // Runs while the tab is hidden too: the check is read-only and never extends the idle window.
+      if (!mounted || checking || polling || sessionRevoked) return
       polling = true
       try {
         const { data, error } = await supabase.rpc('has_current_active_session')

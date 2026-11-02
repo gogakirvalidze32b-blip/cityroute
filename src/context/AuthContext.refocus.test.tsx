@@ -33,6 +33,8 @@ const h = vi.hoisted(() => ({
   accessResponse: true as unknown,
   accessError: null as unknown,
   planError: null as unknown,
+  serverModel: null as null | ((name: string) => { data: unknown; error: unknown } | undefined),
+  currentDeviceSession: 'session-A',
   deactivateError: null as unknown,
   deactivateHttpStatus: 204,
   deactivateResponse: { status: 'deactivated', deactivated_sessions: 1 } as unknown,
@@ -84,6 +86,8 @@ vi.mock('@/lib/supabase', () => ({
       h.rpcCalls.push(name)
       h.rpcArgs.push({ name, args })
       if (name === 'activate_current_session') h.flow.push('activate')
+      const modelled = h.serverModel?.(name)
+      if (modelled) return modelled
       if (name === 'deactivate_current_session') {
         h.events.push('deactivate_current_session')
         return h.deactivateWait ? h.deactivateWait() : {
@@ -236,6 +240,7 @@ describe('AuthContext – tab refocus', () => {
     h.deactivateHttpStatus = 204
     h.deactivateResponse = { status: 'deactivated', deactivated_sessions: 1 }
     h.deactivateWait = null
+    h.serverModel = null
     h.signOutCallback = false
     h.signOutOptions = null
     h.signOut = null
@@ -900,5 +905,111 @@ describe('AuthContext – tab refocus', () => {
 
     expect(h.signOutOptions).toBeNull()
     expect(h.rpcCalls).not.toContain('deactivate_current_session')
+  })
+
+  describe('99 GEL single-device takeover between two real device sessions', () => {
+    // Mirrors the server contract of activate_current_session for a 1-slot plan.
+    function createOneSlotServer() {
+      const active = new Set<string>()
+      const revoked = new Set<string>()
+      const takeover = (sessionId: string) => {
+        if (revoked.has(sessionId)) return false
+        if (active.has(sessionId)) return true
+        for (const id of active) revoked.add(id)
+        active.clear()
+        active.add(sessionId)
+        return true
+      }
+      h.serverModel = (name) => {
+        const sessionId = h.currentDeviceSession
+        if (name === 'activate_current_session') {
+          return takeover(sessionId)
+            ? { data: { status: 'active', device_limit: 1, access_active: true }, error: null }
+            : { data: { status: 'blocked', message: 'ეს სესია გასულია. ხელახლა შედით.' }, error: null }
+        }
+        if (name === 'has_current_active_session') return { data: active.has(sessionId), error: null }
+        if (name === 'heartbeat_current_session') {
+          return {
+            data: { status: revoked.has(sessionId) ? 'revoked' : active.has(sessionId) ? 'active' : 'inactive' },
+            error: null,
+          }
+        }
+        return undefined
+      }
+      return { login: takeover, isActive: (id: string) => active.has(id) }
+    }
+
+    const renderDevice = (sessionId: string) => {
+      h.currentDeviceSession = sessionId
+      h.signOutCallback = true
+      h.signOutOptions = null
+      return render(
+        <AuthProvider>
+          <MemoryRouter initialEntries={['/protected']}>
+            <Routes>
+              <Route path="/login" element={<p>Login page</p>} />
+              <Route element={<ProtectedRoute />}>
+                <Route path="/protected" element={<p>Protected page</p>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </AuthProvider>,
+      )
+    }
+
+    it('A → B: B is active at once and A signs itself out without refresh or logout', async () => {
+      h.profileFetch = async () => ({ data: profile('u1'), error: null })
+      const server = createOneSlotServer()
+      renderDevice('session-A')
+      await waitFor(() => expect(screen.getByText('Protected page')).toBeTruthy())
+
+      expect(server.login('session-B')).toBe(true)
+      expect(server.isActive('session-B')).toBe(true)
+      expect(server.isActive('session-A')).toBe(false)
+
+      await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 8000 })
+      expect(h.signOutOptions).toEqual({ scope: 'local' })
+      expect(h.rpcCalls).not.toContain('deactivate_current_session')
+    }, 15000)
+
+    it('A → B → A: the returning device becomes active and B is signed out', async () => {
+      h.profileFetch = async () => ({ data: profile('u1'), error: null })
+      const server = createOneSlotServer()
+      const deviceA = renderDevice('session-A')
+      await waitFor(() => expect(screen.getByText('Protected page')).toBeTruthy())
+      server.login('session-B')
+      await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 8000 })
+      deviceA.unmount()
+
+      const deviceB = renderDevice('session-B')
+      await waitFor(() => expect(screen.getByText('Protected page')).toBeTruthy())
+      expect(server.isActive('session-B')).toBe(true)
+
+      // A signs in again with a brand-new Auth session.
+      server.login('session-A2')
+      await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 8000 })
+      deviceB.unmount()
+
+      renderDevice('session-A2')
+      await waitFor(() => expect(screen.getByText('Protected page')).toBeTruthy())
+      expect(server.isActive('session-A2')).toBe(true)
+      expect(server.isActive('session-B')).toBe(false)
+    }, 30000)
+
+    it('signs the old device out even while its tab is hidden in the background', async () => {
+      h.profileFetch = async () => ({ data: profile('u1'), error: null })
+      const server = createOneSlotServer()
+      renderDevice('session-A')
+      await waitFor(() => expect(screen.getByText('Protected page')).toBeTruthy())
+
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      try {
+        server.login('session-B')
+        await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy(), { timeout: 8000 })
+      } finally {
+        Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      }
+      expect(h.signOutOptions).toEqual({ scope: 'local' })
+    }, 15000)
   })
 })
