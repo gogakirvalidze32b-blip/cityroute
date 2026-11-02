@@ -212,7 +212,9 @@ select is(public.presence_current_session()->>'status', 'inactive', 'presence ca
 
 -- ===== 99 GEL: A -> B -> A takeover is unchanged =====
 select pg_temp.as_device('00000000-0000-0000-0000-000000000902', '00000000-0000-0000-0000-0000000009d1', 'presence-99-a');
+set local role postgres;
 select is(public.current_device_session_limit('00000000-0000-0000-0000-000000000902'), 1, '99 GEL keeps the one-device limit');
+set local role authenticated;
 select is(public.activate_current_session()->>'status', 'active', '99 GEL: device A activates');
 select pg_temp.as_device('00000000-0000-0000-0000-000000000902', '00000000-0000-0000-0000-0000000009d2', 'presence-99-b');
 select is(public.activate_current_session()->>'status', 'active', '99 GEL: device B takes over');
