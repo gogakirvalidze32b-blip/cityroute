@@ -11,6 +11,7 @@ export type SavedExamState = {
   routeSlug?: string
   routeName: string
   phase: 'active'
+  startMode?: 'automatic' | 'manual'
   exam: ExamSession
   userPos: LatLng | null
   heading: number
@@ -53,7 +54,8 @@ function isSavedExamState(value: unknown): value is SavedExamState {
     typeof state.routeName === 'string' &&
     state.phase === 'active' &&
     typeof state.savedAt === 'number' &&
-    Number.isFinite(state.savedAt)
+    Number.isFinite(state.savedAt) &&
+    (!('startMode' in state) || state.startMode === 'automatic' || state.startMode === 'manual')
   )
 }
 
@@ -148,6 +150,9 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
     }
     if (!('queuedPinSortOrders' in incoming) && 'queuedPinSortOrders' in previous) {
       merged = { ...merged, queuedPinSortOrders: previous.queuedPinSortOrders }
+    }
+    if (!('startMode' in incoming) && previous.startMode) {
+      merged = { ...merged, startMode: previous.startMode }
     }
     return merged
   }

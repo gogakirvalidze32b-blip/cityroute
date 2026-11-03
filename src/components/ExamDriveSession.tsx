@@ -226,6 +226,7 @@ export function ExamDriveSession({
     [route.id, route.slug, route.name_ka, persistenceScope, savedEpoch],
   )
   const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
+  const sessionStartModeRef = useRef<'automatic' | 'manual'>(savedState?.startMode ?? 'manual')
   // The manual choice is kept per route (slug + scope), so a refresh keeps it and another route never sees it.
   const [previewSelectionMode, setPreviewSelectionMode] = useState<'automatic' | 'manual'>(() =>
     loadManualPinSelection(route.slug, persistenceScope) !== null ? 'manual' : 'automatic',
@@ -547,6 +548,7 @@ export function ExamDriveSession({
     if (saved) {
       if (resumedSlugRef.current !== route.slug) {
         resumedSlugRef.current = route.slug
+        sessionStartModeRef.current = saved.startMode ?? 'manual'
         resumeBlockedRef.current = false
         const restoredOrders = FIELD_TEST_SLUGS.has(route.slug)
           ? restoredHandledOrders(saved, sortedPins, route.slug, persistenceScope)
@@ -826,6 +828,7 @@ export function ExamDriveSession({
           routeSlug: route.slug,
           routeName: route.name_ka,
           phase: 'active',
+          startMode: sessionStartModeRef.current,
           exam,
           userPos: currentPositionRef.current,
           heading,
@@ -1178,7 +1181,7 @@ export function ExamDriveSession({
     setExam((prev) => recordSevereQuick(prev))
   }, [])
 
-  function startSession(startSortOrder = 1) {
+  function startSession(startSortOrder = 1, startMode: 'automatic' | 'manual' = 'automatic') {
     audioSessionGenerationRef.current++
     audioEngine.stopAll()
     queuedAudioPinOrdersRef.current = []
@@ -1192,6 +1195,8 @@ export function ExamDriveSession({
     }
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
+    finishRouteSlugRef.current = null
+    sessionStartModeRef.current = startMode
     const isFieldTest = FIELD_TEST_SLUGS.has(route.slug)
     const handled = isFieldTest
       ? mostAdvancedPinProgress(
@@ -1260,6 +1265,7 @@ export function ExamDriveSession({
     // ============================================================
     if (savedState) {
       console.log('🔄 Resuming active session - not calling startSession()')
+      sessionStartModeRef.current = savedState.startMode ?? 'manual'
       if (FIELD_TEST_SLUGS.has(route.slug)) {
         const restoredOrders = restoredHandledOrders(savedState, voicePins, route.slug, persistenceScope)
         if (restoredOrders) {
@@ -1295,7 +1301,7 @@ export function ExamDriveSession({
       ? previewPin?.sort_order
       : autoStartPin?.sort_order
     if (selectedSortOrder === undefined || selectedSortOrder === null) return
-    startSession(selectedSortOrder)
+    startSession(selectedSortOrder, previewSelectionMode)
   }
 
   function fieldTestProgressFields() {
@@ -1373,6 +1379,7 @@ export function ExamDriveSession({
       speedKmh,
       elapsedMs: liveElapsed,
       triggeredPins: Array.from(triggeredRef.current),
+      startMode: sessionStartModeRef.current,
       pendingPinSortOrder: pendingPinSortOrderRef.current,
       queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
       ...(FIELD_TEST_SLUGS.has(route.slug) ? fieldTestProgressFields() : {}),
@@ -1422,6 +1429,16 @@ export function ExamDriveSession({
     sessionStartRef.current = 0
     setElapsedMs(0)
     // Session-success voice disabled: do not play EXAM_SUCCESS_AUDIO.
+    if (
+      hasRemainingPins &&
+      FIELD_TEST_SLUGS.has(route.slug) &&
+      sessionStartModeRef.current === 'manual'
+    ) {
+      const resolution = resolvePinProgress(sortedPins, handledOrders)
+      if (resolution.status === 'resume' && resolution.nextSortOrder !== null) {
+        saveManualPinSelection(route.slug, resolution.nextSortOrder, persistenceScope)
+      }
+    }
   }
 
   function continueFromSummary() {
@@ -1450,6 +1467,9 @@ export function ExamDriveSession({
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set(resolution.handledOrders ?? [])
     const next = sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null
     setPreviewPinSelection(next ? { routeId: route.id, sortOrder: next.sort_order } : null)
+    if (sessionStartModeRef.current === 'manual' && next) {
+      saveManualPinSelection(route.slug, next.sort_order, persistenceScope)
+    }
     resumedSlugRef.current = null
     resumePendingRef.current = false
     resumeBlockedRef.current = false
@@ -1561,17 +1581,9 @@ export function ExamDriveSession({
             <div
               role="status"
               data-testid="route-complete"
-              style={{
-                position: 'relative',
-                zIndex: 20,
-                margin: '0.5rem',
-                padding: '0.75rem',
-                borderRadius: '8px',
-                background: '#ecfdf5',
-                border: '2px solid #10b981',
-              }}
+              className="exam-route-complete"
             >
-              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#065f46' }}>
+              <p className="exam-route-complete__message">
                 მარშრუტი დასრულებულია — ყველა PIN გავლილია.
               </p>
               <button

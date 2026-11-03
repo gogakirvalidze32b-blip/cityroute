@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { ExamDriveSession } from './ExamDriveSession'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
@@ -635,6 +635,107 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
     expect(loadRoutePinProgress(other.slug)).toEqual([1, 2, 3])
     view.unmount()
+  })
+
+  it('Auto finish keeps the summary until continued and resumes the next PIN after refresh', async () => {
+    const route = routeBySlug('route-2')
+    const first = await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    first.unmount()
+    cleanup()
+
+    gps.once = null
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(nextOrder()).toBe(3)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.startMode).toBe('automatic')
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'დასრულება' }))
+      })
+      expect(screen.getByTestId('exam-summary')).toBeTruthy()
+      expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4999)
+      })
+      expect(screen.getByTestId('exam-summary')).toBeTruthy()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(screen.getByTestId('exam-summary')).toBeTruthy()
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
+      expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
+    } finally {
+      vi.useRealTimers()
+    }
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+    })
+    await settle()
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('preview').getAttribute('data-selected-order')).toBe('3')
+    cleanup()
+
+    gps.once = fix(route, 3)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('preview').getAttribute('data-selected-order')).toBe('3')
+    await pressStart()
+    expect(nextOrder()).toBe(3)
+    expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
+  })
+
+  it('Manual finish preserves the next PIN choice across summary and refresh', async () => {
+    const route = routeBySlug('route-2')
+    gps.once = fix(route, 1)
+    const first = render(<ExamDriveSession route={route} />)
+    await settle()
+    await chooseManualPinMode()
+    await act(async () => {
+      await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }), '1')
+    })
+    await pressStart()
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.startMode).toBe('manual')
+    first.unmount()
+    cleanup()
+
+    gps.once = null
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.startMode).toBe('manual')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'დასრულება' }))
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      expect(screen.getByTestId('exam-summary')).toBeTruthy()
+      expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
+    } finally {
+      vi.useRealTimers()
+    }
+
+    cleanup()
+    gps.once = fix(route, 3)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }).getAttribute('aria-pressed')).toBe('true')
+    expect((screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }) as HTMLSelectElement).value).toBe('3')
+    expect(screen.getByTestId('preview').getAttribute('data-selected-order')).toBe('3')
+    await pressStart()
+    expect(nextOrder()).toBe(3)
+    expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
   })
 
   it('starts and resumes from a manually selected PIN while marking earlier PINs complete', async () => {
