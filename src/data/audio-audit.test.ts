@@ -19,15 +19,14 @@ const mk = (instruction_ka: string): PinRow =>
 const EXPECTED_OVERRIDES = new Map<string, string>([
   ['1:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['1:19', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
-  ['1:23', 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav'],
   ['3:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:14', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['2:8', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['3:9', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
-  ['3:13', 'წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav'],
+  ['4:7', '500 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
+  ['4:8', '300 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
   ['3:18', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
-  ['4:9', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
   ['2:18', 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
   ['4:20', 'მალე, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
 ])
@@ -96,6 +95,19 @@ describe('FINAL audio audit: 127 PINs', () => {
     }
   })
 
+  it('Route 4 #7 and #8 map to their exact direct-ahead roundabout WAVs', () => {
+    for (const [pin, expectedWav] of [
+      [7, '500 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
+      [8, '300 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
+    ] as const) {
+      const routePin = pins.find((item) => item.route === 4 && item.pin === pin)!
+      const url = resolvePinAudioUrl('route-4', mk(routePin.instruction))
+      expect(url).not.toBeNull()
+      expect(decodeAudioPath(url!)).toBe(`/audio/points/${expectedWav}`)
+      expect(existsSync(join(POINTS_DIR, expectedWav))).toBe(true)
+    }
+  })
+
   it('keeps the requested Route 3 coordinate edits and maps PIN #13 to its exact existing WAV', () => {
     const expectedCoordinates: Record<string, readonly [number, number]> = {
       '3:9': [41.92025, 45.484497],
@@ -114,11 +126,11 @@ describe('FINAL audio audit: 127 PINs', () => {
     const route3Pin9 = pins.find((x) => x.route === 3 && x.pin === 9)!
     const route4Pin9 = pins.find((x) => x.route === 4 && x.pin === 9)!
     expect(route3Pin9.instruction).toBe('წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ')
-    expect(route4Pin9.instruction).toBe('წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ')
+    expect(route4Pin9.instruction).toBe('მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ')
 
     const pin13 = pins.find((x) => x.route === 3 && x.pin === 13)!
-    expect(pin13.instruction).toBe('წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ')
-    const wav = 'წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav'
+    expect(pin13.instruction).toBe('მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ')
+    const wav = 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'
     expect(decodeAudioPath(resolvePinAudioUrl('route-3', mk(pin13.instruction))!))
       .toBe(`/audio/points/${wav}`)
     expect(existsSync(join(POINTS_DIR, wav))).toBe(true)
