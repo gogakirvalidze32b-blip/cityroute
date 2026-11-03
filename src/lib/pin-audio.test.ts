@@ -54,13 +54,13 @@ describe('PinAudio', () => {
 
   describe('Route 3 PIN #12 roundabout pass gate', () => {
     it('ignores the early overlapping trace pass and enables the later pass after #11', () => {
-      const pin12: [number, number] = [41.9183, 45.482891]
+      const pin12: [number, number] = [41.918243, 45.482661]
       const earlyPass = (route3Road as [number, number][])
         .slice(229, 232)
-        .some((point) => distanceToPinMeters(point, pin12) <= 4)
+        .some((point) => distanceToPinMeters(point, pin12) <= AUDIO_TRIGGER_DISTANCE_M)
       const laterPass = (route3Road as [number, number][])
         .slice(255, 258)
-        .some((point) => distanceToPinMeters(point, pin12) <= 4)
+        .some((point) => distanceToPinMeters(point, pin12) <= AUDIO_TRIGGER_DISTANCE_M)
 
       expect(earlyPass).toBe(true)
       expect(laterPass).toBe(true)
