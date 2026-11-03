@@ -1691,7 +1691,7 @@ textarea::placeholder {
 /* Keep the active exam controls warm yellow; navigation maps and summaries stay themed. */
 .exam-session--active > .exam-topbar {
   color: #262626;
-  background: #fff4bf;
+  background: #fff;
   border-bottom-color: #d6ad2a;
   box-shadow: 0 4px 12px rgba(89, 67, 8, 0.12);
 }
@@ -1719,7 +1719,7 @@ textarea::placeholder {
 }
 
 .exam-session--active .exam-view-switch {
-  background: #fff1a8;
+  background: #fff;
   border-color: #c49a16;
 }
 
@@ -1745,7 +1745,7 @@ textarea::placeholder {
 }
 
 .exam-session--active .exam-drive-main > .exam-grid-wrap {
-  background: #fff4bf;
+  background: #fff;
   border-top-color: #d6ad2a;
 }
 
@@ -1791,7 +1791,7 @@ textarea::placeholder {
   padding: 0.75rem;
   border: 2px solid #d6ad2a;
   border-radius: 8px;
-  background: #fff4bf;
+  background: #fff;
 }
 
 .exam-route-complete__message {

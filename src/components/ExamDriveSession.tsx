@@ -396,18 +396,8 @@ export function ExamDriveSession({
   speedLimitRoadRef.current = speedLimitRoad
   // Automatic start: see resolveAutoStart. Read progress fresh from storage so a finished/restarted
   // route never reuses progress from mount time.
-  const previewProgress = resolvePinProgress(
-    sortedPins,
-    loadRoutePinProgress(route.slug, persistenceScope) ?? [],
-  )
-  const computeAutoStart = () =>
-    resolveAutoStart(sortedPins, new Set(loadRoutePinProgress(route.slug, persistenceScope) ?? []))
-  const autoStart = useMemo(
-    () => computeAutoStart(),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sortedPins, route.slug, persistenceScope, savedEpoch],
-  )
-  const autoStartPin = autoStart.pin
+  const previewProgress = resolvePinProgress(sortedPins, initialRoutePinProgress)
+  const autoStartPin = resolveAutoStart(sortedPins, new Set(initialRoutePinProgress)).pin
   const previewPin =
     previewProgress.status === 'resume' &&
     previewProgress.nextSortOrder !== null &&
