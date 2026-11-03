@@ -47,7 +47,7 @@ export function ForgotPasswordPage() {
 
   if (success) {
     return (
-      <div className="page center auth-page">
+      <div className="page center auth-page cr-scroll-page">
         <div className="auth-brand">
           <AppBrand centered />
         </div>
@@ -78,7 +78,7 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div className="page center auth-page">
+    <div className="page center auth-page cr-scroll-page">
       <div className="auth-brand">
         <AppBrand centered />
       </div>

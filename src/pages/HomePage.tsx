@@ -70,6 +70,11 @@ export function HomePage() {
             className={`route-card route-card--${index + 1}`}
             data-testid={`home-route-card-${route.slug}`}
           >
+            <span className="route-card__icon" aria-hidden="true">
+              <svg viewBox="0 0 32 32">
+                <path d="M12 4 7 28M20 4l5 24M16 7v4m0 5v4m0 5v2" />
+              </svg>
+            </span>
             <div className="route-card__content">
               <strong className="route-card__name">{route.name_ka}</strong>
               <div className="route-card__tags">

@@ -513,3 +513,29 @@
     transition: none;
   }
 }
+
+/* Small screens: keep fine print legible (>= 11px). */
+@media (max-width: 760px), (orientation: landscape) and (max-height: 560px) {
+  .subscription-disclaimer,
+  .subscription-option__price-line small,
+  .subscription-option__price-line s,
+  .subscription-option__discount {
+    font-size: 11px;
+  }
+}
+
+/* Short landscape screens (phones turned sideways): single column, compact
+   spacing; the page itself scrolls (see .cr-scroll-page). */
+@media (orientation: landscape) and (max-height: 560px) {
+  .subscription-page .subscription-layout {
+    width: min(640px, calc(100% - 28px));
+    min-height: 0;
+    margin: 16px auto 24px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .subscription-page .subscription-title {
+    font-size: 28px;
+  }
+}

@@ -30,10 +30,7 @@ export function examProgress(
 
 export type ExamStartChoice = 'resume' | 'new'
 
-/**
- * The start button resumes only a saved unfinished exam for this route.
- * No save, another route, or a finished exam (already cleared) starts at the first pin.
- */
+/** Active-session presence selects Resume; resolvePinProgress selects the next PIN. */
 export function decideExamStart(saved: { triggeredPins: readonly string[] } | null): ExamStartChoice {
   return saved ? 'resume' : 'new'
 }
@@ -106,6 +103,41 @@ export type ResumeResolution =
       triggeredIds: string[]
     }
 
+/**
+ * Resolve a route's next PIN from completed sort orders only.
+ * The route slug scopes persistence; local route ids and Supabase UUIDs do not affect PIN order.
+ */
+export function resolvePinProgress(
+  pins: readonly ExamProgressPin[],
+  handledOrders: Iterable<number>,
+): ResumeResolution {
+  const ordered = [...pins].sort((a, b) => a.sort_order - b.sort_order)
+  const orders = [...new Set(handledOrders)].sort((a, b) => a - b)
+  const pinOrders = ordered.map((pin) => pin.sort_order)
+  if (
+    ordered.length === 0 ||
+    pinOrders.some((order) => !isOrder(order)) ||
+    new Set(pinOrders).size !== pinOrders.length ||
+    orders.some((order) => !isOrder(order) || !pinOrders.includes(order))
+  ) {
+    return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
+  }
+
+  const prefix = ordered.slice(0, orders.length).map((pin) => pin.sort_order)
+  if (prefix.some((order, index) => order !== orders[index])) {
+    return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
+  }
+
+  const progress = nextSortOrder(ordered, new Set(orders))
+  return {
+    status: 'resume',
+    handledOrders: orders,
+    lastPassedSortOrder: progress.lastPassedSortOrder,
+    nextSortOrder: progress.nextSortOrder,
+    triggeredIds: [...pinIdsForOrders(ordered, new Set(orders))],
+  }
+}
+
 export type SavedResume = {
   triggeredPins: readonly string[]
   triggeredSortOrders?: readonly number[] | null
@@ -123,7 +155,13 @@ export function savedHandledOrders(
   routeSlug: string,
 ): Set<number> | 'invalid' | null {
   if (saved.triggeredSortOrders != null) {
-    if (!Array.isArray(saved.triggeredSortOrders) || !saved.triggeredSortOrders.every(isOrder)) return 'invalid'
+    if (
+      !Array.isArray(saved.triggeredSortOrders) ||
+      !saved.triggeredSortOrders.every(isOrder) ||
+      new Set(saved.triggeredSortOrders).size !== saved.triggeredSortOrders.length
+    ) {
+      return 'invalid'
+    }
     return new Set(saved.triggeredSortOrders)
   }
   const derived = ordersForIds(saved.triggeredPins, pins, routeSlug)
@@ -141,6 +179,12 @@ export function resolveExamResume(
   pins: readonly ExamProgressPin[],
   routeSlug: string,
 ): ResumeResolution {
+  if (
+    (saved.nextSortOrder != null && !isOrder(saved.nextSortOrder)) ||
+    (saved.lastPassedSortOrder != null && !isOrder(saved.lastPassedSortOrder))
+  ) {
+    return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
+  }
   const orders = savedHandledOrders(saved, pins, routeSlug)
   if (orders === 'invalid') return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
   if (orders === null && pins.length === 0) {
@@ -155,8 +199,8 @@ export function resolveExamResume(
   }
   if (orders === null) return { status: 'pending', message: RESUME_PENDING_MESSAGE }
 
-  const handledOrders = [...orders].sort((a, b) => a - b)
   if (pins.length === 0) {
+    const handledOrders = [...orders].sort((a, b) => a - b)
     return {
       status: 'resume',
       handledOrders,
@@ -166,28 +210,17 @@ export function resolveExamResume(
     }
   }
 
-  const known = new Set(pins.map((pin) => pin.sort_order))
-  if (handledOrders.some((order) => !known.has(order))) {
+  const resolution = resolvePinProgress(pins, orders)
+  if (resolution.status !== 'resume') return resolution
+  const { lastPassedSortOrder, nextSortOrder: resolvedNextSortOrder } = resolution
+  if (isOrder(saved.nextSortOrder) && saved.nextSortOrder !== resolvedNextSortOrder) {
     return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
   }
-  const progress = nextSortOrder(pins, orders)
-  const ordered = [...pins].sort((a, b) => a.sort_order - b.sort_order)
-  const prefix = ordered.slice(0, handledOrders.length).map((pin) => pin.sort_order)
-  if (prefix.some((order, index) => order !== handledOrders[index])) {
-    return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
-  }
-  if (isOrder(saved.nextSortOrder) && saved.nextSortOrder !== progress.nextSortOrder) {
-    return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
-  }
-  if (isOrder(saved.lastPassedSortOrder) && saved.lastPassedSortOrder !== progress.lastPassedSortOrder) {
+  if (isOrder(saved.lastPassedSortOrder) && saved.lastPassedSortOrder !== lastPassedSortOrder) {
     return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
   }
 
   return {
-    status: 'resume',
-    handledOrders,
-    lastPassedSortOrder: progress.lastPassedSortOrder,
-    nextSortOrder: progress.nextSortOrder,
-    triggeredIds: [...pinIdsForOrders(pins, orders)],
+    ...resolution,
   }
 }

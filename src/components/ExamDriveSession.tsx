@@ -67,7 +67,6 @@ import {
 } from '@/lib/manual-pin-selection'
 import { examRoadTrace } from '@/lib/pin-route-line'
 import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
-import { finishSectionStartIndex } from '@/data/route-finish'
 import { SPEED_LIMIT_DEBUG_PANEL } from '@/lib/debug-flags'
 import {
   clearRoutePinProgress,
@@ -81,6 +80,9 @@ import {
   ordersForIds,
   pinIdsForOrders,
   resolveExamResume,
+  resolvePinProgress,
+  RESUME_UNRESOLVED_MESSAGE,
+  RESUME_PENDING_MESSAGE,
   savedHandledOrders,
 } from '@/lib/route-resume'
 import type { PinRow, RouteWithPins } from '@/types/database'
@@ -120,7 +122,23 @@ function restoredHandledOrders(
 
   if (!hasRecoverableProgress && savedPinIds.unknown.length > 0) return null
   if (savedOrders === null && !routeOrders?.length && savedPinIds.orders.size === 0) return null
-  return mostAdvancedPinProgress(pins, routeOrders, savedOrders, savedPinIds.orders)
+  if (pins.length === 0) {
+    return mostAdvancedPinProgress(pins, routeOrders, savedOrders, savedPinIds.orders)
+  }
+  const candidates = [routeOrders, savedOrders, savedPinIds.orders]
+  if (
+    candidates.some(
+      (candidate) =>
+        candidate !== null &&
+        candidate !== undefined &&
+        resolvePinProgress(pins, candidate).status === 'error',
+    )
+  ) {
+    return null
+  }
+  const merged = mostAdvancedPinProgress(pins, routeOrders, savedOrders, savedPinIds.orders)
+  const resolution = resolvePinProgress(pins, merged)
+  return resolution.status === 'resume' ? new Set(resolution.handledOrders ?? []) : null
 }
 
 function mostAdvancedPinProgress(
@@ -233,15 +251,17 @@ export function ExamDriveSession({
     setPhase('active')
   }
   const [driveView, setDriveView] = useState<ExamDriveView>('map')
-  const [exam, setExam] = useState(() => savedState?.exam || createExamSession(route.id, route.name_ka))
+  const [exam, setExam] = useState(() =>
+    savedState && !FIELD_TEST_SLUGS.has(route.slug)
+      ? savedState.exam
+      : createExamSession(route.id, route.name_ka),
+  )
   const [examSummary, setExamSummary] = useState<ExamSessionSummary | null>(null)
   const [lastHistory] = useState(() => loadExamHistory(route.id, persistenceScope))
   const [initialAudioQueue] = useState(() =>
-    restoreAudioQueue(
-      route.pins,
-      savedState?.pendingPinSortOrder,
-      savedState?.queuedPinSortOrders,
-    ),
+    savedState && FIELD_TEST_SLUGS.has(route.slug)
+      ? { pending: null, queued: [] as number[] }
+      : restoreAudioQueue(route.pins, savedState?.pendingPinSortOrder, savedState?.queuedPinSortOrders),
   )
 
   const [gpsStarted, setGpsStarted] = useState(savedState ? true : false)
@@ -260,16 +280,22 @@ export function ExamDriveSession({
   /** Debug panel only: GPS readings dropped by the filter. */
   const [gpsRejection, setGpsRejection] = useState<GpsRejectionInfo | null>(null)
   const [heading, setHeading] = useState(savedState?.heading || 0)
-  const [speedKmh, setSpeedKmh] = useState(savedState?.speedKmh || 0)
-  const [elapsedMs, setElapsedMs] = useState(() => (savedState ? examElapsedMsNow(savedState) : 0))
+  const [speedKmh, setSpeedKmh] = useState(
+    savedState && !FIELD_TEST_SLUGS.has(route.slug) ? savedState.speedKmh : 0,
+  )
+  const [elapsedMs, setElapsedMs] = useState(() =>
+    savedState && !FIELD_TEST_SLUGS.has(route.slug) ? examElapsedMsNow(savedState) : 0,
+  )
   const [voiceVolume, setVoiceVolume] = useState(examVoiceVolume)
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
   const [routeComplete, setRouteComplete] = useState(false)
+  const [resumeError, setResumeError] = useState<string | null>(null)
   const [pendingPinSortOrder, setPendingPinSortOrderState] = useState<number | null>(initialAudioQueue.pending)
   /** After mid-route დასრულება, summary offers გაგრძელება using kept localStorage progress. */
   const [summaryCanContinue, setSummaryCanContinue] = useState(false)
   const resumePendingRef = useRef(false)
+  const resumeBlockedRef = useRef(false)
   
   // DEBUG: Session diagnostic panel state
   // Production: panel and its 500 ms re-render timer are off. Development: unchanged.
@@ -289,7 +315,10 @@ export function ExamDriveSession({
   }, [phase])
 
   const finishRouteSlugRef = useRef<string | null>(null)
-  const [initialRoutePinProgress] = useState(() => loadRoutePinProgress(route.slug, persistenceScope) ?? [])
+  const initialRoutePinProgress = useMemo(
+    () => loadRoutePinProgress(route.slug, persistenceScope) ?? [],
+    [route.slug, persistenceScope, savedEpoch],
+  )
   const savedProgressOrders = savedState
     ? initialHandledOrders(savedState, route.pins, route.slug)
     : null
@@ -319,8 +348,10 @@ export function ExamDriveSession({
   const audioRetryTimerRef = useRef<number | null>(null)
   const audioQueueWatchdogRef = useRef<number | null>(null)
   const releaseWake = useRef<(() => void) | null>(null)
-  const sessionStartRef = useRef(savedState ? examSessionOriginMs(savedState) : 0)
-  const resumedSlugRef = useRef<string | null>(savedState ? route.slug : null)
+  const sessionStartRef = useRef(
+    savedState && !FIELD_TEST_SLUGS.has(route.slug) ? examSessionOriginMs(savedState) : 0,
+  )
+  const resumedSlugRef = useRef<string | null>(null)
   const finishInProgressRef = useRef(false)
   const audioSessionGenerationRef = useRef(0)
   const audioRouteSlugRef = useRef(route.slug)
@@ -356,10 +387,6 @@ export function ExamDriveSession({
     initialRoutePinProgress,
     savedState ? savedProgressOrders : null,
   )
-  const previewPin =
-    previewPinSelection?.routeId === route.id
-      ? sortedPins.find((pin) => pin.sort_order === previewPinSelection.sortOrder) ?? sortedPins[0] ?? null
-      : sortedPins.find((pin) => !completedPreviewOrders.has(pin.sort_order)) ?? sortedPins[0] ?? null
   const pinsActive = voicePins.length > 0
   // Posted limit comes from the vehicle's real position on the route's road line (not from PIN proximity).
   // null (shown as "—") whenever the position is not inside a known zone.
@@ -368,19 +395,29 @@ export function ExamDriveSession({
   speedLimitRoadRef.current = speedLimitRoad
   // Automatic start: see resolveAutoStart. Read progress fresh from storage so a finished/restarted
   // route never reuses progress from mount time.
-  const computeAutoStart = (fix: GpsPosition | null) =>
-    resolveAutoStart(
-      sortedPins,
-      mostAdvancedPinProgress(sortedPins, loadRoutePinProgress(route.slug, persistenceScope)),
-      fix,
-      speedLimitRoad,
-    )
+  const previewProgress = resolvePinProgress(
+    sortedPins,
+    loadRoutePinProgress(route.slug, persistenceScope) ?? [],
+  )
+  const computeAutoStart = () =>
+    resolveAutoStart(sortedPins, new Set(loadRoutePinProgress(route.slug, persistenceScope) ?? []))
   const autoStart = useMemo(
-    () => computeAutoStart(phase === 'preview' ? rawPos : null),
+    () => computeAutoStart(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sortedPins, route.slug, persistenceScope, savedEpoch, phase, rawPos, speedLimitRoad],
+    [sortedPins, route.slug, persistenceScope, savedEpoch],
   )
   const autoStartPin = autoStart.pin
+  const previewPin =
+    previewProgress.status === 'resume' &&
+    previewProgress.nextSortOrder !== null &&
+    previewPinSelection?.routeId === route.id &&
+    !completedPreviewOrders.has(previewPinSelection.sortOrder)
+      ? sortedPins.find((pin) => pin.sort_order === previewPinSelection.sortOrder) ?? autoStartPin
+      : previewProgress.status === 'resume' ? autoStartPin : null
+  const previewRouteComplete =
+    previewProgress.status === 'resume' &&
+    sortedPins.length > 0 &&
+    previewProgress.nextSortOrder === null
   const speedLimitKmh = useMemo(
     () =>
       speedLimitFixSlug === route.slug
@@ -510,6 +547,7 @@ export function ExamDriveSession({
     if (saved) {
       if (resumedSlugRef.current !== route.slug) {
         resumedSlugRef.current = route.slug
+        resumeBlockedRef.current = false
         const restoredOrders = FIELD_TEST_SLUGS.has(route.slug)
           ? restoredHandledOrders(saved, sortedPins, route.slug, persistenceScope)
           : null
@@ -523,15 +561,16 @@ export function ExamDriveSession({
         )
         setPendingPinSortOrder(restoredAudio.pending)
         queuedAudioPinOrdersRef.current = restoredAudio.queued
-        sessionStartRef.current = examSessionOriginMs(saved)
-        setExam(saved.exam)
+        const resetTransientProgress = FIELD_TEST_SLUGS.has(route.slug)
+        sessionStartRef.current = resetTransientProgress ? Date.now() : examSessionOriginMs(saved)
+        setExam(resetTransientProgress ? createExamSession(route.id, route.name_ka) : saved.exam)
         setExamSummary(null)
         currentPositionRef.current = saved.userPos
         setUserPos(saved.userPos)
         updateSpeedRoadProgress(saved.userPos, true)
         setHeading(saved.heading)
-        setSpeedKmh(saved.speedKmh)
-        setElapsedMs(examElapsedMsNow(saved))
+        setSpeedKmh(resetTransientProgress ? 0 : saved.speedKmh)
+        setElapsedMs(resetTransientProgress ? 0 : examElapsedMsNow(saved))
         setGpsStarted(true)
         setDriveView(features.mapNav ? 'map' : 'panel')
         if (FIELD_TEST_SLUGS.has(route.slug)) {
@@ -544,12 +583,23 @@ export function ExamDriveSession({
             setNextPin(sortedPins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
             setRouteComplete(sortedPins.length > 0 && progress.nextSortOrder === null)
             resumePendingRef.current = false
+            setResumeError(null)
           } else {
             const resolution = resolveExamResume(saved, sortedPins, route.slug)
-            handledOrdersRef.current = initialHandledOrders(saved, sortedPins, route.slug)
+            handledOrdersRef.current = null
+            resumeBlockedRef.current =
+              resolution.status === 'error' ||
+              (resolution.status === 'resume' && resolution.handledOrders !== null)
             resumePendingRef.current =
               resolution.status === 'pending' ||
               (resolution.status === 'resume' && resolution.handledOrders === null)
+            setResumeError(
+              resolution.status === 'resume'
+                ? resolution.handledOrders === null ? RESUME_PENDING_MESSAGE : RESUME_UNRESOLVED_MESSAGE
+                : resolution.message,
+            )
+            setNextPin(null)
+            setRouteComplete(false)
           }
         }
         console.log('🔄 Resuming saved exam session', route.slug)
@@ -566,6 +616,7 @@ export function ExamDriveSession({
     }
 
     resumedSlugRef.current = null
+    resumeBlockedRef.current = false
     sessionStartRef.current = 0
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
@@ -574,13 +625,29 @@ export function ExamDriveSession({
     setGpsError(getGpsEnvironmentIssue())
     setLastSpoken(null)
     const savedOrders = new Set(loadRoutePinProgress(route.slug, persistenceScope) ?? [])
-    triggeredRef.current = pinIdsForOrders(sortedPins, savedOrders)
-    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = savedOrders
+    const progressResolution = FIELD_TEST_SLUGS.has(route.slug)
+      ? resolvePinProgress(sortedPins, savedOrders)
+      : null
+    const safeOrders =
+      progressResolution?.status === 'resume'
+        ? new Set(progressResolution.handledOrders ?? [])
+        : savedOrders
+    triggeredRef.current = pinIdsForOrders(sortedPins, safeOrders)
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = safeOrders
     setPendingPinSortOrder(null)
     queuedAudioPinOrdersRef.current = []
-    resumePendingRef.current = false
-    setRouteComplete(false)
-    setNextPin(sortedPins.find((pin) => !triggeredRef.current.has(pin.id)) ?? null)
+    resumePendingRef.current = progressResolution?.status === 'pending'
+    setResumeError(progressResolution?.status === 'error' ? progressResolution.message : null)
+    setRouteComplete(
+      progressResolution?.status === 'resume' &&
+      sortedPins.length > 0 &&
+      progressResolution.nextSortOrder === null,
+    )
+    setNextPin(
+      progressResolution?.status === 'resume'
+        ? sortedPins.find((pin) => pin.sort_order === progressResolution.nextSortOrder) ?? null
+        : sortedPins.find((pin) => !triggeredRef.current.has(pin.id)) ?? null,
+    )
     prevGpsRef.current = null
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
@@ -592,6 +659,7 @@ export function ExamDriveSession({
   // so a pin list swap re-derives the handled ids instead of dropping or guessing them.
   useEffect(() => {
     if (!FIELD_TEST_SLUGS.has(route.slug)) return
+    if (resumeBlockedRef.current) return
     if (handledOrdersRef.current === null) {
       const derived = ordersForIds(triggeredRef.current, sortedPins, route.slug)
       if (sortedPins.length === 0) return
@@ -601,12 +669,21 @@ export function ExamDriveSession({
       }
       handledOrdersRef.current = derived.orders
     }
+    if (sortedPins.length === 0) return
+    const resolution = resolvePinProgress(sortedPins, handledOrdersRef.current)
+    if (resolution.status !== 'resume') {
+      resumeBlockedRef.current = true
+      resumePendingRef.current = false
+      setResumeError(resolution.message)
+      setNextPin(null)
+      return
+    }
     triggeredRef.current = pinIdsForOrders(sortedPins, handledOrdersRef.current)
     resumePendingRef.current = false
+    setResumeError(null)
     if (phaseRef.current !== 'active') return
-    const progress = nextSortOrder(sortedPins, handledOrdersRef.current)
-    setNextPin(sortedPins.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
-    setRouteComplete(sortedPins.length > 0 && progress.nextSortOrder === null)
+    setNextPin(sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null)
+    setRouteComplete(sortedPins.length > 0 && resolution.nextSortOrder === null)
   }, [sortedPins, route.id, route.slug, route.name_ka])
 
   const enableGps = useCallback(async (silent = false) => {
@@ -1115,14 +1192,31 @@ export function ExamDriveSession({
     }
     audioAttemptInFlightRef.current = false
     finishInProgressRef.current = false
-    clearRoutePinProgress(route.slug, persistenceScope)
+    const isFieldTest = FIELD_TEST_SLUGS.has(route.slug)
+    const handled = isFieldTest
+      ? mostAdvancedPinProgress(
+          voicePins,
+          loadRoutePinProgress(route.slug, persistenceScope),
+          voicePins.filter((pin) => pin.sort_order < startSortOrder).map((pin) => pin.sort_order),
+        )
+      : new Set(
+          voicePins
+            .filter((pin) => pin.sort_order < startSortOrder)
+            .map((pin) => pin.sort_order),
+        )
+    const resolution = isFieldTest ? resolvePinProgress(voicePins, handled) : null
+    if (isFieldTest && (resolution?.status !== 'resume' || resolution.nextSortOrder === null)) {
+      setResumeError(
+        resolution?.status === 'error'
+          ? resolution.message
+          : 'მარშრუტზე გასაგრძელებელი PIN აღარ არის. გამოიყენეთ „თავიდან დაწყება“ პროგრესის გასანულებლად.',
+      )
+      setRouteComplete(resolution?.status === 'resume' && voicePins.length > 0)
+      return
+    }
+    if (!isFieldTest) clearRoutePinProgress(route.slug, persistenceScope)
     clearManualPinSelection(route.slug, persistenceScope)
-    const handled = new Set(
-      voicePins
-        .filter((pin) => pin.sort_order < startSortOrder)
-        .map((pin) => pin.sort_order),
-    )
-    if (handled.size > 0) saveRoutePinProgress(route.slug, handled, persistenceScope)
+    if (isFieldTest && handled.size > 0) saveRoutePinProgress(route.slug, handled, persistenceScope)
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     route3Pin12RoadURef.current = null
@@ -1130,26 +1224,20 @@ export function ExamDriveSession({
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       handledOrdersRef.current = handled
     }
+    resumeBlockedRef.current = false
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
     setRouteComplete(false)
+    setResumeError(null)
     resumePendingRef.current = false
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
     setLastSpoken(EXAM_START_TEXT)
     
-    // Apply sequence logic: Finish pins (last 3) should not be shown as next pin at start
-    const triggeredCount = triggeredRef.current.size
-    const totalPins = voicePins.length
-    const finishSectionStart = finishSectionStartIndex(totalPins)
-    
-    const nextPinCandidate =
-      voicePins.find((pin) => pin.sort_order === startSortOrder) ??
-      voicePins.find((p, idx) => {
-        if (triggeredRef.current.has(p.id)) return false
-        if (idx >= finishSectionStart && triggeredCount < finishSectionStart) return false
-        return true
-      })
+    const nextOrder = resolution?.status === 'resume'
+      ? resolution.nextSortOrder
+      : voicePins.find((pin) => !triggeredRef.current.has(pin.id))?.sort_order ?? null
+    const nextPinCandidate = voicePins.find((pin) => pin.sort_order === nextOrder) ?? null
     
     setNextPin(nextPinCandidate ?? null)
     speedTrackerRef.current = createSpeedTracker()
@@ -1184,6 +1272,9 @@ export function ExamDriveSession({
           resumePendingRef.current = false
         } else {
           const resolution = resolveExamResume(savedState, voicePins, route.slug)
+          resumeBlockedRef.current =
+            resolution.status === 'error' ||
+            (resolution.status === 'resume' && resolution.handledOrders !== null)
           if (resolution.status === 'pending' ||
             (resolution.status === 'resume' && resolution.handledOrders === null)) {
             resumePendingRef.current = true
@@ -1200,18 +1291,10 @@ export function ExamDriveSession({
     // No saved state - this is a NEW session. Resume returned above.
     const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
     if (gpsResult.denied) return
-    if (previewSelectionMode === 'automatic' && !rawPos) {
-      // The fix just arrived, so the map may now show a different PIN: confirm it with a second press
-      // so the PIN on the map is always the PIN that starts.
-      const resolved = computeAutoStart(gpsResult.fix).pin
-      if (resolved?.sort_order !== autoStartPin?.sort_order) return
-    }
-    const selectedSortOrder =
-      previewSelectionMode === 'manual'
-        ? previewPinSelection?.routeId === route.id
-          ? previewPin?.sort_order ?? 1
-          : 1
-        : autoStartPin?.sort_order ?? 1
+    const selectedSortOrder = previewSelectionMode === 'manual'
+      ? previewPin?.sort_order
+      : autoStartPin?.sort_order
+    if (selectedSortOrder === undefined || selectedSortOrder === null) return
     startSession(selectedSortOrder)
   }
 
@@ -1251,7 +1334,9 @@ export function ExamDriveSession({
       loadRoutePinProgress(route.slug, persistenceScope),
       ...candidates,
     )
-    saveRoutePinProgress(route.slug, orders, persistenceScope)
+    if (orders.size > 0 || loadRoutePinProgress(route.slug, persistenceScope) !== null) {
+      saveRoutePinProgress(route.slug, orders, persistenceScope)
+    }
     return orders
   }
 
@@ -1304,50 +1389,6 @@ export function ExamDriveSession({
     return nextSortOrder(pins, orders).nextSortOrder !== null
   }
 
-  function applySavedProgress(saved: SavedExamState) {
-    const restoredOrders = FIELD_TEST_SLUGS.has(route.slug)
-      ? restoredHandledOrders(saved, pinsRef.current, route.slug, persistenceScope)
-      : null
-    triggeredRef.current = restoredOrders
-      ? pinIdsForOrders(pinsRef.current, restoredOrders)
-      : new Set(saved.triggeredPins)
-    const restoredAudio = restoreAudioQueue(
-      pinsRef.current,
-      saved.pendingPinSortOrder,
-      saved.queuedPinSortOrders,
-    )
-    setPendingPinSortOrder(restoredAudio.pending)
-    queuedAudioPinOrdersRef.current = restoredAudio.queued
-    sessionStartRef.current = examSessionOriginMs(saved)
-    setExam(saved.exam)
-    currentPositionRef.current = saved.userPos
-    setUserPos(saved.userPos)
-    updateSpeedRoadProgress(saved.userPos, true)
-    updateRoute3Pin12Progress(saved.userPos, true)
-    setHeading(saved.heading)
-    setSpeedKmh(saved.speedKmh)
-    setElapsedMs(examElapsedMsNow(saved))
-    setGpsStarted(true)
-    if (FIELD_TEST_SLUGS.has(route.slug)) {
-      if (restoredOrders) {
-        const orders = persistMostAdvancedPinProgress(restoredOrders)
-        handledOrdersRef.current = orders
-        triggeredRef.current = pinIdsForOrders(pinsRef.current, handledOrdersRef.current)
-        const progress = nextSortOrder(pinsRef.current, orders)
-        setNextPin(pinsRef.current.find((pin) => pin.sort_order === progress.nextSortOrder) ?? null)
-        setRouteComplete(pinsRef.current.length > 0 && progress.nextSortOrder === null)
-        resumePendingRef.current = false
-      } else {
-        const resolution = resolveExamResume(saved, pinsRef.current, route.slug)
-        handledOrdersRef.current = initialHandledOrders(saved, pinsRef.current, route.slug)
-        resumePendingRef.current =
-          resolution.status === 'pending' ||
-          (resolution.status === 'resume' && resolution.handledOrders === null)
-      }
-    }
-    resumedSlugRef.current = route.slug
-  }
-
   function finishSession() {
     audioSessionGenerationRef.current++
     finishInProgressRef.current = true
@@ -1387,6 +1428,15 @@ export function ExamDriveSession({
     audioEngine.unlock()
     // No active exam is kept after finishing: go back to the start page with the saved PIN progress.
     const orders = new Set(loadRoutePinProgress(route.slug, persistenceScope) ?? [])
+    const resolution = resolvePinProgress(sortedPins, orders)
+    if (resolution.status !== 'resume' || resolution.nextSortOrder === null) {
+      setResumeError(
+        resolution.status === 'error'
+          ? resolution.message
+          : 'მარშრუტი დასრულებულია — გასაგრძელებელი PIN აღარ არის.',
+      )
+      return
+    }
     finishInProgressRef.current = true
     finishRouteSlugRef.current = null
     audioSessionGenerationRef.current++
@@ -1395,14 +1445,16 @@ export function ExamDriveSession({
     setSummaryCanContinue(false)
     setExamSummary(null)
     setExam(createExamSession(route.id, route.name_ka))
-    triggeredRef.current = pinIdsForOrders(sortedPins, orders)
+    triggeredRef.current = pinIdsForOrders(sortedPins, new Set(resolution.handledOrders ?? []))
     pinApproachRef.current = new Map()
-    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = orders
-    const next = sortedPins.find((pin) => !orders.has(pin.sort_order)) ?? sortedPins[0] ?? null
+    if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = new Set(resolution.handledOrders ?? [])
+    const next = sortedPins.find((pin) => pin.sort_order === resolution.nextSortOrder) ?? null
     setPreviewPinSelection(next ? { routeId: route.id, sortOrder: next.sort_order } : null)
     resumedSlugRef.current = null
     resumePendingRef.current = false
-    setRouteComplete(false)
+    resumeBlockedRef.current = false
+    setRouteComplete(sortedPins.length > 0 && resolution.nextSortOrder === null)
+    setResumeError(null)
     setNextPin(next)
     setLastSpoken(null)
     setElapsedMs(0)
@@ -1419,6 +1471,8 @@ export function ExamDriveSession({
     finishInProgressRef.current = true
     finishRouteSlugRef.current = null
     setPhase('preview')
+    setResumeError(null)
+    resumeBlockedRef.current = false
     setPreviewPinSelection(
       sortedPins[0] ? { routeId: route.id, sortOrder: sortedPins[0].sort_order } : null,
     )
@@ -1531,6 +1585,15 @@ export function ExamDriveSession({
             </div>
           )}
 
+          {resumeError && FIELD_TEST_SLUGS.has(route.slug) && (
+            <div role="alert" data-testid="resume-error" className="error-text">
+              <p>{resumeError}</p>
+              <button type="button" className="nav-start-btn" onClick={restartPreview}>
+                თავიდან დაწყება
+              </button>
+            </div>
+          )}
+
           {debugPanelEnabled && (
             <SpeedLimitDebugPanel
               routeSlug={route.slug}
@@ -1606,36 +1669,54 @@ export function ExamDriveSession({
             }
           />
           <div className="exam-preview__panel">
-            <div
-              className="exam-preview__mode-controls"
-              role="group"
-              aria-label="PIN-ის არჩევის რეჟიმი"
-              data-testid="exam-pin-selection-controls"
-            >
-              <button
-                type="button"
-                className={`exam-preview__mode-button${previewSelectionMode === 'automatic' ? ' is-active' : ''}`}
-                aria-pressed={previewSelectionMode === 'automatic'}
-                onClick={() => {
-                  setPreviewSelectionMode('automatic')
-                  setPreviewPinSelection(null)
-                  clearManualPinSelection(route.slug, persistenceScope)
-                }}
+            {previewProgress.status === 'error' && (
+              <div role="alert" data-testid="resume-error" className="error-text">
+                <p>{previewProgress.message}</p>
+                <button type="button" className="nav-start-btn" onClick={restartPreview}>
+                  თავიდან დაწყება
+                </button>
+              </div>
+            )}
+            {previewRouteComplete && (
+              <div role="status" data-testid="route-complete">
+                <p>მარშრუტი დასრულებულია — ყველა PIN გავლილია.</p>
+                <button type="button" className="nav-start-btn" onClick={restartPreview}>
+                  თავიდან დაწყება
+                </button>
+              </div>
+            )}
+            {!previewRouteComplete && previewProgress.status === 'resume' && (
+              <div
+                className="exam-preview__mode-controls"
+                role="group"
+                aria-label="PIN-ის არჩევის რეჟიმი"
+                data-testid="exam-pin-selection-controls"
               >
-                PIN-ის არჩევა ავტომატურად
-              </button>
-              <button
-                type="button"
-                className={`exam-preview__mode-button${previewSelectionMode === 'manual' ? ' is-active' : ''}`}
-                aria-pressed={previewSelectionMode === 'manual'}
-                onClick={() => {
-                  setPreviewSelectionMode('manual')
-                  if (previewPin) selectManualPin(previewPin.sort_order)
-                }}
-              >
-                PIN-ის არჩევა ხელით
-              </button>
-            </div>
+                <button
+                  type="button"
+                  className={`exam-preview__mode-button${previewSelectionMode === 'automatic' ? ' is-active' : ''}`}
+                  aria-pressed={previewSelectionMode === 'automatic'}
+                  onClick={() => {
+                    setPreviewSelectionMode('automatic')
+                    setPreviewPinSelection(null)
+                    clearManualPinSelection(route.slug, persistenceScope)
+                  }}
+                >
+                  PIN-ის არჩევა ავტომატურად
+                </button>
+                <button
+                  type="button"
+                  className={`exam-preview__mode-button${previewSelectionMode === 'manual' ? ' is-active' : ''}`}
+                  aria-pressed={previewSelectionMode === 'manual'}
+                  onClick={() => {
+                    setPreviewSelectionMode('manual')
+                    if (previewPin) selectManualPin(previewPin.sort_order)
+                  }}
+                >
+                  PIN-ის არჩევა ხელით
+                </button>
+              </div>
+            )}
             {previewPin && previewSelectionMode === 'manual' && (
               <div className="exam-preview__pin-picker">
                 <label htmlFor="exam-preview-pin">აირჩიეთ PIN</label>
@@ -1685,9 +1766,20 @@ export function ExamDriveSession({
                 </p>
               </div>
             )}
-            <button type="button" className="nav-start-btn" onClick={() => void handleStartSession()} disabled={gpsStarting}>
-              {gpsStarting ? 'GPS იტვირთება...' : savedState ? '▶ გაგრძელება' : '▶ გამოცდის დაწყება'}
-            </button>
+            {!previewRouteComplete && (
+              <button
+                type="button"
+                className="nav-start-btn"
+                onClick={() => void handleStartSession()}
+                disabled={
+                  gpsStarting ||
+                  previewProgress.status !== 'resume' ||
+                  Boolean(resumeError)
+                }
+              >
+                {gpsStarting ? 'GPS იტვირთება...' : savedState ? '▶ გაგრძელება' : '▶ გამოცდის დაწყება'}
+              </button>
+            )}
             {lastHistory[0] && features.errorPanel && !savedState && (
               <p className="session-hint">
                 ბოლო: {formatExamDuration(lastHistory[0].elapsedMs)} · ქვედი {lastHistory[0].minorTotal} · მძიმე{' '}

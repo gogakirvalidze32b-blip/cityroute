@@ -16,6 +16,7 @@ import { SupportChatPage } from '@/pages/SupportChatPage'
 import { SupportAdminPage } from '@/pages/SupportAdminPage'
 import { PreviewDemoRoutes } from '@/pages/PreviewDemoRoutes'
 import '@/styles/payment.css'
+import '@/styles/cr-scroll.css'
 
 function ProductionRoutes() {
   return (

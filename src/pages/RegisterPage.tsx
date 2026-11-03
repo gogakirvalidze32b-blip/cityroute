@@ -15,7 +15,7 @@ export function RegisterPage() {
 
   if (loading) {
     return (
-      <div className="page center auth-page">
+      <div className="page center auth-page cr-scroll-page">
         <div className="auth-brand">
           <AppBrand centered />
         </div>
@@ -52,7 +52,7 @@ export function RegisterPage() {
 
   if (success) {
     return (
-      <div className="page center auth-page">
+      <div className="page center auth-page cr-scroll-page">
         <div className="auth-brand">
           <AppBrand centered />
         </div>
@@ -70,7 +70,7 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="page center auth-page">
+    <div className="page center auth-page cr-scroll-page">
       <div className="auth-brand">
         <AppBrand centered />
       </div>

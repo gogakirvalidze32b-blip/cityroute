@@ -67,7 +67,7 @@ export function PaymentButton({ deviceSlots, onError, disabled }: PaymentButtonP
           <span className="spinner">⏳</span> იტვირთება...
         </>
       ) : (
-        <>🏦 გადახდა BOG-ით</>
+        <>გადახდა</>
       )}
     </button>
   )

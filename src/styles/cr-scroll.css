@@ -1,0 +1,60 @@
+/* Opt-in smart scroll for standalone pages.
+   html/body/#root are position:fixed + overflow:hidden app-wide (needed by the
+   map and exam screens), so a page must be its own scroll container.
+   Nothing here applies unless an element carries .cr-scroll-page. */
+
+/* doubled selector: beats single-class min-height/height rules of the page
+   (e.g. .subscription-page { min-height: 100vh }) regardless of CSS order */
+.cr-scroll-page.cr-scroll-page {
+  box-sizing: border-box;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto; /* scrollbar appears only when the content does not fit */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  scrollbar-width: thin;
+  scrollbar-color: rgba(45, 224, 192, 0.45) transparent;
+}
+
+.cr-scroll-page::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cr-scroll-page::-webkit-scrollbar-thumb {
+  background: rgba(45, 224, 192, 0.45);
+  border-radius: 999px;
+}
+
+.cr-scroll-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Centered pages: justify-content:center would clip the top of an overflowing
+   flex column. Auto margins center short content and keep long content reachable. */
+.page.center.cr-scroll-page {
+  justify-content: flex-start;
+}
+
+.page.center.cr-scroll-page > :first-child {
+  margin-top: auto;
+}
+
+.page.center.cr-scroll-page > :last-child {
+  margin-bottom: auto;
+}
+
+.page.payment-return-page.cr-scroll-page {
+  justify-content: flex-start;
+}
+
+.page.payment-return-page.cr-scroll-page > :first-child {
+  margin-top: auto;
+}
+
+.page.payment-return-page.cr-scroll-page > :last-child {
+  margin-bottom: auto;
+}

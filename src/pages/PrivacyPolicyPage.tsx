@@ -9,8 +9,7 @@ export function PrivacyPolicyPage() {
   const navigate = useNavigate()
 
   return (
-    <div style={{
-      minHeight: '100vh',
+    <div className="cr-scroll-page" style={{
       background: '#0f172a',
       color: '#e2e8f0',
       padding: '2rem 1rem'

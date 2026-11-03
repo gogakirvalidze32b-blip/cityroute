@@ -28,17 +28,17 @@ describe('BOG payment request retries', () => {
   it('reuses the request ID across retries and changes it when the selected package changes', async () => {
     const { rerender } = render(<PaymentButton deviceSlots={1} onError={state.onError} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /გადახდა BOG-ით/ }))
+    fireEvent.click(screen.getByRole('button', { name: /გადახდა/ }))
     await waitFor(() => expect(state.fetch).toHaveBeenCalledTimes(1))
     const firstId = JSON.parse(String(state.fetch.mock.calls[0]?.[1]?.body)).requestId
 
-    fireEvent.click(screen.getByRole('button', { name: /გადახდა BOG-ით/ }))
+    fireEvent.click(screen.getByRole('button', { name: /გადახდა/ }))
     await waitFor(() => expect(state.fetch).toHaveBeenCalledTimes(2))
     const retryId = JSON.parse(String(state.fetch.mock.calls[1]?.[1]?.body)).requestId
     expect(retryId).toBe(firstId)
 
     rerender(<PaymentButton deviceSlots={2} onError={state.onError} />)
-    fireEvent.click(screen.getByRole('button', { name: /გადახდა BOG-ით/ }))
+    fireEvent.click(screen.getByRole('button', { name: /გადახდა/ }))
     await waitFor(() => expect(state.fetch).toHaveBeenCalledTimes(3))
     const secondPackageId = JSON.parse(String(state.fetch.mock.calls[2]?.[1]?.body)).requestId
     expect(secondPackageId).not.toBe(firstId)

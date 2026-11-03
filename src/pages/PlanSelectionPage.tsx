@@ -102,7 +102,7 @@ export function PlanSelectionPage() {
   }
 
   return (
-    <main className="subscription-page">
+    <main className="subscription-page cr-scroll-page">
       <div className="subscription-layout">
         <section className="subscription-intro">
           <AppBrand centered />

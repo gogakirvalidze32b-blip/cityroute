@@ -64,7 +64,7 @@ export function PaymentReturnPage() {
   }, [searchParams, refreshProfile])
 
   return (
-    <div className="page payment-return-page">
+    <div className="page payment-return-page cr-scroll-page">
       <header className="payment-return__header">
         <AppBrand centered />
       </header>

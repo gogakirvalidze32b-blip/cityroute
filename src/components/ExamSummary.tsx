@@ -14,20 +14,34 @@ type Props = {
 
 export function ExamSummary({ summary, onRestart, onContinue }: Props) {
   const lines = examSummaryLines(summary)
+  const failed = summary.failedMinor || summary.severeTotal > 0
 
   return (
     <div className="exam-summary-overlay" data-testid="exam-summary">
-      <div className="exam-summary">
-        <p className="exam-summary__route">{summary.routeName}</p>
-        <h2>სესია დასრულდა</h2>
-        <p className="exam-summary__time">{formatExamDuration(summary.elapsedMs)}</p>
+      <section className="exam-summary" role="dialog" aria-modal="true" aria-labelledby="exam-summary-title">
+        <div className="exam-summary__brand">
+          <img src="/favicon.svg" alt="" width="24" height="24" />
+          <span>CityRoute</span>
+        </div>
 
-        <div className="exam-summary__totals">
+        <header className={`exam-summary__header${failed ? ' exam-summary__header--fail' : ''}`}>
+          <span className="exam-summary__result-icon" aria-hidden="true">
+            {failed ? '!' : '✓'}
+          </span>
+          <div>
+            <h2 id="exam-summary-title">გამოცდა დასრულებულია</h2>
+            <p className="exam-summary__route">{summary.routeName}</p>
+          </div>
+        </header>
+
+        <div className="exam-summary__totals" aria-label="გამოცდის შედეგები">
+          <div className="exam-summary__box exam-summary__box--time">
+            <span>დრო</span>
+            <strong>{formatExamDuration(summary.elapsedMs)}</strong>
+          </div>
           <div className={`exam-summary__box exam-summary__box--minor${summary.failedMinor ? ' exam-summary__box--fail' : ''}`}>
-            <span>ქვედი შეცდომა</span>
-            <strong>
-              {summary.minorTotal} / {EXAM_FAIL_MINOR_THRESHOLD}
-            </strong>
+            <span>მცირე შეცდომა</span>
+            <strong>{summary.minorTotal} / {EXAM_FAIL_MINOR_THRESHOLD}</strong>
             {summary.failedMinor && <em>ჩაჭრა</em>}
           </div>
           <div className={`exam-summary__box exam-summary__box--severe${summary.severeTotal > 0 ? ' exam-summary__box--fail' : ''}`}>
@@ -39,11 +53,14 @@ export function ExamSummary({ summary, onRestart, onContinue }: Props) {
 
         {lines.length > 0 ? (
           <>
-            <h3>დაუშვა შეცდომები</h3>
+            <h3>შეცდომების დეტალები</h3>
             <ul className="exam-summary__list">
               {lines.map((row) => (
                 <li key={row.label}>
-                  <span>{row.label}</span>
+                  <span className="exam-summary__item">
+                    <span className="exam-summary__item-icon" aria-hidden="true">!</span>
+                    {row.label}
+                  </span>
                   <span className="exam-summary__counts">
                     {row.minor > 0 && <em className="exam-badge exam-badge--minor">{row.minor}</em>}
                     {row.severe > 0 && <em className="exam-badge exam-badge--severe">{row.severe}</em>}
@@ -53,18 +70,24 @@ export function ExamSummary({ summary, onRestart, onContinue }: Props) {
             </ul>
           </>
         ) : (
-          <p className="exam-summary__clean">შეცდომა არ ჩაწერილა</p>
+          <p className="exam-summary__clean">
+            <span className="exam-summary__clean-icon" aria-hidden="true">✓</span>
+            შეცდომა არ დაფიქსირებულა
+          </p>
         )}
 
-        {onContinue && (
-          <button type="button" className="nav-start-btn" onClick={onContinue}>
-            გაგრძელება
+        <div className="exam-summary__actions">
+          {onContinue && (
+            <button type="button" className="exam-summary__action exam-summary__action--secondary" onClick={onContinue}>
+              გაგრძელება
+            </button>
+          )}
+          <button type="button" className="exam-summary__action exam-summary__action--primary" onClick={onRestart}>
+            თავიდან
+            <span aria-hidden="true">→</span>
           </button>
-        )}
-        <button type="button" className="nav-start-btn" onClick={onRestart}>
-          თავიდან
-        </button>
-      </div>
+        </div>
+      </section>
     </div>
   )
 }
