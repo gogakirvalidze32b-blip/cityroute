@@ -30,7 +30,7 @@ describe('shared finish sequence', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
     const pin3 = route.pins.find((pin) => pin.sort_order === 3)!
     const pin25 = route.pins.find((pin) => pin.sort_order === 25)!
-    expect([pin3.lat, pin3.lng]).toEqual([41.931738, 45.476857])
+    expect([pin3.lat, pin3.lng]).toEqual([41.931648, 45.476800])
     expect([pin25.lat, pin25.lng]).toEqual([41.933312, 45.477867])
     expect([pin3.lat, pin3.lng]).not.toEqual([pin25.lat, pin25.lng])
     expect(resolvePinAudioUrl('route-2', pin3)).not.toBeNull()
@@ -61,8 +61,18 @@ describe('shared finish sequence', () => {
   it('maps Route 1 #23 exact requested text to an existing audio file', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
     const pin23 = route.pins.find((pin) => pin.sort_order === 23)!
-    expect(pin23.instruction_ka).toBe('შემდეგ მინიშნებამდე იმოძრავეთ პირდაპირ')
+    expect([pin23.lat, pin23.lng]).toEqual([41.918370, 45.483146])
+    expect(pin23.instruction_ka).toBe('მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ')
     expect(decodeURIComponent(resolvePinAudioUrl('route-1', pin23)!))
+      .toBe('/audio/points/მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav')
+  })
+
+  it('maps Route 1 #24 to the exact requested straight-ahead audio', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
+    const pin24 = route.pins.find((pin) => pin.sort_order === 24)!
+    expect([pin24.lat, pin24.lng]).toEqual([41.918155, 45.481760])
+    expect(pin24.instruction_ka).toBe('გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ')
+    expect(decodeURIComponent(resolvePinAudioUrl('route-1', pin24)!))
       .toBe('/audio/points/გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav')
   })
 })
