@@ -19,15 +19,12 @@ const mk = (instruction_ka: string): PinRow =>
 const EXPECTED_OVERRIDES = new Map<string, string>([
   ['1:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['1:19', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
-  ['1:23', 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav'],
   ['3:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:1', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['4:14', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['2:8', 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
   ['3:9', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
-  ['3:13', 'წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav'],
   ['3:18', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
-  ['4:9', 'მალე, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ.wav'],
   ['2:18', 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ.wav'],
   ['4:20', 'მალე, წრიული მოძრაობისას გთხოვთ მოუხვიოთ მარჯვნივ.wav'],
 ])
@@ -96,7 +93,7 @@ describe('FINAL audio audit: 127 PINs', () => {
     }
   })
 
-  it('keeps the requested Route 3 coordinate edits and maps PIN #13 to its exact existing WAV', () => {
+  it('keeps related coordinates and maps Route 3 #13 to an exact WAV stem', () => {
     const expectedCoordinates: Record<string, readonly [number, number]> = {
       '3:9': [41.92025, 45.484497],
       '3:13': [41.918749, 45.484602],
@@ -107,21 +104,25 @@ describe('FINAL audio audit: 127 PINs', () => {
 
     for (const [key, [lat, lng]] of Object.entries(expectedCoordinates)) {
       const [route, pin] = key.split(':').map(Number)
-      const p = pins.find((x) => x.route === route && x.pin === pin)!
-      expect([p.lat, p.lng]).toEqual([lat, lng])
+      const row = pins.find((item) => item.route === route && item.pin === pin)!
+      expect([row.lat, row.lng]).toEqual([lat, lng])
     }
 
-    const route3Pin9 = pins.find((x) => x.route === 3 && x.pin === 9)!
-    const route4Pin9 = pins.find((x) => x.route === 4 && x.pin === 9)!
-    expect(route3Pin9.instruction).toBe('წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარჯვნივ')
-    expect(route4Pin9.instruction).toBe('წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ')
+    const pin13 = pins.find((item) => item.route === 3 && item.pin === 13)!
+    const filename = decodeAudioPath(resolvePinAudioUrl('route-3', mk(pin13.instruction))!).split('/').pop()!
+    expect(filename).toBe(`${pin13.instruction}.wav`)
+    expect(existsSync(join(POINTS_DIR, filename))).toBe(true)
+  })
 
-    const pin13 = pins.find((x) => x.route === 3 && x.pin === 13)!
-    expect(pin13.instruction).toBe('წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ')
-    const wav = 'წრიული მოძრაობისას, გთხოვთ იმოძრაოთ მარცხნივ.wav'
-    expect(decodeAudioPath(resolvePinAudioUrl('route-3', mk(pin13.instruction))!))
-      .toBe(`/audio/points/${wav}`)
-    expect(existsSync(join(POINTS_DIR, wav))).toBe(true)
+  it('maps every updated instruction to a WAV with the exact same filename stem', () => {
+    for (const [route, pin] of [[1, 23], [1, 24], [3, 13], [4, 7], [4, 8], [4, 9]] as const) {
+      const row = pins.find((item) => item.route === route && item.pin === pin)!
+      const url = resolvePinAudioUrl(`route-${route}`, mk(row.instruction))
+      expect(url).not.toBeNull()
+      const filename = decodeAudioPath(url!).split('/').pop()!
+      expect(filename).toBe(`${row.instruction}.wav`)
+      expect(existsSync(join(POINTS_DIR, filename))).toBe(true)
+    }
   })
 
   it('preload list covers every mapped WAV and all files exist', () => {
