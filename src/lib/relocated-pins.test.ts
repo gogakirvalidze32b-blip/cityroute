@@ -126,7 +126,7 @@ describe('nine corrected Telavi pin coordinates', () => {
       { slug: 'route-3', order: 28, lat: 41.933897, lng: 45.478101, instruction: '300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-3', order: 29, lat: 41.933674, lng: 45.477944, instruction: 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ' },
       { slug: 'route-4', order: 10, lat: 41.918919, lng: 45.486113, instruction: 'გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ' },
-      { slug: 'route-4', order: 7, lat: 41.922976, lng: 45.479752, instruction: '500 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ' },
+      { slug: 'route-4', order: 7, lat: 41.922976, lng: 45.479752, instruction: '500 მეტრში, წრიული მოძრაობისას, გთხოვთ მოუხვიოთ მარცხნივ' },
       { slug: 'route-4', order: 8, lat: 41.921499, lng: 45.483228, instruction: '300 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ' },
       { slug: 'route-4', order: 9, lat: 41.920250, lng: 45.484497, instruction: 'მალე, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ' },
       { slug: 'route-4', order: 12, lat: 41.919399, lng: 45.499970, instruction: 'მალე, გთხოვთ მოუხვიოთ მარცხნივ' },
