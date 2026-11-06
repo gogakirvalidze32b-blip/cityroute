@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, Navigate, Route, Routes, useParams } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { ExamDriveSession } from '@/components/ExamDriveSession'
 import { selectableRoutes } from '@/data/selectable-routes'
@@ -60,6 +60,8 @@ function PreviewDemoHomePage() {
 
 function PreviewDemoRoutePage() {
   const { slug } = useParams<{ slug: string }>()
+  const location = useLocation()
+  const navigate = useNavigate()
   const route = useMemo(
     () => selectableRoutes(TELAVI_ROUTES_FALLBACK).find((item) => item.slug === slug),
     [slug],
@@ -67,6 +69,7 @@ function PreviewDemoRoutePage() {
   const [navPhase, setNavPhase] = useState<'preview' | 'active' | 'summary'>(() =>
     slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE) ? 'active' : 'preview',
   )
+  const [navigationBlocked, setNavigationBlocked] = useState(false)
   const resumeDriving = Boolean(
     slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE) && navPhase !== 'summary',
   )
@@ -83,9 +86,30 @@ function PreviewDemoRoutePage() {
 
   return (
     <div className={`route-page route-page--exam${driving ? ' route-page--driving' : ''}`}>
+      {(location.state as { activeExamNavigationBlocked?: boolean } | null)?.activeExamNavigationBlocked && (
+        <p role="alert" className="exam-navigation-blocked">
+          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
+        </p>
+      )}
+      {navigationBlocked && (
+        <p role="alert" className="exam-navigation-blocked">
+          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
+        </p>
+      )}
       {navPhase === 'preview' && !resumeDriving && (
         <div className="route-toolbar">
-          <Link to="/preview-demo" className="ghost">← მარშრუტები</Link>
+          <Link
+            to="/preview-demo"
+            className="ghost"
+            onClick={(event) => {
+              if (slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE)) {
+                event.preventDefault()
+                setNavigationBlocked(true)
+              }
+            }}
+          >
+            ← მარშრუტები
+          </Link>
           <div className="toolbar-title">
             <strong>{route.name_ka}</strong>
             {route.license_category && (
@@ -103,6 +127,7 @@ function PreviewDemoRoutePage() {
       <ExamDriveSession
         route={route}
         onPhaseChange={setNavPhase}
+        onReturnToMenu={() => navigate('/preview-demo', { replace: true })}
         persistenceScope={DEMO_SCOPE}
         offlineMaps
         planFeaturesOverride={DEMO_FEATURES}

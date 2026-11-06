@@ -13,6 +13,14 @@ export type ExamProgress = {
   nextPinId: string | null
 }
 
+export function normalizeRemovedRoutePinOrders(
+  routeSlug: string,
+  orders: Iterable<number>,
+): Set<number> {
+  const removedOrders = routeSlug === 'route-3' ? new Set([12]) : new Set<number>()
+  return new Set([...orders].filter((order) => !removedOrders.has(order)))
+}
+
 export function examProgress(
   pins: readonly ExamProgressPin[],
   handledIds: ReadonlySet<string>,
@@ -75,7 +83,7 @@ export function ordersForIds(
     }
     unknown.push(id)
   }
-  return { orders, unknown }
+  return { orders: normalizeRemovedRoutePinOrders(routeSlug, orders), unknown }
 }
 
 export function nextSortOrder(
@@ -162,7 +170,7 @@ export function savedHandledOrders(
     ) {
       return 'invalid'
     }
-    return new Set(saved.triggeredSortOrders)
+    return normalizeRemovedRoutePinOrders(routeSlug, saved.triggeredSortOrders)
   }
   const derived = ordersForIds(saved.triggeredPins, pins, routeSlug)
   if (derived.unknown.length > 0) return null
@@ -213,10 +221,19 @@ export function resolveExamResume(
   const resolution = resolvePinProgress(pins, orders)
   if (resolution.status !== 'resume') return resolution
   const { lastPassedSortOrder, nextSortOrder: resolvedNextSortOrder } = resolution
-  if (isOrder(saved.nextSortOrder) && saved.nextSortOrder !== resolvedNextSortOrder) {
+  const removedRoute3Pin12 = routeSlug === 'route-3' && !pins.some((pin) => pin.sort_order === 12)
+  const expectedNextSortOrder =
+    removedRoute3Pin12 && saved.nextSortOrder === 12 && resolvedNextSortOrder === 13
+      ? resolvedNextSortOrder
+      : saved.nextSortOrder
+  const expectedLastPassedSortOrder =
+    removedRoute3Pin12 && saved.lastPassedSortOrder === 12 && lastPassedSortOrder === 11
+      ? lastPassedSortOrder
+      : saved.lastPassedSortOrder
+  if (isOrder(expectedNextSortOrder) && expectedNextSortOrder !== resolvedNextSortOrder) {
     return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
   }
-  if (isOrder(saved.lastPassedSortOrder) && saved.lastPassedSortOrder !== lastPassedSortOrder) {
+  if (isOrder(expectedLastPassedSortOrder) && expectedLastPassedSortOrder !== lastPassedSortOrder) {
     return { status: 'error', message: RESUME_UNRESOLVED_MESSAGE }
   }
 

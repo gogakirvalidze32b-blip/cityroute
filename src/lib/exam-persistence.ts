@@ -4,6 +4,7 @@
 
 import type { ExamSession } from './exam-session'
 import type { LatLng } from './gps'
+import { normalizeRemovedRoutePinOrders } from './route-resume'
 
 export type SavedExamState = {
   routeId: string
@@ -140,6 +141,32 @@ function orderCount(state: SavedExamState): number {
  * Keep each route's richer progress in its own slot.
  */
 export function mergeExamSave(previous: SavedExamState | null, incoming: SavedExamState): SavedExamState {
+  if (incoming.routeSlug === 'route-3') {
+    incoming = {
+      ...incoming,
+      triggeredPins: incoming.triggeredPins.filter((pinId) => pinId !== 'p3-12'),
+      triggeredSortOrders: incoming.triggeredSortOrders
+        ? [...normalizeRemovedRoutePinOrders('route-3', incoming.triggeredSortOrders)]
+        : incoming.triggeredSortOrders,
+      pendingPinSortOrder: incoming.pendingPinSortOrder === 12 ? null : incoming.pendingPinSortOrder,
+      queuedPinSortOrders: incoming.queuedPinSortOrders?.filter((order) => order !== 12),
+      lastPassedSortOrder: incoming.lastPassedSortOrder === 12 ? 11 : incoming.lastPassedSortOrder,
+      nextSortOrder: incoming.nextSortOrder === 12 ? 13 : incoming.nextSortOrder,
+    }
+    if (previous?.routeSlug === 'route-3') {
+      previous = {
+        ...previous,
+        triggeredPins: previous.triggeredPins.filter((pinId) => pinId !== 'p3-12'),
+        triggeredSortOrders: previous.triggeredSortOrders
+          ? [...normalizeRemovedRoutePinOrders('route-3', previous.triggeredSortOrders)]
+          : previous.triggeredSortOrders,
+        pendingPinSortOrder: previous.pendingPinSortOrder === 12 ? null : previous.pendingPinSortOrder,
+        queuedPinSortOrders: previous.queuedPinSortOrders?.filter((order) => order !== 12),
+        lastPassedSortOrder: previous.lastPassedSortOrder === 12 ? 11 : previous.lastPassedSortOrder,
+        nextSortOrder: previous.nextSortOrder === 12 ? 13 : previous.nextSortOrder,
+      }
+    }
+  }
   if (!previous || !sameRoute(previous, incoming)) return incoming
   const prevCount = orderCount(previous)
   const nextCount = orderCount(incoming)
@@ -229,6 +256,33 @@ export function hasSavedExamForSlug(routeSlug: string, routeName?: string, scope
   if (!state) return false
   if (state.routeSlug) return state.routeSlug === routeSlug
   return !!routeName && state.routeName === routeName
+}
+
+/** Find the newest active session in the selected persistence scope. */
+export function findActiveExam(scope?: string): SavedExamState | null {
+  try {
+    const scopedPrefix = scope
+      ? `${SCOPE_STORAGE_PREFIX}${encodeURIComponent(scope)}:`
+      : null
+    const legacyKey = scopedStorageKey(STORAGE_KEY, scope)
+    const states: SavedExamState[] = []
+
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (!key) continue
+      const isScopedExamKey = scope
+        ? key === legacyKey || key.startsWith(`${scopedPrefix}${ROUTE_STORAGE_PREFIX}`)
+        : key === STORAGE_KEY || key.startsWith(ROUTE_STORAGE_PREFIX)
+      if (!isScopedExamKey) continue
+      const state = readSavedExam(key)
+      if (state) states.push(state)
+    }
+
+    return states.sort((first, second) => second.savedAt - first.savedAt)[0] ?? null
+  } catch (error) {
+    console.error('Failed to find active exam state:', error)
+    return null
+  }
 }
 
 /**

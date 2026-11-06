@@ -23,4 +23,17 @@ describe('resolveAutoStart', () => {
   it('does not restart a fully completed route at PIN 1', () => {
     expect(resolveAutoStart(pins, done(pins.length))).toEqual({ pin: null, aheadSuggestion: null })
   })
+
+  it('uses the current route position to resume the nearest PIN only when no progress exists', () => {
+    const pin7 = at(7)
+    const position = [pin7.lat, pin7.lng] as const
+    const result = resolveAutoStart(
+      pins,
+      new Set(),
+      position,
+      route.polyline,
+      'route-1',
+    )
+    expect(result.pin?.sort_order).toBe(7)
+  })
 })

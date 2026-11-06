@@ -11,14 +11,18 @@ describe('production street line for Telavi routes 1–4', () => {
   it.each([
     ['route-1', 35],
     ['route-2', 29],
-    ['route-3', 31],
+    ['route-3', 30],
     ['route-4', 32],
   ] as const)('%s local pins follow the street trace in pin order', (slug, count) => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
     const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
     const line = examRouteLine(slug, pins)
     expect(pins).toHaveLength(count)
-    expect(pins.map((pin) => pin.sort_order)).toEqual(Array.from({ length: count }, (_, index) => index + 1))
+    expect(pins.map((pin) => pin.sort_order)).toEqual(
+      slug === 'route-3'
+        ? [...Array.from({ length: 11 }, (_, index) => index + 1), ...Array.from({ length: 19 }, (_, index) => index + 13)]
+        : Array.from({ length: count }, (_, index) => index + 1),
+    )
     expect(line).toEqual(examRoadTrace(slug, pins))
     expect(line.length).toBeGreaterThan(pinRouteLine(pins).length)
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)

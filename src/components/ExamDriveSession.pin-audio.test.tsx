@@ -8,8 +8,20 @@ import { render, act, cleanup, fireEvent, screen } from '@testing-library/react'
 import { ExamDriveSession } from './ExamDriveSession'
 import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
 import { createExamSession } from '@/lib/exam-session'
+import { saveRoutePinProgress } from '@/lib/route-pin-progress'
 import { audioEngine } from '@/lib/audio'
-import { headingMatches } from '@/lib/gps'
+import { headingMatches, requestGpsOnce } from '@/lib/gps'
+import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+import route1Road from '@/data/route-1-road.json'
+import route2Road from '@/data/route-2-road.json'
+import route3Road from '@/data/route-3-road.json'
+import route4Road from '@/data/route-4-road.json'
+import {
+  prepareRouteGeometry,
+  projectPointToRoute,
+  type ActiveRouteId,
+  type PreparedRouteGeometry,
+} from '@/lib/pure-route-geometry'
 import type { RouteWithPins } from '@/types/database'
 import type { LatLng } from '@/lib/gps'
 
@@ -74,9 +86,9 @@ vi.mock('@/lib/gps', () => ({
 vi.mock('@/data/route-audio', () => ({
   enrichPinsWithLocalAudio: vi.fn((slug, pins) => pins),
   collectPreloadAudioUrls: vi.fn(() => []),
-  EXAM_START_AUDIO: '/audio/exam-start.mp3',
-  EXAM_START_TEXT: 'გამოცდა დაწყებულია',
-  EXAM_SUCCESS_AUDIO: '/audio/exam-success.mp3',
+  EXAM_START_AUDIO: '/audio/დაწყება.wav',
+  EXAM_START_TEXT: 'გთხოვთ დაიწყოთ',
+  EXAM_SUCCESS_AUDIO: '/audio/გილოცავთ.wav',
   EXAM_SUCCESS_TEXT: 'გილოცავთ',
   isStartPinAlreadyAnnounced: vi.fn(() => false),
 }))
@@ -153,21 +165,70 @@ const route = {
   pins: [pinAt(0, 200), pinAt(1, 400), pinAt(2, 600)],
 } as unknown as RouteWithPins
 
+const finishRoads: Record<'route-1' | 'route-2' | 'route-3' | 'route-4', LatLng[]> = {
+  'route-1': route1Road as LatLng[],
+  'route-2': route2Road as LatLng[],
+  'route-3': route3Road as LatLng[],
+  'route-4': route4Road as LatLng[],
+}
+
+function roadPointAt(geometry: PreparedRouteGeometry, chainageMeters: number): LatLng {
+  const bounded = Math.max(0, Math.min(geometry.totalLengthMeters, chainageMeters))
+  const segment = Math.max(
+    0,
+    geometry.cumulativeMeters.findIndex(
+      (value, index) =>
+        index < geometry.cumulativeMeters.length - 1 &&
+        value <= bounded &&
+        bounded <= geometry.cumulativeMeters[index + 1],
+    ),
+  )
+  const start = geometry.coordinates[segment]
+  const end = geometry.coordinates[segment + 1]
+  const fraction =
+    (bounded - geometry.cumulativeMeters[segment]) /
+    (geometry.cumulativeMeters[segment + 1] - geometry.cumulativeMeters[segment])
+  return [
+    start[0] + (end[0] - start[0]) * fraction,
+    start[1] + (end[1] - start[1]) * fraction,
+  ]
+}
+
 function fix(northM: number, over: Record<string, number | null> = {}) {
-  return { latitude: BASE_LAT + northM * LAT_PER_M, longitude: 45.4, accuracy: 5, heading: 0, speed: 10, timestamp: Date.now(), ...over }
+  return { latitude: BASE_LAT + northM * LAT_PER_M, longitude: 45.4, accuracy: 5, heading: 0, speed: 10, timestamp: gpsClock, ...over }
+}
+
+let gpsClock = Date.now()
+let lastGpsNorthM: number | null = null
+
+function advanceGpsClock(milliseconds: number) {
+  gpsClock += milliseconds
+  if (vi.isFakeTimers()) vi.setSystemTime(gpsClock)
 }
 
 async function emit(northM: number, over: Record<string, number | null> = {}) {
-  await act(async () => {
-    h.gpsCb!(fix(northM, over))
-    await Promise.resolve()
-  })
+  const emitAt = async (positionNorthM: number) => {
+    advanceGpsClock(Math.max(
+      1_000,
+      Math.ceil(Math.abs(positionNorthM - (lastGpsNorthM ?? positionNorthM)) / 20 * 1_000),
+    ))
+    await act(async () => {
+      h.gpsCb!(fix(positionNorthM, over))
+      await Promise.resolve()
+    })
+    lastGpsNorthM = positionNorthM
+  }
+  if (lastGpsNorthM === null) await emitAt(northM - 50)
+  await emitAt(northM)
 }
 
 describe('ExamDriveSession – PIN audio wiring', () => {
   beforeEach(async () => {
     localStorage.clear()
     vi.clearAllMocks()
+    gpsClock = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => gpsClock)
+    lastGpsNorthM = null
     vi.mocked(headingMatches).mockImplementation(() => true)
     h.gpsCb = null
     h.playStatus = 'played'
@@ -196,10 +257,211 @@ describe('ExamDriveSession – PIN audio wiring', () => {
   afterEach(() => {
     cleanup()
     vi.useRealTimers()
+    vi.mocked(requestGpsOnce).mockReset()
+    vi.restoreAllMocks()
     localStorage.clear()
   })
 
   const played = () => vi.mocked(audioEngine.playDetailed as (...a: unknown[]) => unknown).mock.calls.map((c) => c[1])
+
+  it('plays the start cue once on an allowed new-start PIN and not on GPS repeats', async () => {
+    cleanup()
+    localStorage.clear()
+    const startPosition = fix(200)
+    vi.mocked(requestGpsOnce).mockResolvedValue(startPosition as never)
+    render(<ExamDriveSession route={route} />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /გამოცდის დაწყება/ }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    const startCalls = vi.mocked(audioEngine.playDetailed).mock.calls.filter(
+      ([url]) => url === '/audio/დაწყება.wav',
+    )
+    expect(startCalls).toHaveLength(1)
+    expect(startCalls[0]?.[2]).toBe('გთხოვთ დაიწყოთ')
+
+    await emit(200)
+    await emit(200)
+    expect(vi.mocked(audioEngine.playDetailed).mock.calls.filter(
+      ([url]) => url === '/audio/დაწყება.wav',
+    )).toHaveLength(1)
+  })
+
+  it('does not play the start cue when a new session starts from an out-of-range PIN', async () => {
+    cleanup()
+    localStorage.clear()
+    const sixPinRoute = {
+      ...route,
+      polyline: [[BASE_LAT, 45.4], [BASE_LAT + 0.02, 45.4]] as LatLng[],
+      pins: Array.from({ length: 6 }, (_, index) => pinAt(index, (index + 1) * 200)),
+    } as RouteWithPins
+    vi.mocked(requestGpsOnce).mockResolvedValue(fix(1000) as never)
+    render(<ExamDriveSession route={sixPinRoute} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }), {
+      target: { value: '5' },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /გამოცდის დაწყება/ }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(vi.mocked(audioEngine.playDetailed).mock.calls.some(
+      ([url]) => url === '/audio/დაწყება.wav',
+    )).toBe(false)
+  })
+
+  it.each(['route-1', 'route-2', 'route-4'] as const)(
+    '%s auto-finishes on forward GPS entry to its final road segment, once and without a return',
+    async (slug) => {
+      cleanup()
+      localStorage.clear()
+      const selectedRoute = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const routeId = slug as ActiveRouteId
+      const geometry = prepareRouteGeometry(routeId, finishRoads[slug])
+      const finalPin = selectedRoute.pins.reduce((last, pin) =>
+        pin.sort_order > last.sort_order ? pin : last,
+      )
+      const handledOrders = selectedRoute.pins
+        .filter((pin) => pin.sort_order < finalPin.sort_order)
+        .map((pin) => pin.sort_order)
+      const savedPosition = roadPointAt(geometry, geometry.totalLengthMeters - 160)
+
+      saveRoutePinProgress(slug, handledOrders)
+      h.autoEnd = false
+      saveActiveExam({
+        routeId: selectedRoute.id,
+        routeSlug: slug,
+        routeName: selectedRoute.name_ka,
+        phase: 'active',
+        exam: createExamSession(selectedRoute.id, selectedRoute.name_ka),
+        userPos: savedPosition,
+        heading: 205,
+        speedKmh: 20,
+        elapsedMs: 1000,
+        triggeredPins: selectedRoute.pins
+          .filter((pin) => handledOrders.includes(pin.sort_order))
+          .map((pin) => pin.id),
+        savedAt: Date.now(),
+      })
+      render(<ExamDriveSession route={selectedRoute} />)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      let lastChainage = 0
+      const emitAt = async (position: LatLng, chainage: number) => {
+        advanceGpsClock(Math.max(1_000, Math.ceil(Math.abs(chainage - lastChainage) / 20 * 1_000)))
+        lastChainage = chainage
+        await act(async () => {
+          h.gpsCb!({
+            latitude: position[0],
+            longitude: position[1],
+            accuracy: 3,
+            heading: 288,
+            speed: 10,
+            timestamp: gpsClock,
+          })
+          await Promise.resolve()
+        })
+      }
+
+      for (let chainage = 0; chainage < geometry.totalLengthMeters - 30; chainage += 50) {
+        await emitAt(roadPointAt(geometry, chainage), chainage)
+      }
+      await emitAt(
+        roadPointAt(geometry, geometry.totalLengthMeters - 10),
+        geometry.totalLengthMeters - 10,
+      )
+      expect(played()).toContain(finalPin.id)
+      expect(vi.mocked(audioEngine.playDetailed).mock.calls.filter(
+        ([url]) => url === '/audio/გილოცავთ.wav',
+      )).toHaveLength(0)
+      expect(screen.queryByTestId('exam-summary')).toBeNull()
+
+      await act(async () => {
+        h.playOptions[0]?.onEnded?.()
+      })
+      h.autoEnd = true
+      await emitAt(roadPointAt(geometry, geometry.totalLengthMeters - 4), geometry.totalLengthMeters - 4)
+      await emitAt(roadPointAt(geometry, geometry.totalLengthMeters - 1), geometry.totalLengthMeters - 1)
+
+      const successCalls = vi.mocked(audioEngine.playDetailed).mock.calls.filter(
+        ([url]) => url === '/audio/გილოცავთ.wav',
+      )
+      expect(successCalls).toHaveLength(1)
+      expect(screen.getByTestId('exam-summary')).toBeTruthy()
+    },
+  )
+
+  it.each([
+    { slug: 'route-1', order: 32 },
+    { slug: 'route-2', order: 26 },
+    { slug: 'route-3', order: 28 },
+    { slug: 'route-4', order: 29 },
+  ] as const)(
+    '$slug PIN $order plays once in order within 10 m on its forward road trace',
+    async ({ slug, order }) => {
+      cleanup()
+      localStorage.clear()
+      const selectedRoute = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const geometry = prepareRouteGeometry(slug as ActiveRouteId, finishRoads[slug])
+      const target = selectedRoute.pins.find((pin) => pin.sort_order === order)!
+      expect([target.lat, target.lng]).toEqual([41.933707, 45.477971])
+      const targetProjection = projectPointToRoute(geometry, [target.lat, target.lng])
+      expect(targetProjection).not.toBeNull()
+      const targetChainage = targetProjection!.chainageMeters
+      const completedPins = selectedRoute.pins.filter((pin) => pin.sort_order < order)
+      const completedOrders = completedPins.map((pin) => pin.sort_order)
+      saveRoutePinProgress(slug, completedOrders)
+      saveActiveExam({
+        routeId: selectedRoute.id,
+        routeSlug: slug,
+        routeName: selectedRoute.name_ka,
+        phase: 'active',
+        exam: createExamSession(selectedRoute.id, selectedRoute.name_ka),
+        userPos: roadPointAt(geometry, targetChainage - 40),
+        heading: 288,
+        speedKmh: 20,
+        elapsedMs: 1000,
+        triggeredPins: completedPins.map((pin) => pin.id),
+        savedAt: Date.now(),
+      })
+
+      render(<ExamDriveSession route={selectedRoute} />)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      let previousChainage = targetChainage - 40
+      const emitAt = async (chainage: number) => {
+        advanceGpsClock(Math.max(1_000, Math.ceil((chainage - previousChainage) / 20 * 1_000)))
+        previousChainage = chainage
+        const position = roadPointAt(geometry, chainage)
+        await act(async () => {
+          h.gpsCb!({
+            latitude: position[0],
+            longitude: position[1],
+            accuracy: 3,
+            heading: 288,
+            speed: 10,
+            timestamp: gpsClock,
+          })
+          await Promise.resolve()
+        })
+      }
+
+      await emitAt(targetChainage - 25)
+      await emitAt(targetChainage - 15)
+      expect(played()).toEqual([])
+      await emitAt(targetChainage - 9)
+      expect(played()).toEqual([target.id])
+      await emitAt(targetChainage - 7)
+      expect(played().filter((id) => id === target.id)).toHaveLength(1)
+    },
+  )
 
   it('does not speak far from the PIN, speaks once at <= 20 m, never twice', async () => {
     await emit(100)
@@ -241,9 +503,17 @@ describe('ExamDriveSession – PIN audio wiring', () => {
 
   it('route 2 does not skip a pin when GPS jumps ahead', async () => {
     await emit(150) // approached PIN 1 (50 m)
-    await emit(392) // 8 m from PIN 2 while PIN 1 is still next
+    const emitRapidFix = async (northM: number, elapsedMs: number) => {
+      advanceGpsClock(elapsedMs)
+      await act(async () => {
+        h.gpsCb!(fix(northM))
+        await Promise.resolve()
+      })
+      lastGpsNorthM = northM
+    }
+    await emitRapidFix(392, 1_000) // GPS jump is rejected by the movement guard
     expect(played()).toEqual([])
-    await emit(182) // at PIN 1
+    await emitRapidFix(182, 5_000) // normal forward movement to PIN 1
     expect(played()).toEqual(['pin-1'])
   })
 
@@ -277,8 +547,8 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     h.busy = true
     await emit(190)
     expect(played()).toEqual([])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(1)
     h.busy = false
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500)
@@ -286,16 +556,16 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(played()).toEqual(['pin-1'])
   })
 
-  it('commits progress at GPS selection and queues audio independently until it ends', async () => {
+  it('keeps pending progress unhandled until audio ends', async () => {
     h.autoEnd = false
     await emit(182)
     await emit(183)
     await emit(184)
 
     expect(played()).toEqual(['pin-1'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(1)
 
     await act(async () => {
       h.playOptions[0]?.onEnded?.()
@@ -303,8 +573,9 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     await emit(382)
 
     expect(played()).toEqual(['pin-1', 'pin-2'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(3)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)
   })
 
   it('continues selecting sequential PINs when an audio completion callback never arrives', async () => {
@@ -315,15 +586,17 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     await emit(583)
 
     expect(played()).toEqual(['pin-1'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBeNull()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(1)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.queuedPinSortOrders).toEqual([2, 3])
 
     await act(async () => {
       h.playOptions[0]?.onEnded?.()
     })
     expect(played()).toEqual(['pin-1', 'pin-2'])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(2)
   })
 
   it('advances the audio queue after the watchdog and ignores the late callback', async () => {
@@ -488,8 +761,8 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     vi.useFakeTimers()
     h.playStatus = 'busy'
     await emit(182)
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(1)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
 
     h.playStatus = 'played'
@@ -503,6 +776,9 @@ describe('ExamDriveSession – PIN audio wiring', () => {
 
 describe('ExamDriveSession – pin list refresh must not cut voice', () => {
   beforeEach(() => {
+    gpsClock = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => gpsClock)
+    lastGpsNorthM = null
     h.playOptions = []
     h.autoEnd = false
   })
@@ -511,6 +787,9 @@ describe('ExamDriveSession – pin list refresh must not cut voice', () => {
     cleanup()
     localStorage.clear()
     h.playOptions = []
+    vi.mocked(requestGpsOnce).mockReset()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('does not call stopAll when only the pins array identity changes', async () => {

@@ -10,6 +10,20 @@
 
 /** Voice starts when the driver is this close (m) to the next PIN. (was 5 m) */
 export const AUDIO_TRIGGER_DISTANCE_M = 20
+const REDUCED_AUDIO_TRIGGER_DISTANCE_M = 10
+
+const REDUCED_AUDIO_TRIGGER_PIN_ORDERS: Readonly<Record<string, number>> = {
+  'route-1': 32,
+  'route-2': 26,
+  'route-3': 28,
+  'route-4': 29,
+}
+
+export function pinAudioTriggerDistanceMeters(route: string, sortOrder: number): number {
+  return REDUCED_AUDIO_TRIGGER_PIN_ORDERS[route] === sortOrder
+    ? REDUCED_AUDIO_TRIGGER_DISTANCE_M
+    : AUDIO_TRIGGER_DISTANCE_M
+}
 
 /** Heading tolerance (°) used ONLY for audio. (was 55°) Map/nav keep gps.ts default. */
 export const AUDIO_HEADING_TOLERANCE_DEG = 90
@@ -43,11 +57,115 @@ export const AUDIO_SEGMENT_NEAR_M = 25
 /** Maximum implied speed between two fixes (m/s, 144 km/h); above it the movement is a GPS jump. */
 export const AUDIO_SEGMENT_MAX_SPEED_MPS = 40
 
-/** Route 3's later #12 pass begins at this point on its active street trace. */
-export const ROUTE3_PIN12_AFTER_ROAD_U = 256
+export type RoundaboutPinRoute = 'route-1' | 'route-2' | 'route-3' | 'route-4'
+export type RoundaboutGatePhase = 'blocked' | 'approached' | 'departed' | 'returned'
 
-export function canTriggerRoute3Pin12(roadProgressU: number | null): boolean {
-  return roadProgressU !== null && roadProgressU >= ROUTE3_PIN12_AFTER_ROAD_U
+export interface RoundaboutGateTarget {
+  route: RoundaboutPinRoute
+  sortOrder: number
+  lat: number
+  lng: number
+}
+
+export interface RoundaboutReturnGateState {
+  route: RoundaboutPinRoute
+  targetSortOrder: number
+  phase: RoundaboutGatePhase
+}
+
+export interface RoundaboutReturnGateInput {
+  route: RoundaboutPinRoute
+  sortOrder: number
+  lat: number
+  lng: number
+  currentChainageMeters: number
+  targetChainageMeters: number
+  currentCrossTrackMeters: number
+  targetCrossTrackMeters: number
+}
+
+export const ROUNDABOUT_TARGETS: readonly RoundaboutGateTarget[] = []
+
+const ROUNDABOUT_APPROACH_M = 22
+const ROUNDABOUT_DEPARTURE_M = 250
+const ROUNDABOUT_MAX_CROSS_TRACK_M = 30
+
+function sameCoordinate(first: number, second: number): boolean {
+  return Math.abs(first - second) < 0.0000005
+}
+
+export function identifyRoundaboutGateTarget(
+  route: string,
+  sortOrder: number,
+  lat: number,
+  lng: number,
+): RoundaboutGateTarget | null {
+  return ROUNDABOUT_TARGETS.find((target) =>
+    target.route === route &&
+    target.sortOrder === sortOrder &&
+    sameCoordinate(target.lat, lat) &&
+    sameCoordinate(target.lng, lng),
+  ) ?? null
+}
+
+export function createRoundaboutReturnGate(
+  route: RoundaboutPinRoute,
+  sortOrder: number,
+): RoundaboutReturnGateState {
+  return { route, targetSortOrder: sortOrder, phase: 'blocked' }
+}
+
+export function updateRoundaboutReturnGate(
+  state: RoundaboutReturnGateState | null,
+  input: RoundaboutReturnGateInput,
+): RoundaboutReturnGateState {
+  const target = identifyRoundaboutGateTarget(input.route, input.sortOrder, input.lat, input.lng)
+  if (!target) {
+    return state?.route === input.route
+      ? state
+      : createRoundaboutReturnGate(input.route, input.sortOrder)
+  }
+  if (
+    !state ||
+    state.route !== target.route ||
+    state.targetSortOrder !== target.sortOrder
+  ) {
+    state = createRoundaboutReturnGate(target.route, target.sortOrder)
+  }
+  if (
+    !Number.isFinite(input.currentChainageMeters) ||
+    !Number.isFinite(input.targetChainageMeters) ||
+    input.currentCrossTrackMeters > ROUNDABOUT_MAX_CROSS_TRACK_M ||
+    input.targetCrossTrackMeters > ROUNDABOUT_MAX_CROSS_TRACK_M
+  ) {
+    return state
+  }
+
+  const targetDistance = Math.abs(input.currentChainageMeters - input.targetChainageMeters)
+  if (state.phase === 'blocked' && targetDistance <= ROUNDABOUT_APPROACH_M) {
+    return { ...state, phase: 'approached' }
+  }
+  if (state.phase === 'approached' && targetDistance >= ROUNDABOUT_DEPARTURE_M) {
+    return { ...state, phase: 'departed' }
+  }
+  if (state.phase === 'departed' && targetDistance <= ROUNDABOUT_APPROACH_M) {
+    return { ...state, phase: 'returned' }
+  }
+  return state
+}
+
+export function isRoundaboutReturnGateOpened(
+  route: string,
+  sortOrder: number,
+  lat: number,
+  lng: number,
+  state: RoundaboutReturnGateState | null,
+): boolean {
+  const target = identifyRoundaboutGateTarget(route, sortOrder, lat, lng)
+  if (!target) return true
+  return state?.route === target.route &&
+    state.targetSortOrder === target.sortOrder &&
+    state.phase === 'returned'
 }
 
 export interface TimedFix {

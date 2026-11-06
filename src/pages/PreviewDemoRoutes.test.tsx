@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from '@/App'
+import { createExamSession } from '@/lib/exam-session'
+import { clearActiveExam, saveActiveExam } from '@/lib/exam-persistence'
+import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 
 const supabase = vi.hoisted(() => ({
   getSupabase: vi.fn(() => {
@@ -128,5 +131,41 @@ describe('isolated Preview Demo mode', () => {
     expect(supabase.getSupabase).not.toHaveBeenCalled()
     expect(externalFetch).not.toHaveBeenCalled()
     expect(externalWebSocket).not.toHaveBeenCalled()
+  })
+
+  it('restores an active demo route from refresh and blocks browser history navigation', async () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((candidate) => candidate.slug === 'route-1')!
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam: createExamSession(route.id, route.name_ka),
+      userPos: null,
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 0,
+      triggeredPins: [],
+      triggeredSortOrders: [],
+      savedAt: Date.now(),
+    }, {}, 'preview-demo-user')
+    window.history.replaceState({}, '', '/preview-demo/route/route-1')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(document.querySelector('.exam-session--active')).toBeTruthy()
+    })
+    expect(window.location.pathname).toBe('/preview-demo/route/route-1')
+
+    window.history.pushState({}, '', '/preview-demo')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe('/preview-demo/route/route-1')
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.')
+
+    clearActiveExam(route.id, route.slug, route.name_ka, 'preview-demo-user')
   })
 })

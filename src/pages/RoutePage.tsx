@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 
 import { ExamDriveSession } from '@/components/ExamDriveSession'
 
@@ -43,6 +43,8 @@ function CarFullscreenButton({ floating = false }: { floating?: boolean }) {
 
 export function RoutePage() {
   const { slug } = useParams<{ slug: string }>()
+  const location = useLocation()
+  const navigate = useNavigate()
   const { hasAccess, deviceBlocked } = useAuth()
   const { routes } = useRoutes()
   const route = useMemo(
@@ -53,6 +55,7 @@ export function RoutePage() {
   const [navPhase, setNavPhase] = useState<NavPhase>(() =>
     slug && hasSavedExamForSlug(slug, routeName) ? 'active' : 'preview',
   )
+  const [navigationBlocked, setNavigationBlocked] = useState(false)
 
   const resumeDriving = Boolean(slug && hasSavedExamForSlug(slug, routeName) && navPhase !== 'summary')
   const driving = navPhase === 'active' || resumeDriving
@@ -64,7 +67,7 @@ export function RoutePage() {
     }
   }, [slug, routeName, navPhase])
 
-  if (deviceBlocked || !hasAccess) return <Navigate to="/" replace />
+  if ((deviceBlocked || !hasAccess) && !resumeDriving) return <Navigate to="/" replace />
 
   if (!route) {
     return (
@@ -79,9 +82,28 @@ export function RoutePage() {
     <div
       className={`route-page route-page--exam${driving ? ' route-page--driving' : ''}${navPhase === 'summary' ? ' route-page--summary' : ''}`}
     >
+      {(location.state as { activeExamNavigationBlocked?: boolean } | null)?.activeExamNavigationBlocked && (
+        <p role="alert" className="exam-navigation-blocked">
+          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
+        </p>
+      )}
+      {navigationBlocked && (
+        <p role="alert" className="exam-navigation-blocked">
+          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
+        </p>
+      )}
       {navPhase === 'preview' && !resumeDriving && (
         <div className="route-toolbar">
-          <Link to="/" className="ghost">
+          <Link
+            to="/"
+            className="ghost"
+            onClick={(event) => {
+              if (slug && hasSavedExamForSlug(slug, routeName)) {
+                event.preventDefault()
+                setNavigationBlocked(true)
+              }
+            }}
+          >
             ← მარშრუტები
           </Link>
 
@@ -104,7 +126,11 @@ export function RoutePage() {
 
       {driving && <CarFullscreenButton floating />}
 
-      <ExamDriveSession route={route} onPhaseChange={setNavPhase} />
+      <ExamDriveSession
+        route={route}
+        onPhaseChange={setNavPhase}
+        onReturnToMenu={() => navigate('/', { replace: true })}
+      />
     </div>
   )
 }

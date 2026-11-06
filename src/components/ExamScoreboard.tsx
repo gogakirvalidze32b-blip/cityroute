@@ -69,16 +69,17 @@ export function ExamScoreboard({
 
       <div className="exam-hud__readout" role="group" aria-label={`დრო ${formatExamDuration(elapsedMs)}`}>
         <div className="exam-hud__time">{hudTime(elapsedMs)}</div>
-        <div className="exam-hud__meta">
-          {hasRpm && (
-            <span className="exam-hud__rpm" aria-label={`ბრუნვა ${Math.round(rpm)} წუთში`}>
-              <strong>{Math.round(rpm)}</strong> rpm
-            </span>
-          )}
-          <span className="exam-hud__speed" aria-label={`სიჩქარე ${Math.round(speedKmh)} კილომეტრი საათში`}>
-            <strong>{Math.round(speedKmh)}</strong> km/h
+      </div>
+
+      <div className="exam-hud__meta">
+        {hasRpm && (
+          <span className="exam-hud__rpm" aria-label={`ბრუნვა ${Math.round(rpm)} წუთში`}>
+            <strong>{Math.round(rpm)}</strong> rpm
           </span>
-        </div>
+        )}
+        <span className="exam-hud__speed" aria-label={`სიჩქარე ${Math.round(speedKmh)} კილომეტრი საათში`}>
+          <strong>{Math.round(speedKmh)}</strong> km/h
+        </span>
       </div>
 
       {showErrors && (

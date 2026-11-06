@@ -100,7 +100,7 @@ segment-level review before a speed can be added.
 | #30 | 41.930561, 45.476080 | No configured limit |
 | #31 | 41.932953, 45.477635 | No configured limit |
 | #32 | 41.933733, 45.477972 | No configured limit |
-| #33 | 41.932369, 45.477051 | No configured limit |
+| #33 | 41.931694, 45.476574 | No configured limit |
 | #34 | 41.931327, 45.475788 | No configured limit |
 | #35 | 41.931488, 45.475166 | No configured limit |
 
@@ -117,8 +117,8 @@ segment-level review before a speed can be added.
 | #7 | 41.930354, 45.502986 | 40 km/h (R2-2) |
 | #8 | 41.930205, 45.505555 | 40 km/h (R2-2) |
 | #9 | 41.929748, 45.506662 | No configured limit |
-| #10 | 41.924459, 45.503289 | No configured limit |
-| #11 | 41.923471, 45.502653 | No configured limit |
+| #10 | 41.923793, 45.502894 | No configured limit |
+| #11 | 41.922461, 45.501986 | No configured limit |
 | #12 | 41.920923, 45.500863 | 60 km/h (R2-3) |
 | #13 | 41.919502, 45.499362 | 50 km/h (R2-4) |
 | #14 | 41.918745, 45.492805 | 30 km/h (R2-5) |
@@ -134,7 +134,7 @@ segment-level review before a speed can be added.
 | #24 | 41.930561, 45.476080 | No configured limit |
 | #25 | 41.933312, 45.477867 | No configured limit |
 | #26 | 41.933177, 45.477598 | No configured limit |
-| #27 | 41.932369, 45.477051 | No configured limit |
+| #27 | 41.931694, 45.476574 | No configured limit |
 | #28 | 41.931327, 45.475788 | No configured limit |
 | #29 | 41.931488, 45.475166 | No configured limit |
 
@@ -170,7 +170,7 @@ segment-level review before a speed can be added.
 | #26 | 41.930561, 45.476080 | No configured limit |
 | #27 | 41.933312, 45.477867 | No configured limit |
 | #28 | 41.933177, 45.477598 | No configured limit |
-| #29 | 41.932369, 45.477051 | No configured limit |
+| #29 | 41.931694, 45.476574 | No configured limit |
 | #30 | 41.931327, 45.475788 | No configured limit |
 | #31 | 41.931488, 45.475166 | No configured limit |
 
@@ -207,7 +207,7 @@ segment-level review before a speed can be added.
 | #27 | 41.930561, 45.476080 | No configured limit |
 | #28 | 41.933312, 45.477867 | No configured limit |
 | #29 | 41.933177, 45.477598 | No configured limit |
-| #30 | 41.932369, 45.477051 | No configured limit |
+| #30 | 41.931694, 45.476574 | No configured limit |
 | #31 | 41.931327, 45.475788 | No configured limit |
 | #32 | 41.931488, 45.475166 | No configured limit |
 

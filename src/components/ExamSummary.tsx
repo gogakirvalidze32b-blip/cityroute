@@ -8,11 +8,22 @@ import {
 type Props = {
   summary: ExamSessionSummary
   onRestart: () => void
-  /** Mid-route stop kept progress — continue from the next unhandled PIN. */
+  onFinish?: () => void
   onContinue?: () => void
+  onReturnToMenu?: () => void
+  finalized?: boolean
+  error?: string | null
 }
 
-export function ExamSummary({ summary, onRestart, onContinue }: Props) {
+export function ExamSummary({
+  summary,
+  onRestart,
+  onFinish,
+  onContinue,
+  onReturnToMenu,
+  finalized = false,
+  error,
+}: Props) {
   const lines = examSummaryLines(summary)
   const failed = summary.failedMinor || summary.severeTotal > 0
 
@@ -29,7 +40,7 @@ export function ExamSummary({ summary, onRestart, onContinue }: Props) {
             {failed ? '!' : '✓'}
           </span>
           <div>
-            <h2 id="exam-summary-title">გამოცდა დასრულებულია</h2>
+            <h2 id="exam-summary-title">{finalized ? 'გამოცდა დასრულებულია' : 'გამოცდა შეჩერებულია'}</h2>
             <p className="exam-summary__route">{summary.routeName}</p>
           </div>
         </header>
@@ -50,6 +61,11 @@ export function ExamSummary({ summary, onRestart, onContinue }: Props) {
             {summary.severeTotal > 0 && <em>ჩაჭრა</em>}
           </div>
         </div>
+        {summary.passedPinOrders && (
+          <p>გავლილი PIN-ები: {summary.passedPinOrders.length}</p>
+        )}
+
+        {error && <p role="alert" className="error-text">{error}</p>}
 
         {lines.length > 0 ? (
           <>
@@ -82,10 +98,32 @@ export function ExamSummary({ summary, onRestart, onContinue }: Props) {
               გაგრძელება
             </button>
           )}
-          <button type="button" className="exam-summary__action exam-summary__action--primary" onClick={onRestart}>
-            თავიდან
-            <span aria-hidden="true">→</span>
-          </button>
+          {finalized ? (
+            <>
+              {onReturnToMenu && (
+                <button
+                  type="button"
+                  className="exam-summary__action exam-summary__action--secondary"
+                  onClick={onReturnToMenu}
+                >
+                  მარშრუტების არჩევა
+                </button>
+              )}
+              <button type="button" className="exam-summary__action exam-summary__action--primary" onClick={onRestart}>
+                ახალი გამოცდა
+                <span aria-hidden="true">→</span>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="exam-summary__action exam-summary__action--primary"
+              onClick={onFinish}
+            >
+              დასრულება
+              <span aria-hidden="true">→</span>
+            </button>
+          )}
         </div>
       </section>
     </div>

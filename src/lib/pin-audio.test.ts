@@ -4,18 +4,19 @@ import {
   AUDIO_TRIGGER_DISTANCE_M,
   audioHeadingOk,
   decidePinAudio,
+  pinAudioTriggerDistanceMeters,
   recordSegmentApproach,
   segmentApproachMeters,
   AUDIO_SEGMENT_MAX_GAP_MS,
   AUDIO_SEGMENT_MAX_LENGTH_M,
   AUDIO_SEGMENT_MAX_SPEED_MPS,
   AUDIO_SEGMENT_NEAR_M,
-  ROUTE3_PIN12_AFTER_ROAD_U,
-  canTriggerRoute3Pin12,
+  ROUNDABOUT_TARGETS,
+  identifyRoundaboutGateTarget,
+  isRoundaboutReturnGateOpened,
   type PinAudioDecision,
   type TimedFix,
 } from './pin-audio.ts'
-import route3Road from '@/data/route-3-road.json'
 import { distanceToPinMeters } from '@/lib/gps'
 
 type Fix = { dists: number[]; ok?: boolean[] }
@@ -50,25 +51,6 @@ describe('PinAudio', () => {
   it('audio constants: 20 m trigger, 90 heading tolerance', () => {
     expect(AUDIO_TRIGGER_DISTANCE_M).toBe(20)
     expect(AUDIO_HEADING_TOLERANCE_DEG).toBe(90)
-  })
-
-  describe('Route 3 PIN #12 roundabout pass gate', () => {
-    it('ignores the early overlapping trace pass and enables the later pass after #11', () => {
-      const pin12: [number, number] = [41.918243, 45.482661]
-      const earlyPass = (route3Road as [number, number][])
-        .slice(229, 232)
-        .some((point) => distanceToPinMeters(point, pin12) <= AUDIO_TRIGGER_DISTANCE_M)
-      const laterPass = (route3Road as [number, number][])
-        .slice(255, 258)
-        .some((point) => distanceToPinMeters(point, pin12) <= AUDIO_TRIGGER_DISTANCE_M)
-
-      expect(earlyPass).toBe(true)
-      expect(laterPass).toBe(true)
-      expect(ROUTE3_PIN12_AFTER_ROAD_U).toBe(256)
-      expect(canTriggerRoute3Pin12(255.99)).toBe(false)
-      expect(canTriggerRoute3Pin12(256)).toBe(true)
-      expect(canTriggerRoute3Pin12(null)).toBe(false)
-    })
   })
 
   it('plays the next PIN at 20 m, not at 25 m', () => {
@@ -171,6 +153,43 @@ describe('PinAudio', () => {
       }
       expect(r.played).toEqual(ids) // 'run ' + run
     }
+  })
+})
+
+describe('final 300 m right-turn PIN audio', () => {
+  const scenarios = [
+    { route: 'route-1' as const, sortOrder: 32, lat: 41.933707, lng: 45.477971 },
+    { route: 'route-2' as const, sortOrder: 26, lat: 41.933707, lng: 45.477971 },
+    { route: 'route-3' as const, sortOrder: 28, lat: 41.933707, lng: 45.477971 },
+    { route: 'route-4' as const, sortOrder: 29, lat: 41.933707, lng: 45.477971 },
+  ]
+
+  for (const scenario of scenarios) {
+    it(`${scenario.route} PIN ${scenario.sortOrder}: uses the new coordinate and has no return gate`, () => {
+      expect(identifyRoundaboutGateTarget(
+        scenario.route,
+        scenario.sortOrder,
+        scenario.lat,
+        scenario.lng,
+      )).toBeNull()
+      expect(isRoundaboutReturnGateOpened(
+        scenario.route,
+        scenario.sortOrder,
+        scenario.lat,
+        scenario.lng,
+        null,
+      )).toBe(true)
+      expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder)).toBe(10)
+      expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder - 1)).toBe(20)
+      expect(ROUNDABOUT_TARGETS.some(
+        (target) => target.route === scenario.route && target.sortOrder === scenario.sortOrder,
+      )).toBe(false)
+    })
+  }
+
+  it('keeps the normal PIN-audio trigger distance for other PINs', () => {
+    expect(pinAudioTriggerDistanceMeters('route-1', 31)).toBe(AUDIO_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(AUDIO_TRIGGER_DISTANCE_M)
   })
 })
 

@@ -1,4 +1,5 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import { AuthProvider } from '@/context/AuthContext'
 import { PlanGate } from '@/components/PlanGate'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
@@ -15,6 +16,23 @@ import { DebugLoginPage } from '@/pages/DebugLoginPage'
 import { SupportChatPage } from '@/pages/SupportChatPage'
 import { SupportAdminPage } from '@/pages/SupportAdminPage'
 import { PreviewDemoRoutes } from '@/pages/PreviewDemoRoutes'
+import { findActiveExam } from '@/lib/exam-persistence'
+import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+
+const DEMO_SCOPE = 'preview-demo-user'
+const ACTIVE_EXAM_EXIT_MESSAGE = 'გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.'
+
+function activeExamPath(routeSlug: string | undefined, routeId: string, routeName: string, demo: boolean) {
+  const route = TELAVI_ROUTES_FALLBACK.find(
+    (candidate) =>
+      candidate.slug === routeSlug ||
+      candidate.id === routeId ||
+      candidate.name_ka === routeName,
+  )
+  const slug = routeSlug ?? route?.slug
+  if (!slug) return null
+  return `${demo ? '/preview-demo/route' : '/route'}/${slug}`
+}
 import '@/styles/payment.css'
 import '@/styles/cr-scroll.css'
 
@@ -44,15 +62,68 @@ function ProductionRoutes() {
 }
 
 function AppContent() {
-  const { pathname } = useLocation()
-  if (pathname === '/preview-demo' || pathname.startsWith('/preview-demo/')) {
-    return <PreviewDemoRoutes />
+  const location = useLocation()
+  const navigate = useNavigate()
+  const demo = location.pathname === '/preview-demo' || location.pathname.startsWith('/preview-demo/')
+  const scope = demo ? DEMO_SCOPE : undefined
+  const activeExam = findActiveExam(scope)
+  const resumePath = activeExam
+    ? activeExamPath(activeExam.routeSlug, activeExam.routeId, activeExam.routeName, demo)
+    : null
+  const [navigationBlocked, setNavigationBlocked] = useState(false)
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const currentPathIsDemo =
+        window.location.pathname === '/preview-demo' || window.location.pathname.startsWith('/preview-demo/')
+      const saved = findActiveExam(currentPathIsDemo ? DEMO_SCOPE : undefined)
+      if (!saved) {
+        setNavigationBlocked(false)
+        return
+      }
+      const target = activeExamPath(
+        saved.routeSlug,
+        saved.routeId,
+        saved.routeName,
+        currentPathIsDemo,
+      )
+      if (!target) return
+      setNavigationBlocked(true)
+      navigate(target, {
+        replace: true,
+        state: { activeExamNavigationBlocked: true },
+      })
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [navigate])
+
+  if (resumePath && location.pathname !== resumePath) {
+    return (
+      <Navigate
+        to={resumePath}
+        replace
+        state={{ activeExamNavigationBlocked: true }}
+      />
+    )
   }
 
   return (
-    <AuthProvider>
-      <ProductionRoutes />
-    </AuthProvider>
+    <>
+      {navigationBlocked && activeExam && (
+        <p role="alert" className="exam-navigation-blocked">
+          {ACTIVE_EXAM_EXIT_MESSAGE}
+        </p>
+      )}
+      {demo ? (
+        <PreviewDemoRoutes />
+      ) : (
+        <AuthProvider>
+          <ProductionRoutes />
+        </AuthProvider>
+      )}
+    </>
   )
 }
 

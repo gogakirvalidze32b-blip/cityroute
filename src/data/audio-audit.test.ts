@@ -33,18 +33,19 @@ const decodeAudioPath = (url: string) => decodeURIComponent(url)
 
 const norm = (s: string) => normalizeInstruction(s.replace(/\.wav$/, ''))
 
-describe('FINAL audio audit: 127 PINs', () => {
+describe('FINAL audio audit: 126 active PINs', () => {
   const files = readdirSync(POINTS_DIR).filter((f) => f.endsWith('.wav'))
   const byNorm = new Map(files.map((f) => [norm(f), f]))
 
-  it('has 127 PINs (R1 35, R2 29, R3 31, R4 32)', () => {
-    expect(pins.length).toBe(127)
-    for (const [r, n] of [[1, 35], [2, 29], [3, 31], [4, 32]]) {
+  it('has 126 active PINs (R1 35, R2 29, R3 30, R4 32)', () => {
+    expect(pins.length).toBe(126)
+    for (const [r, n] of [[1, 35], [2, 29], [3, 30], [4, 32]]) {
       expect(pins.filter((p) => p.route === r).length).toBe(n)
     }
+    expect(pins.some((pin) => pin.route === 3 && pin.pin === 12)).toBe(false)
   })
 
-  it('every PIN maps to the expected, existing WAV (127/127 MAPPED, 0 MISSING, 0 AMBIGUOUS)', () => {
+  it('every PIN maps to the expected, existing WAV (126/126 MAPPED, 0 MISSING, 0 AMBIGUOUS)', () => {
     let mapped = 0
     const problems: string[] = []
     for (const p of pins) {
@@ -65,7 +66,7 @@ describe('FINAL audio audit: 127 PINs', () => {
       else mapped++
     }
     expect(problems).toEqual([])
-    expect(mapped).toBe(127)
+    expect(mapped).toBe(126)
   })
 
   it('R1 #18 uses the exact "left then right" WAV (never the reversed order)', () => {

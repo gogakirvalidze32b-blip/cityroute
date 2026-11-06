@@ -12,14 +12,13 @@ const MOVED_PINS: Array<[[number, number], [number, number]]> = [
   [[41.917267, 45.475761], [41.91745, 45.475199]],
   [[41.920189, 45.470198], [41.920288, 45.470219]],
   [[41.929098, 45.475144], [41.92918, 45.475192]],
-  [[41.933977, 45.478151], [41.933897, 45.478101]],
 ]
 
 function sameCoordinate(left: number, right: number) {
   return Math.abs(left - right) < 1e-7
 }
 
-/** Rewrite only the nine corrected pin positions. Order, text, and audio stay unchanged. */
+/** Rewrite only the eight corrected pin positions. Order, text, and audio stay unchanged. */
 export function applyRelocatedPin<T extends { pins: Array<{ lat: number; lng: number }> }>(routes: T[]): T[] {
   return routes.map((route) => ({
     ...route,

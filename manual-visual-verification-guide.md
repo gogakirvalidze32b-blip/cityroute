@@ -293,9 +293,11 @@ For each PIN below, open the satellite imagery link and verify lateral position:
 
 ## PIN #31
 **Instruction:** მალე, გთხოვთ მოუხვიოთ მარჯვნივ  
-**Current:** [41.932369, 45.477051]  
-**Google Maps:** https://www.google.com/maps/@41.932369,45.477051,100m/data=!3m1!1e3  
-**OSM:** https://www.openstreetmap.org/?mlat=41.932369&mlon=45.477051&zoom=19&layers=S  
+**Current:** [41.931694, 45.476574]
+
+**Google Maps:** https://www.google.com/maps/@41.931694,45.476574,100m/data=!3m1!1e3
+
+**OSM:** https://www.openstreetmap.org/?mlat=41.931694&mlon=45.476574&zoom=19&layers=S
 **Status:** PENDING
 
 ---

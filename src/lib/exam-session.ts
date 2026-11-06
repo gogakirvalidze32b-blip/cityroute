@@ -13,6 +13,7 @@ export type ExamSessionSummary = {
   severeTotal: number
   failedMinor: boolean
   counts: ErrorCounts
+  passedPinOrders?: number[]
 }
 
 function emptyCounts(): ErrorCounts {
