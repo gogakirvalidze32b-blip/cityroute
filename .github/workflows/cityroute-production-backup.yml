@@ -95,6 +95,8 @@ jobs:
 
           try:
               url = urlsplit(os.environ["SUPABASE_DB_URL"])
+              query_params = parse_qsl(url.query, keep_blank_values=True)
+              sslmode_values = [value for key, value in query_params if key == "sslmode"]
               valid = (
                   url.scheme in ("postgres", "postgresql")
                   and url.hostname == "aws-1-eu-central-1.pooler.supabase.com"
@@ -102,8 +104,9 @@ jobs:
                   and unquote(url.username or "") == "postgres.tuylbbdhvfcobxynwtnt"
                   and url.path == "/postgres"
                   and url.password is None
-                  and not any(key.lower() == "password" for key, _ in parse_qsl(url.query))
-                  and "sslmode=require" in url.query
+                  and not any(key.lower() == "password" for key, _ in query_params)
+                  and len(sslmode_values) == 1
+                  and sslmode_values[0] == "require"
               )
           except ValueError:
               valid = False
