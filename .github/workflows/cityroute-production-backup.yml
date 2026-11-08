@@ -1,0 +1,220 @@
+# PostgreSQL CLI dumps only; this is not a complete Supabase project backup.
+# The three independent dumps are not a single consistent snapshot. Pause
+# Production writes before dispatching and keep them paused until completion.
+#
+# Create the age identity locally with:
+#   age-keygen -o "$HOME/.config/age/cityroute-backup-identity.txt"
+# Set the printed public recipient as the GitHub Actions variable AGE_RECIPIENT.
+# Never upload or store the private identity in GitHub.
+# Before dispatch, derive the recipient locally and compare it character-for-
+# character with the GitHub variable:
+#   age-keygen -y "$HOME/.config/age/cityroute-backup-identity.txt"
+# On Windows PowerShell, the equivalent check is:
+#   $identity = "$env:USERPROFILE\.config\age\cityroute-backup-identity.txt"
+#   age-keygen -y $identity
+# After downloading the artifact, decrypt it locally with:
+#   age --decrypt -i "$HOME/.config/age/cityroute-backup-identity.txt" \
+#     -o cityroute-production-backup.tar.gz backup.tar.gz.age
+#   tar -xzf cityroute-production-backup.tar.gz
+#   sha256sum --check SHA256SUMS.txt
+# On Windows, use age.exe with the same --decrypt/-i/-o arguments, then compare
+# each Get-FileHash -Algorithm SHA256 result with SHA256SUMS.txt.
+name: CityRoute Production PostgreSQL CLI dumps (not a full Supabase backup)
+
+on:
+  workflow_dispatch:
+    inputs:
+      production_writes_paused:
+        description: Confirm Production writes are paused and will remain paused through all three dumps.
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cityroute-production-database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Require Production write pause confirmation
+        shell: bash
+        env:
+          PRODUCTION_WRITES_PAUSED: ${{ inputs.production_writes_paused }}
+        run: |
+          set -euo pipefail
+          if [[ "$PRODUCTION_WRITES_PAUSED" != "true" ]]; then
+            echo "::error::Pause Production writes, then dispatch again and confirm the required input."
+            exit 1
+          fi
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.122.0
+
+      - name: Install age
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+
+      - name: Verify tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(supabase --version)" = "2.122.0"
+          docker version --format '{{.Server.Version}}' >/dev/null
+          age --version >/dev/null
+
+      - name: Dump and encrypt Production database
+        id: backup
+        shell: bash
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+
+          : "${SUPABASE_DB_URL:?Missing SUPABASE_DB_URL secret}"
+          : "${SUPABASE_DB_PASSWORD:?Missing SUPABASE_DB_PASSWORD secret}"
+          : "${AGE_RECIPIENT:?Missing AGE_RECIPIENT repository variable}"
+
+          python3 - <<'PY'
+          import os
+          import sys
+          from urllib.parse import unquote, urlsplit
+
+          try:
+              url = urlsplit(os.environ["SUPABASE_DB_URL"])
+              valid = (
+                  url.scheme in ("postgres", "postgresql")
+                  and url.hostname == "aws-1-eu-central-1.pooler.supabase.com"
+                  and url.port == 5432
+                  and unquote(url.username or "") == "postgres.tuylbbdhvfcobxynwtnt"
+                  and url.path == "/postgres"
+                  and url.password is None
+                  and "sslmode=require" in url.query
+              )
+          except ValueError:
+              valid = False
+
+          if not valid:
+              sys.exit("SUPABASE_DB_URL does not match the expected Production pooler endpoint.")
+          PY
+
+          if [[ ! "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]]; then
+            echo "::error::AGE_RECIPIENT is not a valid age public recipient."
+            exit 1
+          fi
+
+          work_dir="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID"
+          archive="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID.tar.gz"
+          encrypted_archive="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID.tar.gz.age"
+          mkdir -m 700 "$work_dir"
+
+          cleanup() {
+            rm -rf "$work_dir"
+            rm -f "$archive"
+          }
+          trap cleanup EXIT
+
+          dump_args=(--db-url "$SUPABASE_DB_URL" --password "$SUPABASE_DB_PASSWORD")
+
+          if ! supabase db dump "${dump_args[@]}" \
+            --file "$work_dir/roles.sql" --role-only \
+            >"$work_dir/roles.log" 2>&1; then
+            echo "::error::roles.sql dump failed; CLI output was suppressed."
+            exit 1
+          fi
+
+          if ! supabase db dump "${dump_args[@]}" \
+            --file "$work_dir/schema.sql" \
+            >"$work_dir/schema.log" 2>&1; then
+            echo "::error::schema.sql dump failed; CLI output was suppressed."
+            exit 1
+          fi
+
+          if ! supabase db dump "${dump_args[@]}" \
+            --file "$work_dir/data.sql" --data-only --use-copy \
+            --exclude "storage.buckets_vectors" \
+            --exclude "storage.vector_indexes" \
+            >"$work_dir/data.log" 2>&1; then
+            echo "::error::data.sql dump failed; CLI output was suppressed."
+            exit 1
+          fi
+
+          for name in roles.sql schema.sql data.sql; do
+            if [[ ! -s "$work_dir/$name" ]]; then
+              echo "::error::$name is missing or empty."
+              exit 1
+            fi
+          done
+
+          (
+            cd "$work_dir"
+            sha256sum roles.sql schema.sql data.sql > SHA256SUMS.txt
+            sha256sum --check SHA256SUMS.txt
+            tar -czf "$archive" roles.sql schema.sql data.sql SHA256SUMS.txt
+          )
+          tar -tzf "$archive" >/dev/null
+
+          age --recipient "$AGE_RECIPIENT" \
+            --output "$encrypted_archive" "$archive"
+          if [[ ! -s "$encrypted_archive" ]]; then
+            echo "::error::Encrypted backup archive is missing or empty."
+            exit 1
+          fi
+
+          for name in roles schema data; do
+            file="$work_dir/$name.sql"
+            echo "${name}_size=$(stat -c '%s' "$file")" >> "$GITHUB_OUTPUT"
+            echo "${name}_sha256=$(sha256sum "$file" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          done
+          echo "archive_path=$encrypted_archive" >> "$GITHUB_OUTPUT"
+          echo "archive_size=$(stat -c '%s' "$encrypted_archive")" >> "$GITHUB_OUTPUT"
+          echo "archive_sha256=$(sha256sum "$encrypted_archive" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "This artifact contains PostgreSQL CLI dumps only; it is not a complete Supabase project backup."
+            echo "The roles, schema, and data dumps were taken in separate runs and are not a single consistent snapshot."
+            echo "Compare AGE_RECIPIENT character-for-character with the local age-keygen -y output; never upload the private identity."
+            echo "After downloading, decrypt with the matching private identity and verify SHA256SUMS.txt locally."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: cityroute-production-backup-${{ github.run_id }}
+          path: ${{ steps.backup.outputs.archive_path }}
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Report sizes and SHA-256 hashes
+        shell: bash
+        env:
+          ROLES_SIZE: ${{ steps.backup.outputs.roles_size }}
+          ROLES_SHA256: ${{ steps.backup.outputs.roles_sha256 }}
+          SCHEMA_SIZE: ${{ steps.backup.outputs.schema_size }}
+          SCHEMA_SHA256: ${{ steps.backup.outputs.schema_sha256 }}
+          DATA_SIZE: ${{ steps.backup.outputs.data_size }}
+          DATA_SHA256: ${{ steps.backup.outputs.data_sha256 }}
+          ARCHIVE_SIZE: ${{ steps.backup.outputs.archive_size }}
+          ARCHIVE_SHA256: ${{ steps.backup.outputs.archive_sha256 }}
+        run: |
+          {
+            echo "| File | Size (bytes) | SHA-256 |"
+            echo "|---|---:|---|"
+            echo "| roles.sql | $ROLES_SIZE | $ROLES_SHA256 |"
+            echo "| schema.sql | $SCHEMA_SIZE | $SCHEMA_SHA256 |"
+            echo "| data.sql | $DATA_SIZE | $DATA_SHA256 |"
+            echo "| Encrypted archive | $ARCHIVE_SIZE | $ARCHIVE_SHA256 |"
+          } >> "$GITHUB_STEP_SUMMARY"
