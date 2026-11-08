@@ -127,19 +127,74 @@ jobs:
           }
           trap cleanup EXIT
 
+          report_cli_failure() {
+            local dump_name="$1"
+            local log_file="$2"
+            echo "::error::$dump_name dump failed. Sanitized Supabase CLI output:"
+            python3 - "$log_file" <<'PY'
+          import os
+          import re
+          import sys
+          from urllib.parse import quote, quote_plus
+
+          log_path = sys.argv[1]
+          try:
+              with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
+                  output = log_file.read()
+          except OSError:
+              print("CLI: <diagnostic log could not be read>")
+              sys.exit(0)
+
+          secret_values = set()
+          sensitive_name = re.compile(
+              r"(PASSWORD|TOKEN|SECRET|CREDENTIAL|PRIVATE_KEY|DB_URL|CONNECTION_STRING)",
+              re.IGNORECASE,
+          )
+          for name, value in os.environ.items():
+              if value and sensitive_name.search(name):
+                  secret_values.add(value)
+
+          for name in ("SUPABASE_DB_PASSWORD", "SUPABASE_DB_URL"):
+              value = os.environ.get(name, "")
+              if value:
+                  secret_values.add(quote(value, safe=""))
+                  secret_values.add(quote_plus(value, safe=""))
+
+          for secret in sorted(secret_values, key=len, reverse=True):
+              output = output.replace(secret, "[REDACTED]")
+
+          redactions = (
+              (re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb)://[^\s\"'<>]+"), "[REDACTED_CONNECTION_URL]"),
+              (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*"), "Bearer [REDACTED]"),
+              (re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sbp_[A-Za-z0-9_-]{20,})\b"), "[REDACTED_TOKEN]"),
+              (re.compile(r"(?i)\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"), "[REDACTED_JWT]"),
+              (re.compile(r"(?i)\bsb_secret_[A-Za-z0-9_-]+\b"), "[REDACTED_TOKEN]"),
+              (re.compile(r"(?i)\b(?:password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|secret|api[_-]?key|authorization)(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"), r"\1[REDACTED]"),
+          )
+          for pattern, replacement in redactions:
+              output = pattern.sub(replacement, output)
+
+          lines = output.splitlines()[-80:]
+          if not lines:
+              lines = ["<Supabase CLI returned no diagnostic output>"]
+          for line in lines:
+              print("CLI: " + line[:1000])
+          PY
+          }
+
           dump_args=(--db-url "$SUPABASE_DB_URL" --password "$SUPABASE_DB_PASSWORD")
 
           if ! supabase db dump "${dump_args[@]}" \
             --file "$work_dir/roles.sql" --role-only \
             >"$work_dir/roles.log" 2>&1; then
-            echo "::error::roles.sql dump failed; CLI output was suppressed."
+            report_cli_failure "roles.sql" "$work_dir/roles.log"
             exit 1
           fi
 
           if ! supabase db dump "${dump_args[@]}" \
             --file "$work_dir/schema.sql" \
             >"$work_dir/schema.log" 2>&1; then
-            echo "::error::schema.sql dump failed; CLI output was suppressed."
+            report_cli_failure "schema.sql" "$work_dir/schema.log"
             exit 1
           fi
 
@@ -148,7 +203,7 @@ jobs:
             --exclude "storage.buckets_vectors" \
             --exclude "storage.vector_indexes" \
             >"$work_dir/data.log" 2>&1; then
-            echo "::error::data.sql dump failed; CLI output was suppressed."
+            report_cli_failure "data.sql" "$work_dir/data.log"
             exit 1
           fi
 
