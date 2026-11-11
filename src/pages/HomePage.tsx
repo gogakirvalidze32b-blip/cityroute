@@ -11,6 +11,7 @@ import { useExamLayoutMode } from '@/hooks/useExamLayoutMode'
 import { useRoutes } from '@/hooks/useRoutes'
 import { planName } from '@/data/subscription-plans'
 import { selectableRoutes } from '@/data/selectable-routes'
+import { PREVIEW_DEMO_AVAILABLE } from '@/lib/preview-demo-feature'
 
 export function HomePage() {
   const { profile, entitlement, entitlementStatusUnavailable, hasAccess, deviceBlocked, signOut } = useAuth()
@@ -44,7 +45,7 @@ export function HomePage() {
       <div className="page center">
         <h1>მოწყობილობა დაბლოკილია</h1>
         <p>{deviceBlocked}</p>
-        <p className="muted">1 ანგარიში = მაქსიმუმ 2 მანქანა. მხარდაჭერასთან დაუკავშირდი მოწყობილობის გადატვირთვისთვის.</p>
+        <p className="muted">მოწყობილობების ზღვარი განისაზღვრება შეძენილი პაკეტით. თავისუფალი ადგილის გასათავისუფლებლად გამოდი სხვა მოწყობილობიდან.</p>
         <SupportButton />
         {signOutError && <p role="alert">{signOutError}</p>}
         <button type="button" onClick={() => void handleSignOut()}>
@@ -60,6 +61,15 @@ export function HomePage() {
     <div className={`page home-page home-page--${layoutMode}`}>
       <header className="home-header">
         <AppBrand />
+        {PREVIEW_DEMO_AVAILABLE && (
+          <Link
+            to="/preview-demo"
+            className="home-preview-demo-link"
+            data-testid="home-preview-demo"
+          >
+            DEMO · GPS ტესტი
+          </Link>
+        )}
       </header>
 
       <div className="route-list" data-testid="home-route-list">

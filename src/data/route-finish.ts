@@ -1,4 +1,5 @@
 import {
+  MAX_GPS_PASS_GAP_MS,
   projectPointToRoute,
   type PreparedRouteGeometry,
   type RouteMatchResult,
@@ -75,6 +76,7 @@ export function isRouteFinishGpsReady(input: RouteFinishGpsInput): boolean {
     !match.projection ||
     !match.nextState ||
     !previous ||
+    match.nextState.timestampMs - previous.timestampMs > MAX_GPS_PASS_GAP_MS ||
     match.direction !== 'forward' ||
     match.nextState.chainageMeters - previous.chainageMeters < 2 ||
     match.projection.crossTrackMeters > MAX_FINISH_CROSS_TRACK_METERS

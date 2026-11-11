@@ -5,6 +5,7 @@
 import type { ExamSession } from './exam-session'
 import type { LatLng } from './gps'
 import { normalizeRemovedRoutePinOrders } from './route-resume'
+import { getExamTabId } from './device'
 
 export type SavedExamState = {
   routeId: string
@@ -12,6 +13,13 @@ export type SavedExamState = {
   routeSlug?: string
   routeName: string
   phase: 'active'
+  userId?: string
+  deviceId?: string
+  tabId?: string
+  examSessionId?: string
+  examSessionVersion?: number
+  examSessionRevision?: number
+  examSessionDirty?: boolean
   startMode?: 'automatic' | 'manual'
   exam: ExamSession
   userPos: LatLng | null
@@ -28,6 +36,42 @@ export type SavedExamState = {
   lastPassedSortOrder?: number | null
   nextSortOrder?: number | null
   savedAt: number
+}
+
+export function reconcileRemoteExamProgress(
+  local: SavedExamState | null,
+  remoteProgress: SavedExamState | null,
+  remoteSessionId: string,
+  remoteVersion: number,
+): SavedExamState | null {
+  if (local?.examSessionId !== remoteSessionId) {
+    return remoteProgress ?? (local?.examSessionId ? null : local)
+  }
+  if (local.examSessionDirty) {
+    if (local.examSessionVersion === remoteVersion) return local
+    if (
+      remoteProgress &&
+      examProgressSignature(local) === examProgressSignature(remoteProgress)
+    ) {
+      return {
+        ...local,
+        examSessionVersion: remoteVersion,
+        examSessionDirty: false,
+      }
+    }
+    throw new Error('ლოკალური და სერვერული გამოცდის პროგრესი ერთმანეთს არ ემთხვევა; ავტომატური გადაწერა შეჩერდა.')
+  }
+  if (local.examSessionVersion !== undefined && local.examSessionVersion > remoteVersion) {
+    throw new Error('ლოკალური გამოცდის სესიის ვერსია სერვერის ვერსიაზე ახალია; ავტომატური გადაწერა შეჩერდა.')
+  }
+  if (
+    remoteProgress &&
+    local.examSessionVersion !== remoteVersion &&
+    (local.examSessionVersion === undefined || local.examSessionVersion < remoteVersion)
+  ) {
+    return remoteProgress
+  }
+  return local
 }
 
 const STORAGE_KEY = 'cityroute-active-exam'
@@ -47,17 +91,122 @@ function routeStorageKeys(routeId: string, routeSlug?: string, scope?: string): 
   )].map((key) => scopedStorageKey(key, scope))
 }
 
-function isSavedExamState(value: unknown): value is SavedExamState {
+export function isSavedExamState(value: unknown): value is SavedExamState {
   if (!value || typeof value !== 'object') return false
   const state = value as Partial<SavedExamState>
   return (
     typeof state.routeId === 'string' &&
     typeof state.routeName === 'string' &&
     state.phase === 'active' &&
+    typeof state.exam === 'object' &&
+    state.exam !== null &&
+    typeof state.exam.routeId === 'string' &&
+    typeof state.exam.routeName === 'string' &&
+    typeof state.exam.startedAt === 'number' &&
+    Number.isFinite(state.exam.startedAt) &&
+    typeof state.exam.counts === 'object' &&
+    state.exam.counts !== null &&
+    typeof state.exam.minorTotal === 'number' &&
+    typeof state.exam.severeTotal === 'number' &&
+    (state.userPos === null ||
+      (Array.isArray(state.userPos) &&
+        state.userPos.length === 2 &&
+        state.userPos.every((coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate)))) &&
+    typeof state.heading === 'number' &&
+    Number.isFinite(state.heading) &&
+    typeof state.speedKmh === 'number' &&
+    Number.isFinite(state.speedKmh) &&
+    typeof state.elapsedMs === 'number' &&
+    Number.isFinite(state.elapsedMs) &&
+    Array.isArray(state.triggeredPins) &&
+    state.triggeredPins.every((pinId) => typeof pinId === 'string') &&
     typeof state.savedAt === 'number' &&
     Number.isFinite(state.savedAt) &&
+    (!('userId' in state) || typeof state.userId === 'string') &&
+    (!('deviceId' in state) || typeof state.deviceId === 'string') &&
+    (!('tabId' in state) || typeof state.tabId === 'string') &&
+    (!('examSessionId' in state) || typeof state.examSessionId === 'string') &&
+    (!('examSessionVersion' in state) ||
+      (typeof state.examSessionVersion === 'number' &&
+        Number.isInteger(state.examSessionVersion) &&
+        state.examSessionVersion >= 1)) &&
+    (!('examSessionRevision' in state) ||
+      (typeof state.examSessionRevision === 'number' &&
+        Number.isInteger(state.examSessionRevision) &&
+        state.examSessionRevision >= 1)) &&
+    (!('examSessionDirty' in state) || typeof state.examSessionDirty === 'boolean') &&
     (!('startMode' in state) || state.startMode === 'automatic' || state.startMode === 'manual')
   )
+}
+
+export function applyRemoteExamSaveVersion(
+  current: SavedExamState | null,
+  completedRevision: number,
+  serverVersion: number,
+  completedSnapshot: SavedExamState,
+): SavedExamState | null {
+  if (
+    !current ||
+    current.examSessionRevision !== completedRevision ||
+    examProgressSignature(current) !== examProgressSignature(completedSnapshot)
+  ) return current
+  return {
+    ...current,
+    examSessionVersion: serverVersion,
+    examSessionDirty: false,
+  }
+}
+
+function examProgressSignature(state: SavedExamState): string {
+  const localOnlyFields = new Set([
+    'savedAt',
+    'examSessionVersion',
+    'examSessionRevision',
+    'examSessionDirty',
+  ])
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(state)
+        .filter(([key]) => !localOnlyFields.has(key))
+        .sort(([first], [second]) => first.localeCompare(second)),
+    ),
+  )
+}
+
+export function claimLegacyExamPersistenceScope(fromScope: string, toScope: string, tabId: string): void {
+  if (!fromScope || !toScope || fromScope === toScope) return
+  const claimKey = `${SCOPE_STORAGE_PREFIX}claimed:${encodeURIComponent(fromScope)}`
+  try {
+    if (localStorage.getItem(claimKey)) return
+    const fromPrefix = `${SCOPE_STORAGE_PREFIX}${encodeURIComponent(fromScope)}:`
+    const toPrefix = `${SCOPE_STORAGE_PREFIX}${encodeURIComponent(toScope)}:`
+    const keys: string[] = []
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key?.startsWith(fromPrefix)) keys.push(key)
+    }
+    for (const key of keys) {
+      const targetKey = `${toPrefix}${key.slice(fromPrefix.length)}`
+      if (localStorage.getItem(targetKey) !== null) continue
+      const raw = localStorage.getItem(key)
+      if (raw === null) continue
+      let value = raw
+      if (key.includes(`${ROUTE_STORAGE_PREFIX}`) || key.endsWith(`${STORAGE_KEY}`)) {
+        try {
+          const parsed: unknown = JSON.parse(raw)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            value = JSON.stringify({ ...parsed, tabId })
+          }
+        } catch {
+          value = raw
+        }
+      }
+      localStorage.setItem(targetKey, value)
+    }
+    localStorage.setItem(claimKey, tabId)
+  } catch (error) {
+    console.error('Failed to isolate the legacy exam persistence scope:', error)
+  }
 }
 
 function readSavedExam(storageKey = STORAGE_KEY): SavedExamState | null {
@@ -172,6 +321,17 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
   const nextCount = orderCount(incoming)
   const mergePendingAudio = (state: SavedExamState): SavedExamState => {
     let merged = state
+    if (!merged.userId && previous.userId) merged = { ...merged, userId: previous.userId }
+    if (!merged.deviceId && previous.deviceId) merged = { ...merged, deviceId: previous.deviceId }
+    if (!merged.examSessionId && previous.examSessionId) {
+      merged = { ...merged, examSessionId: previous.examSessionId }
+    }
+    if (
+      previous.examSessionVersion &&
+      (!merged.examSessionVersion || merged.examSessionVersion < previous.examSessionVersion)
+    ) {
+      merged = { ...merged, examSessionVersion: previous.examSessionVersion }
+    }
     if (!('pendingPinSortOrder' in incoming) && 'pendingPinSortOrder' in previous) {
       merged = { ...merged, pendingPinSortOrder: previous.pendingPinSortOrder }
     }
@@ -273,7 +433,12 @@ export function findActiveExam(scope?: string): SavedExamState | null {
       const isScopedExamKey = scope
         ? key === legacyKey || key.startsWith(`${scopedPrefix}${ROUTE_STORAGE_PREFIX}`)
         : key === STORAGE_KEY || key.startsWith(ROUTE_STORAGE_PREFIX)
-      if (!isScopedExamKey) continue
+      const isCurrentTabScopedKey =
+        !scope &&
+        key.startsWith(SCOPE_STORAGE_PREFIX) &&
+        key.includes(`${ROUTE_STORAGE_PREFIX}`) &&
+        readSavedExam(key)?.tabId === getExamTabId()
+      if (!isScopedExamKey && !isCurrentTabScopedKey) continue
       const state = readSavedExam(key)
       if (state) states.push(state)
     }

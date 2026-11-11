@@ -1,5 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { AuthProvider } from '@/context/AuthContext'
 import { PlanGate } from '@/components/PlanGate'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
@@ -15,12 +15,17 @@ import { RoutePage } from '@/pages/RoutePage'
 import { DebugLoginPage } from '@/pages/DebugLoginPage'
 import { SupportChatPage } from '@/pages/SupportChatPage'
 import { SupportAdminPage } from '@/pages/SupportAdminPage'
-import { PreviewDemoRoutes } from '@/pages/PreviewDemoRoutes'
+import { PREVIEW_DEMO_AVAILABLE } from '@/lib/preview-demo-feature'
 import { findActiveExam } from '@/lib/exam-persistence'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 
 const DEMO_SCOPE = 'preview-demo-user'
 const ACTIVE_EXAM_EXIT_MESSAGE = 'გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.'
+const PreviewDemoRoutes = lazy(() =>
+  import('@/pages/PreviewDemoRoutes').then((module) => ({
+    default: module.PreviewDemoRoutes,
+  })),
+)
 
 function activeExamPath(routeSlug: string | undefined, routeId: string, routeName: string, demo: boolean) {
   const route = TELAVI_ROUTES_FALLBACK.find(
@@ -64,13 +69,15 @@ function ProductionRoutes() {
 function AppContent() {
   const location = useLocation()
   const navigate = useNavigate()
-  const demo = location.pathname === '/preview-demo' || location.pathname.startsWith('/preview-demo/')
+  const [navigationBlocked, setNavigationBlocked] = useState(false)
+  const isDemoPath = location.pathname === '/preview-demo' || location.pathname.startsWith('/preview-demo/')
+  const demo = isDemoPath && PREVIEW_DEMO_AVAILABLE
+  if (isDemoPath && !PREVIEW_DEMO_AVAILABLE) return <Navigate to="/" replace />
   const scope = demo ? DEMO_SCOPE : undefined
   const activeExam = findActiveExam(scope)
   const resumePath = activeExam
     ? activeExamPath(activeExam.routeSlug, activeExam.routeId, activeExam.routeName, demo)
     : null
-  const [navigationBlocked, setNavigationBlocked] = useState(false)
 
   useEffect(() => {
     const handlePopState = () => {
@@ -117,7 +124,9 @@ function AppContent() {
         </p>
       )}
       {demo ? (
-        <PreviewDemoRoutes />
+        <Suspense fallback={<div className="page center" role="status">DEMO იტვირთება…</div>}>
+          <PreviewDemoRoutes />
+        </Suspense>
       ) : (
         <AuthProvider>
           <ProductionRoutes />

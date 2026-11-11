@@ -4,7 +4,10 @@ import { userEvent } from '@testing-library/user-event'
 import { ExamDriveSession } from './ExamDriveSession'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { audioEngine } from '@/lib/audio'
+import { examRoadTrace } from '@/lib/pin-route-line'
+import { prepareRouteGeometry, projectOrderedPointsToRoute, type ActiveRouteId, type PreparedRouteGeometry } from '@/lib/pure-route-geometry'
 import type { GpsPosition } from '@/lib/gps'
+import { saveRoutePinProgress } from '@/lib/route-pin-progress'
 import type { PinRow, RouteWithPins } from '@/types/database'
 
 vi.mock('@/context/AuthContext', () => ({
@@ -77,11 +80,79 @@ function remoteRoute(slug: string): RouteWithPins {
   return { ...route, id: '11111111-1111-4111-8111-111111111111', pins: route.pins.map((p) => ({ ...p, id: uuid(p.sort_order) })) }
 }
 const playDetailed = vi.mocked(audioEngine.playDetailed)
-const M_LAT = 110540
 const pinAt = (route: RouteWithPins, order: number) => route.pins.find((p) => p.sort_order === order)!
-const fixAt = (route: RouteWithPins, order: number, northM: number, t: number): GpsPosition => {
-  const p = pinAt(route, order)
-  return { lat: p.lat + northM / M_LAT, lng: p.lng, accuracy: 5, heading: 0, speed: 5, timestamp: t }
+const routeGeometryCache = new WeakMap<RouteWithPins, PreparedRouteGeometry>()
+function routeGeometry(route: RouteWithPins): PreparedRouteGeometry {
+  const cached = routeGeometryCache.get(route)
+  if (cached) return cached
+  const geometry = prepareRouteGeometry(
+    route.slug as ActiveRouteId,
+    examRoadTrace(route.slug, route.pins) ?? route.polyline,
+  )
+  routeGeometryCache.set(route, geometry)
+  return geometry
+}
+function pinChainage(route: RouteWithPins, order: number): number {
+  const projection = projectOrderedPointsToRoute(
+    routeGeometry(route),
+    route.pins
+      .filter((pin) => pin.sort_order <= order)
+      .sort((first, second) => first.sort_order - second.sort_order)
+      .map((pin) => [pin.lat, pin.lng] as const),
+  )
+  if (!projection) throw new Error(`Could not project route ${route.slug} through PIN ${order}`)
+  return projection.chainageMeters
+}
+function positionAt(route: RouteWithPins, chainageMeters: number) {
+  const geometry = routeGeometry(route)
+  const chainage = Math.max(0, Math.min(geometry.totalLengthMeters, chainageMeters))
+  let index = geometry.coordinates.length - 2
+  for (let candidate = 0; candidate < geometry.coordinates.length - 1; candidate += 1) {
+    if (
+      geometry.cumulativeMeters[candidate + 1] > geometry.cumulativeMeters[candidate] &&
+      geometry.cumulativeMeters[candidate + 1] >= chainage
+    ) {
+      index = candidate
+      break
+    }
+  }
+  const segmentLength =
+    geometry.cumulativeMeters[index + 1] - geometry.cumulativeMeters[index]
+  const fraction = segmentLength === 0
+    ? 0
+    : (chainage - geometry.cumulativeMeters[index]) / segmentLength
+  const start = geometry.coordinates[index]
+  const end = geometry.coordinates[index + 1]
+  const dLng = ((end[1] - start[1]) * Math.PI) / 180
+  const lat1 = (start[0] * Math.PI) / 180
+  const lat2 = (end[0] * Math.PI) / 180
+  const heading = (
+    (Math.atan2(
+      Math.sin(dLng) * Math.cos(lat2),
+      Math.cos(lat1) * Math.sin(lat2) -
+        Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng),
+    ) * 180) / Math.PI +
+    360
+  ) % 360
+  return {
+    lat: start[0] + (end[0] - start[0]) * fraction,
+    lng: start[1] + (end[1] - start[1]) * fraction,
+    heading,
+  }
+}
+const fixAtChainage = (
+  route: RouteWithPins,
+  order: number,
+  offsetMeters: number,
+  timestamp: number,
+): GpsPosition => {
+  const point = positionAt(route, pinChainage(route, order) + offsetMeters)
+  return {
+    ...point,
+    accuracy: 5,
+    speed: 5,
+    timestamp,
+  }
 }
 const playedOrders = (route: RouteWithPins) =>
   playDetailed.mock.calls.map(([, id]) => route.pins.find((p) => p.id === id)!.sort_order)
@@ -93,27 +164,36 @@ async function settle(ms = 20) {
   })
 }
 async function sendFix(pos: GpsPosition) {
-  await act(async () => {
-    gps.onFix!(pos)
-    await Promise.resolve()
+  const originalNow = Object.getOwnPropertyDescriptor(Date, 'now')
+  Object.defineProperty(Date, 'now', {
+    configurable: true,
+    writable: true,
+    value: () => pos.timestamp,
   })
-  await settle()
+  try {
+    await act(async () => {
+      gps.onFix!(pos)
+      await Promise.resolve()
+    })
+    await settle()
+  } finally {
+    if (originalNow) Object.defineProperty(Date, 'now', originalNow)
+  }
 }
-async function startAt(route: RouteWithPins, order: number) {
-  gps.once = fixAt(route, order, 0, Date.now())
+async function startAtPin3(route: RouteWithPins, offsetMeters = -20) {
+  saveRoutePinProgress(route.slug, [1, 2])
+  gps.once = fixAtChainage(route, 3, offsetMeters, Date.now())
   render(<ExamDriveSession route={route} />)
   await settle()
   await act(async () => {
     await userEvent.setup().click(screen.getByRole('button', { name: /გამოცდის დაწყება|გაგრძელება/ }))
   })
   await settle()
+  await sendFix(gps.once)
 }
 /** Plays pins 1 and 2 normally, so PIN 3 is the expected one. */
 async function reachPin3(route: RouteWithPins) {
-  await startAt(route, 1)
-  const t = Date.now()
-  await sendFix(fixAt(route, 1, 0, t))
-  await sendFix(fixAt(route, 2, 0, t + 1000))
+  await startAtPin3(route)
   expect(nextOrder()).toBe(3)
 }
 
@@ -141,15 +221,15 @@ describe('GPS gap: expected PIN passed between two fixes (component)', () => {
       await reachPin3(route)
       const before = playedOrders(route).length
       const t = Date.now() + 60000
-      await sendFix(fixAt(route, 3, -100, t))
+      await sendFix(fixAtChainage(route, 3, -15, t))
       expect(playedOrders(route)).toHaveLength(before)
-      await sendFix(fixAt(route, 3, 100, t + 8000))
+      await sendFix(fixAtChainage(route, 3, 5, t + 8000))
       const orders = playedOrders(route)
       expect(orders.slice(before)).toEqual([3])
       expect(nextOrder()).toBe(4)
       // GPS repeats near the same spot never play it again
-      await sendFix(fixAt(route, 3, 110, t + 9000))
-      await sendFix(fixAt(route, 3, 120, t + 10000))
+      await sendFix(fixAtChainage(route, 3, 8, t + 9000))
+      await sendFix(fixAtChainage(route, 3, 10, t + 10000))
       expect(playedOrders(route).slice(before)).toEqual([3])
       expect(orders).toEqual([...orders].sort((a, b) => a - b))
     })
@@ -160,19 +240,19 @@ describe('GPS gap: expected PIN passed between two fixes (component)', () => {
     await reachPin3(route)
     const before = playedOrders(route).length
     const t = Date.now() + 60000
-    await sendFix(fixAt(route, 3, -100, t))
-    await sendFix(fixAt(route, 3, 100, t + 30000))
+    await sendFix(fixAtChainage(route, 3, -15, t))
+    await sendFix(fixAtChainage(route, 3, 5, t + 30000))
     expect(playedOrders(route).slice(before)).toEqual([3])
     expect(nextOrder()).toBe(4)
   })
 
   it('route-3: opposite direction (PIN behind the movement) does not play it', async () => {
     const route = remoteRoute('route-3')
-    await reachPin3(route)
+    await startAtPin3(route, 20)
     const before = playedOrders(route).length
     const t = Date.now() + 60000
-    await sendFix(fixAt(route, 3, 100, t))
-    await sendFix(fixAt(route, 3, 300, t + 8000))
+    await sendFix(fixAtChainage(route, 3, 35, t))
+    await sendFix(fixAtChainage(route, 3, 55, t + 8000))
     expect(playedOrders(route)).toHaveLength(before)
     expect(nextOrder()).toBe(3)
   })
@@ -182,8 +262,8 @@ describe('GPS gap: expected PIN passed between two fixes (component)', () => {
     await reachPin3(route)
     const before = playedOrders(route).length
     const t = Date.now() + 60000
-    await sendFix(fixAt(route, 3, -100, t))
-    await sendFix(fixAt(route, 3, 100, t + 65000))
+    await sendFix(fixAtChainage(route, 3, -15, t))
+    await sendFix(fixAtChainage(route, 3, 5, t + 65000))
     expect(playedOrders(route)).toHaveLength(before)
     expect(nextOrder()).toBe(3)
   })
@@ -195,8 +275,8 @@ describe('GPS gap: expected PIN passed between two fixes (component)', () => {
     const busy = vi.mocked(audioEngine.isBusy)
     busy.mockImplementation(() => true)
     const t = Date.now() + 60000
-    await sendFix(fixAt(route, 3, -100, t))
-    await sendFix(fixAt(route, 3, 100, t + 8000))
+    await sendFix(fixAtChainage(route, 3, -15, t))
+    await sendFix(fixAtChainage(route, 3, 5, t + 8000))
     expect(playedOrders(route)).toHaveLength(before)
     busy.mockImplementation(() => false)
     await settle(550)

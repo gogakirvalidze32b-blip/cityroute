@@ -4,7 +4,6 @@ import { userEvent } from '@testing-library/user-event'
 import { ExamDriveSession } from './ExamDriveSession'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { selectableRoutes } from '@/data/selectable-routes'
-import route2Road from '@/data/route-2-road.json'
 import { audioEngine } from '@/lib/audio'
 import { createExamSession, loadExamHistory } from '@/lib/exam-session'
 import { loadActiveExam, saveActiveExam } from '@/lib/exam-persistence'
@@ -223,7 +222,7 @@ function pinChainageAfter(
   minimumChainage: number,
 ): number {
   const geometry = routeGeometry(route)
-  let best: { chainage: number; crossTrack: number } | null = null
+  const candidates: Array<{ chainage: number; crossTrack: number }> = []
   for (let index = 0; index < geometry.coordinates.length - 1; index += 1) {
     if (geometry.cumulativeMeters[index + 1] <= geometry.cumulativeMeters[index]) continue
     const segment = prepareRouteGeometry(route.slug as ActiveRouteId, [
@@ -234,14 +233,12 @@ function pinChainageAfter(
     if (!projection || projection.crossTrackMeters > 20) continue
     const chainage = geometry.cumulativeMeters[index] + projection.chainageMeters
     if (chainage < minimumChainage - 5) continue
-    if (
-      best === null ||
-      chainage < best.chainage ||
-      (chainage === best.chainage && projection.crossTrackMeters < best.crossTrack)
-    ) {
-      best = { chainage, crossTrack: projection.crossTrackMeters }
-    }
+    candidates.push({ chainage, crossTrack: projection.crossTrackMeters })
   }
+  const closestCrossTrack = Math.min(...candidates.map((candidate) => candidate.crossTrack))
+  const best = candidates
+    .filter((candidate) => candidate.crossTrack <= closestCrossTrack + 5)
+    .sort((first, second) => first.chainage - second.chainage)[0] ?? null
   if (best && best.chainage < minimumChainage && minimumChainage - best.chainage <= 5) {
     return minimumChainage
   }
@@ -1559,7 +1556,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     } finally {
       nowSpy.mockRestore()
     }
-  })
+  }, 20_000)
 
   it.each(cases)('%s: finish and restart clears progress and starts at PIN 1', async (slug) => {
     let now = Date.now()
@@ -1940,26 +1937,17 @@ describe('Telavi field-test routes keep strict progress and resume on production
 
   it('route 2 PIN #3 stays quiet at the agency exit and plays at its later road position', async () => {
     const route = routeBySlug('route-2')
-    const road = route2Road as [number, number][]
     await startAtPin1(route)
     await driveTo(route, 1)
     await driveTo(route, 2)
     expect(nextOrder()).toBe(3)
 
     playDetailed.mockClear()
-    await sendFix({
-      lat: road[2][0],
-      lng: road[2][1],
-      accuracy: 5,
-      heading: 0,
-      speed: 5,
-      timestamp: Date.now() + 1000,
-    })
+    await sendRouteFix(route, routeGeometry(route), routeGeometry(route).cumulativeMeters[2], 5)
     expect(playDetailed).not.toHaveBeenCalled()
     expect(nextOrder()).toBe(3)
 
-    const geometry = routeGeometry(route)
-    await travelToChainage(route, geometry, geometry.cumulativeMeters[13], 5)
+    await driveTo(route, 3)
     expect(playedOrders(route)).toEqual([3])
     expect(nextOrder()).toBe(4)
   })

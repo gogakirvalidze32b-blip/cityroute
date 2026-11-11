@@ -236,6 +236,86 @@ describe('pure route geometry', () => {
     expect(orderedOccurrence!.crossTrackMeters).toBeLessThan(10)
   })
 
+  it('keeps Route 3 PIN 7 on its forward continuation and rejects the repeated loop branch', () => {
+    const route = prepareRouteGeometry(
+      'route-3',
+      route3Road.map(([lat, lng]) => [lat, lng] as const),
+    )
+    const pins = (orders: number[]): LatLng[] => orders.map((order) => {
+      const pin = auditedPins.find((item) => item.route === 3 && item.pin === order)!
+      return [pin.lat, pin.lng]
+    })
+    const pin7Projection = projectOrderedPointsToRoute(route, pins([1, 2, 3, 4, 5, 6, 7]))
+    const pin8Projection = projectOrderedPointsToRoute(route, pins([1, 2, 3, 4, 5, 6, 7, 8]))
+
+    expect(pin7Projection).not.toBeNull()
+    expect(pin8Projection).not.toBeNull()
+    expect(pin7Projection!.chainageMeters).toBeGreaterThan(4_800)
+    expect(pin7Projection!.chainageMeters).toBeLessThan(5_100)
+    expect(pin8Projection!.chainageMeters).toBeGreaterThan(pin7Projection!.chainageMeters)
+
+    const previous: RouteMatchState = {
+      routeId: 'route-3',
+      chainageMeters: pin7Projection!.chainageMeters,
+      segmentIndex: 168,
+      position: route.coordinates[168],
+      timestampMs: 10_000,
+      accuracyMeters: 3,
+    }
+    const fix = {
+      position: route.coordinates[170],
+      accuracyMeters: 3,
+      timestampMs: 20_000,
+      headingDegrees: 113,
+    }
+    const result = matchGpsPosition(route, fix, previous, {
+      nowMs: 20_000,
+      expectedForwardChainageMeters: pin8Projection!.chainageMeters,
+    })
+
+    expect(result.status).toBe('matched')
+    expect(result.direction).toBe('forward')
+    expect(result.projection?.chainageMeters).toBeGreaterThan(pin7Projection!.chainageMeters)
+    expect(result.projection?.segmentIndex).toBeLessThan(200)
+  })
+
+  it('prefers the forward Route 3 continuation even without GPS heading when expected chainage is known', () => {
+    const route = prepareRouteGeometry(
+      'route-3',
+      route3Road.map(([lat, lng]) => [lat, lng] as const),
+    )
+    const pins = (orders: number[]): LatLng[] => orders.map((order) => {
+      const pin = auditedPins.find((item) => item.route === 3 && item.pin === order)!
+      return [pin.lat, pin.lng]
+    })
+    const pin7Projection = projectOrderedPointsToRoute(route, pins([1, 2, 3, 4, 5, 6, 7]))
+    const pin8Projection = projectOrderedPointsToRoute(route, pins([1, 2, 3, 4, 5, 6, 7, 8]))
+
+    const previous: RouteMatchState = {
+      routeId: 'route-3',
+      chainageMeters: pin7Projection!.chainageMeters,
+      segmentIndex: 168,
+      position: route.coordinates[168],
+      timestampMs: 10_000,
+      accuracyMeters: 3,
+    }
+    const fix = {
+      position: route.coordinates[170],
+      accuracyMeters: 3,
+      timestampMs: 20_000,
+    }
+
+    const result = matchGpsPosition(route, fix, previous, {
+      nowMs: 20_000,
+      expectedForwardChainageMeters: pin8Projection!.chainageMeters,
+    })
+
+    expect(result.status).toBe('matched')
+    expect(result.direction).toBe('forward')
+    expect(result.projection?.segmentIndex).toBeLessThan(200)
+    expect(result.projection?.chainageMeters).toBeGreaterThan(pin7Projection!.chainageMeters)
+  })
+
   it('uses forward PIN sequence and GPS heading to resolve an opposing repeated segment', () => {
     const route = prepareRouteGeometry(
       'route-3',
@@ -310,6 +390,92 @@ describe('pure route geometry', () => {
       { maxAccuracyMeters: 12, maxPinCrossTrackMeters: 20, approachWindowMeters: 50 },
     )
     expect(result.ready).toBe(true)
+  })
+
+  it('does not infer a passed PIN across a GPS gap longer than 60 seconds', () => {
+    const previous = makeState(350, 1_000)
+    const projection = projectPointToRoute(straightRoute, [41.9, 45.5045])
+    if (!projection) throw new Error('expected forward projection')
+    const match = {
+      status: 'matched' as const,
+      accepted: true,
+      projection,
+      direction: 'forward' as const,
+      nextState: { ...makeState(projection.chainageMeters, 62_001), accuracyMeters: 3 },
+    }
+
+    expect(
+      evaluatePinRouteCompletion(
+        straightRoute,
+        [41.9, 45.505],
+        match,
+        previous,
+        { maxAccuracyMeters: 12, maxPinCrossTrackMeters: 20, approachWindowMeters: 50 },
+      ).status,
+    ).toBe('gps-gap')
+  })
+
+  it('checks GPS-to-PIN distance separately and never falls back from an expected occurrence', () => {
+    const pinPosition: LatLng = [41.9, 45.505]
+    const pinProjection = projectPointToRoute(straightRoute, pinPosition)
+    if (!pinProjection) throw new Error('expected PIN projection')
+    const previous = makeState(pinProjection.chainageMeters - 20, 1_000)
+    const match = matchGpsPosition(
+      straightRoute,
+      {
+        position: [41.90007, 45.505],
+        accuracyMeters: 3,
+        timestampMs: 2_000,
+      },
+      previous,
+      { nowMs: 2_000, maxCrossTrackMeters: 20 },
+    )
+    expect(match.accepted).toBe(true)
+
+    const inRange = evaluatePinRouteCompletion(
+      straightRoute,
+      pinPosition,
+      match,
+      previous,
+      {
+        expectedPinChainageMeters: pinProjection.chainageMeters,
+        requireExpectedPinChainage: true,
+        gpsPosition: [41.90007, 45.505],
+        maxGpsToPinMeters: 10,
+        approachWindowMeters: 10,
+      },
+    )
+    expect(inRange.ready).toBe(true)
+
+    const outsideGpsRadius = evaluatePinRouteCompletion(
+      straightRoute,
+      pinPosition,
+      match,
+      previous,
+      {
+        expectedPinChainageMeters: pinProjection.chainageMeters,
+        requireExpectedPinChainage: true,
+        gpsPosition: [41.90011, 45.505],
+        maxGpsToPinMeters: 10,
+        approachWindowMeters: 10,
+      },
+    )
+    expect(outsideGpsRadius.status).toBe('gps-too-far-from-pin')
+
+    const wrongOccurrence = evaluatePinRouteCompletion(
+      straightRoute,
+      pinPosition,
+      match,
+      previous,
+      {
+        expectedPinChainageMeters: pinProjection.chainageMeters + 150,
+        requireExpectedPinChainage: true,
+        gpsPosition: pinPosition,
+        maxGpsToPinMeters: 10,
+        approachWindowMeters: 10,
+      },
+    )
+    expect(wrongOccurrence.status).toBe('pin-off-route')
   })
 
   it('rejects a stationary drift fix instead of completing the PIN', () => {

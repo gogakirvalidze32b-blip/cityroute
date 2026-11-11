@@ -6,7 +6,11 @@ import { ExamDriveSession } from '@/components/ExamDriveSession'
 
 import { useAuth } from '@/context/AuthContext'
 
-import { hasSavedExamForSlug } from '@/lib/exam-persistence'
+import {
+  claimLegacyExamPersistenceScope,
+  hasSavedExamForSlug,
+} from '@/lib/exam-persistence'
+import { claimUniqueExamTabId, getDeviceFingerprint } from '@/lib/device'
 
 import { useRoutes } from '@/hooks/useRoutes'
 import { selectableRoutes } from '@/data/selectable-routes'
@@ -45,27 +49,63 @@ export function RoutePage() {
   const { slug } = useParams<{ slug: string }>()
   const location = useLocation()
   const navigate = useNavigate()
-  const { hasAccess, deviceBlocked } = useAuth()
+  const { hasAccess, deviceBlocked, user } = useAuth()
   const { routes } = useRoutes()
+  const [tabId, setTabId] = useState<string | null>(null)
+  const [tabIdentityError, setTabIdentityError] = useState<string | null>(null)
+  const deviceId = useMemo(
+    () => user ? getDeviceFingerprint() : undefined,
+    [user?.id],
+  )
+  const persistenceScope = user && deviceId && tabId
+    ? `user:${user.id}:device:${deviceId}:tab:${tabId}`
+    : undefined
+  const legacyPersistenceScope = user && deviceId
+    ? `user:${user.id}:device:${deviceId}`
+    : undefined
   const route = useMemo(
     () => selectableRoutes(routes).find((r) => r.slug === slug),
     [routes, slug],
   )
   const routeName = route?.name_ka
   const [navPhase, setNavPhase] = useState<NavPhase>(() =>
-    slug && hasSavedExamForSlug(slug, routeName) ? 'active' : 'preview',
+    slug && tabId && hasSavedExamForSlug(slug, routeName, persistenceScope) ? 'active' : 'preview',
   )
   const [navigationBlocked, setNavigationBlocked] = useState(false)
 
-  const resumeDriving = Boolean(slug && hasSavedExamForSlug(slug, routeName) && navPhase !== 'summary')
+  useEffect(() => {
+    let cancelled = false
+    void claimUniqueExamTabId()
+      .then((claimedTabId) => {
+        if (!cancelled) setTabId(claimedTabId)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        const detail = error instanceof Error ? error.message : 'უცნობი შეცდომა'
+        setTabIdentityError(`გამოცდის tab-ის იდენტიფიკაცია ვერ მოხერხდა: ${detail}`)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (legacyPersistenceScope && persistenceScope && tabId) {
+      claimLegacyExamPersistenceScope(legacyPersistenceScope, persistenceScope, tabId)
+    }
+  }, [legacyPersistenceScope, persistenceScope, tabId])
+
+  const resumeDriving = Boolean(
+    slug && hasSavedExamForSlug(slug, routeName, persistenceScope) && navPhase !== 'summary',
+  )
   const driving = navPhase === 'active' || resumeDriving
 
   useEffect(() => {
     if (!slug || navPhase === 'summary') return
-    if (hasSavedExamForSlug(slug, routeName) && navPhase !== 'active') {
+    if (hasSavedExamForSlug(slug, routeName, persistenceScope) && navPhase !== 'active') {
       setNavPhase('active')
     }
-  }, [slug, routeName, navPhase])
+  }, [slug, routeName, navPhase, persistenceScope])
 
   if ((deviceBlocked || !hasAccess) && !resumeDriving) return <Navigate to="/" replace />
 
@@ -76,6 +116,13 @@ export function RoutePage() {
         <Link to="/">უკან</Link>
       </div>
     )
+  }
+
+  if (tabIdentityError) {
+    return <p role="alert" className="error-text">{tabIdentityError}</p>
+  }
+  if (!tabId) {
+    return <p role="status" className="session-hint">გამოცდის სესიის მომზადება...</p>
   }
 
   return (
@@ -98,7 +145,7 @@ export function RoutePage() {
             to="/"
             className="ghost"
             onClick={(event) => {
-              if (slug && hasSavedExamForSlug(slug, routeName)) {
+              if (slug && hasSavedExamForSlug(slug, routeName, persistenceScope)) {
                 event.preventDefault()
                 setNavigationBlocked(true)
               }
@@ -128,6 +175,10 @@ export function RoutePage() {
 
       <ExamDriveSession
         route={route}
+        userId={user?.id}
+        deviceId={deviceId}
+        tabId={tabId}
+        persistenceScope={persistenceScope}
         onPhaseChange={setNavPhase}
         onReturnToMenu={() => navigate('/', { replace: true })}
       />

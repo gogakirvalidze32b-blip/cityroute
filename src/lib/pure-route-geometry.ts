@@ -66,16 +66,23 @@ export interface PinRouteCompletionOptions {
   readonly minimumForwardMeters?: number
   readonly expectedPinChainageMeters?: number
   readonly pinProjectionWindowMeters?: number
+  readonly requireExpectedPinChainage?: boolean
+  readonly gpsPosition?: LatLng
+  readonly maxGpsToPinMeters?: number
 }
+
+export const MAX_GPS_PASS_GAP_MS = 60_000
 
 export type PinRouteCompletionStatus =
   | 'ready'
   | 'no-route-match'
+  | 'gps-gap'
   | 'poor-accuracy'
   | 'stationary'
   | 'reverse-direction'
   | 'gps-off-route'
   | 'pin-off-route'
+  | 'gps-too-far-from-pin'
   | 'pin-not-in-approach-window'
 
 export interface PinRouteCompletionResult {
@@ -288,13 +295,13 @@ export function evaluatePinRouteCompletion(
   const projectionChainage = options.expectedPinChainageMeters ??
     (match.accepted ? match.projection?.chainageMeters : undefined)
   const pinProjection = projectionChainage === undefined
-    ? projectPointToRoute(route, pinPosition)
+    ? options.requireExpectedPinChainage ? null : projectPointToRoute(route, pinPosition)
     : projectPointToRouteNearChainage(
         route,
         pinPosition,
         projectionChainage,
         options.pinProjectionWindowMeters,
-      ) ?? projectPointToRoute(route, pinPosition)
+      ) ?? (options.requireExpectedPinChainage ? null : projectPointToRoute(route, pinPosition))
   if (!match.accepted || !match.projection || !match.nextState || !previous) {
     return {
       status: 'no-route-match',
@@ -302,6 +309,10 @@ export function evaluatePinRouteCompletion(
       pinProjection,
       fixProjection: match.projection,
     }
+  }
+
+  if (match.nextState.timestampMs - previous.timestampMs > MAX_GPS_PASS_GAP_MS) {
+    return { status: 'gps-gap', ready: false, pinProjection, fixProjection: match.projection }
   }
 
   const maxAccuracyMeters = options.maxAccuracyMeters ?? 12
@@ -318,6 +329,18 @@ export function evaluatePinRouteCompletion(
   }
   if (!pinProjection || pinProjection.crossTrackMeters > maxPinCrossTrackMeters) {
     return { status: 'pin-off-route', ready: false, pinProjection, fixProjection: match.projection }
+  }
+  if (
+    options.gpsPosition &&
+    options.maxGpsToPinMeters !== undefined &&
+    distanceMeters(options.gpsPosition, pinPosition) > options.maxGpsToPinMeters
+  ) {
+    return {
+      status: 'gps-too-far-from-pin',
+      ready: false,
+      pinProjection,
+      fixProjection: match.projection,
+    }
   }
 
   const forwardMeters = match.nextState.chainageMeters - previous.chainageMeters
@@ -482,22 +505,32 @@ export function matchGpsPosition(
       previous &&
       preferredChainageMeters !== undefined &&
       preferredChainageMeters > previous.chainageMeters
-      ? candidates.filter(
-          (candidate) =>
-            candidate.deltaMeters > stationaryThresholdMeters &&
-            candidate.projection.chainageMeters <= preferredChainageMeters + 20 &&
-            fix.headingDegrees != null &&
-            angleDifferenceDegrees(
-              fix.headingDegrees,
-              candidate.projection.segmentBearingDegrees,
-            ) <= 45 &&
-            candidate.score - best.score <= ambiguityToleranceMeters,
-        )
+      ? candidates
+          .filter(
+            (candidate) =>
+              candidate.deltaMeters > stationaryThresholdMeters &&
+              candidate.projection.chainageMeters <= preferredChainageMeters + 20 &&
+              candidate.score - best.score <= ambiguityToleranceMeters,
+          )
+          .sort(
+            (first, second) =>
+              Math.abs(first.projection.chainageMeters - preferredChainageMeters) -
+              Math.abs(second.projection.chainageMeters - preferredChainageMeters),
+          )
       : []
-    const distinctForwardChainages = forwardCandidates.filter(
+    const headingAwareForwardCandidates = fix.headingDegrees == null
+      ? forwardCandidates
+      : forwardCandidates.filter(
+          (candidate) =>
+            angleDifferenceDegrees(
+              fix.headingDegrees!,
+              candidate.projection.segmentBearingDegrees,
+            ) <= 45,
+        )
+    const distinctForwardChainages = headingAwareForwardCandidates.filter(
       (candidate, index) =>
         index === 0 ||
-        forwardCandidates
+        headingAwareForwardCandidates
           .slice(0, index)
           .every(
             (previousCandidate) =>
@@ -520,7 +553,9 @@ export function matchGpsPosition(
           ) >= 90,
       )
     if (distinctForwardChainages.length === 1 && reverseCandidateSupportsAmbiguity) {
-      best = forwardCandidates[0]
+      best = distinctForwardChainages[0]
+    } else if (distinctForwardChainages.length === 1 && fix.headingDegrees == null) {
+      best = distinctForwardChainages[0]
     } else {
       return rejected('ambiguous-route-match', best.projection)
     }

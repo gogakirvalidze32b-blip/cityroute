@@ -8,21 +8,38 @@
  * passes a PIN quickly or GPS skips a few metres.
  */
 
-/** Voice starts when the driver is this close (m) to the next PIN. (was 5 m) */
-export const AUDIO_TRIGGER_DISTANCE_M = 20
-const REDUCED_AUDIO_TRIGGER_DISTANCE_M = 10
-
-const REDUCED_AUDIO_TRIGGER_PIN_ORDERS: Readonly<Record<string, number>> = {
+/** Maximum GPS-to-PIN trigger distance for ordinary PINs. */
+export const AUDIO_TRIGGER_DISTANCE_M = 10
+const ROUTE_2_PIN_26_APPROACH_WINDOW_M = 5
+const ROUTE_FINISH_PIN_ORDERS: Readonly<Record<string, number>> = {
+  'route-1': 35,
+  'route-2': 29,
+  'route-3': 30,
+  'route-4': 32,
+}
+const ROUTE_CONTEXT_TRIGGER_ORDERS: Readonly<Record<string, number>> = {
   'route-1': 32,
-  'route-2': 26,
-  'route-3': 28,
+  'route-3': 29,
   'route-4': 29,
 }
 
 export function pinAudioTriggerDistanceMeters(route: string, sortOrder: number): number {
-  return REDUCED_AUDIO_TRIGGER_PIN_ORDERS[route] === sortOrder
-    ? REDUCED_AUDIO_TRIGGER_DISTANCE_M
-    : AUDIO_TRIGGER_DISTANCE_M
+  if (
+    sortOrder === 1 ||
+    ROUTE_FINISH_PIN_ORDERS[route] === sortOrder ||
+    ROUTE_CONTEXT_TRIGGER_ORDERS[route] === sortOrder
+  ) {
+    return 20
+  }
+
+  return AUDIO_TRIGGER_DISTANCE_M
+}
+
+export function pinAudioApproachWindowMeters(route: string, sortOrder: number): number {
+  if (route === 'route-2' && sortOrder === 26) {
+    return ROUTE_2_PIN_26_APPROACH_WINDOW_M
+  }
+  return pinAudioTriggerDistanceMeters(route, sortOrder)
 }
 
 /** Heading tolerance (°) used ONLY for audio. (was 55°) Map/nav keep gps.ts default. */
@@ -266,11 +283,21 @@ export function decidePinAudio(input: PinAudioInput): PinAudioDecision | null {
   const next = pinIds.findIndex((id) => !triggered.has(id))
   if (next < 0) return null
 
+  const distances = new Map<number, number>()
+  for (let index = next; index < pinIds.length; index += 1) {
+    const id = pinIds[index]
+    if (!id || triggered.has(id)) continue
+    const currentDistance = distanceTo(index)
+    distances.set(index, currentDistance)
+    const previousMinimum = minDist.get(id)
+    minDist.set(id, previousMinimum === undefined
+      ? currentDistance
+      : Math.min(previousMinimum, currentDistance))
+  }
+
   const nextId = pinIds[next]
-  const d = distanceTo(next)
-  const prevMin = minDist.get(nextId)
-  const min = prevMin === undefined ? d : Math.min(prevMin, d)
-  minDist.set(nextId, min)
+  const d = distances.get(next) ?? distanceTo(next)
+  const min = minDist.get(nextId) ?? d
 
   if (busy) return null
 

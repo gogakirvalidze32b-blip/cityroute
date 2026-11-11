@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createExamSession } from '@/lib/exam-session'
+import { getExamTabId } from '@/lib/device'
 import {
   clearActiveExam,
+  applyRemoteExamSaveVersion,
+  claimLegacyExamPersistenceScope,
+  findActiveExam,
   loadActiveExam,
   mergeExamSave,
+  reconcileRemoteExamProgress,
   saveActiveExam,
   type SavedExamState,
 } from '@/lib/exam-persistence'
@@ -172,6 +177,204 @@ describe('exam save merge: incomplete writes do not replace progress', () => {
     expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2')?.queuedPinSortOrders).toEqual([2])
     expect(localStorage.getItem('cityroute-active-exam:route-1')).not.toBeNull()
     expect(localStorage.getItem('cityroute-active-exam:route-2')).not.toBeNull()
+  })
+
+  it('isolates the same route save by account and device scope', () => {
+    const deviceA = saved({
+      userId: 'same-account',
+      deviceId: 'device-A',
+      examSessionId: 'exam-A',
+      triggeredSortOrders: [1, 2],
+      nextSortOrder: 3,
+    })
+    const deviceB = saved({
+      userId: 'same-account',
+      deviceId: 'device-B',
+      examSessionId: 'exam-B',
+      triggeredPins: ['p2-1'],
+      triggeredSortOrders: [1],
+      nextSortOrder: 2,
+    })
+
+    saveActiveExam(deviceA, {}, 'user:same-account:device:device-A')
+    saveActiveExam(deviceB, {}, 'user:same-account:device:device-B')
+
+    expect(
+      loadActiveExam(
+        'local-route-2',
+        'route-2',
+        'მარშრუტი 2',
+        'user:same-account:device:device-A',
+      ),
+    ).toMatchObject({ examSessionId: 'exam-A', triggeredSortOrders: [1, 2], nextSortOrder: 3 })
+    expect(
+      loadActiveExam(
+        'local-route-2',
+        'route-2',
+        'მარშრუტი 2',
+        'user:same-account:device:device-B',
+      ),
+    ).toMatchObject({ examSessionId: 'exam-B', triggeredSortOrders: [1], nextSortOrder: 2 })
+
+    clearActiveExam(
+      'local-route-2',
+      'route-2',
+      'მარშრუტი 2',
+      'user:same-account:device:device-A',
+    )
+    expect(
+      loadActiveExam(
+        'local-route-2',
+        'route-2',
+        'მარშრუტი 2',
+        'user:same-account:device:device-B',
+      )?.examSessionId,
+    ).toBe('exam-B')
+  })
+
+  it('restores newer server progress after a refresh with a stale local version', () => {
+    const local = saved({
+      examSessionId: 'exam-A',
+      examSessionVersion: 2,
+      triggeredSortOrders: [1],
+      nextSortOrder: 2,
+    })
+    const remote = saved({
+      examSessionId: 'exam-A',
+      examSessionVersion: 2,
+      triggeredSortOrders: [1, 2],
+      nextSortOrder: 3,
+    })
+
+    expect(reconcileRemoteExamProgress(local, remote, 'exam-A', 3)).toBe(remote)
+  })
+
+  it('isolates same-device exam saves across tabs and claims legacy state once', () => {
+    const legacy = saved({
+      userId: 'same-account',
+      deviceId: 'device-A',
+      examSessionId: 'exam-legacy',
+      triggeredSortOrders: [1, 2],
+      nextSortOrder: 3,
+    })
+    const legacyScope = 'user:same-account:device:device-A'
+    const tabAScope = `${legacyScope}:tab:tab-A`
+    const tabBScope = `${legacyScope}:tab:tab-B`
+    saveActiveExam(legacy, {}, legacyScope)
+
+    claimLegacyExamPersistenceScope(legacyScope, tabAScope, 'tab-A')
+    claimLegacyExamPersistenceScope(legacyScope, tabBScope, 'tab-B')
+
+    expect(
+      loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2', tabAScope),
+    ).toMatchObject({ examSessionId: 'exam-legacy', tabId: 'tab-A' })
+    expect(loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2', tabBScope)).toBeNull()
+
+    saveActiveExam(
+      saved({
+        userId: 'same-account',
+        deviceId: 'device-A',
+        tabId: 'tab-B',
+        examSessionId: 'exam-tab-B',
+        triggeredSortOrders: [1],
+        nextSortOrder: 2,
+      }),
+      {},
+      tabBScope,
+    )
+    expect(
+      loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2', tabAScope)?.examSessionId,
+    ).toBe('exam-legacy')
+    expect(
+      loadActiveExam('local-route-2', 'route-2', 'მარშრუტი 2', tabBScope)?.examSessionId,
+    ).toBe('exam-tab-B')
+  })
+
+  it('does not stamp a stale autosave response onto newer local progress', () => {
+    const olderSnapshot = saved({
+      examSessionId: 'exam-A',
+      examSessionVersion: 1,
+      examSessionRevision: 1,
+      examSessionDirty: true,
+      triggeredSortOrders: [1],
+      nextSortOrder: 2,
+    })
+    const newerLocal = saved({
+      examSessionId: 'exam-A',
+      examSessionVersion: 1,
+      examSessionRevision: 2,
+      examSessionDirty: true,
+      triggeredSortOrders: [1, 2],
+      nextSortOrder: 3,
+    })
+
+    expect(applyRemoteExamSaveVersion(newerLocal, 1, 2, olderSnapshot)).toBe(newerLocal)
+    expect(() =>
+      reconcileRemoteExamProgress(newerLocal, olderSnapshot, 'exam-A', 2),
+    ).toThrow('ლოკალური და სერვერული გამოცდის პროგრესი ერთმანეთს არ ემთხვევა')
+    const sameRevisionButNewerContent = { ...newerLocal, examSessionRevision: 1 }
+    expect(
+      applyRemoteExamSaveVersion(sameRevisionButNewerContent, 1, 2, olderSnapshot),
+    ).toBe(sameRevisionButNewerContent)
+
+    const committed = applyRemoteExamSaveVersion(newerLocal, 2, 3, newerLocal)
+    expect(committed).toMatchObject({
+      examSessionVersion: 3,
+      examSessionRevision: 2,
+      examSessionDirty: false,
+      triggeredSortOrders: [1, 2],
+    })
+  })
+
+  it('safely adopts a newer server version when the dirty local snapshot already matches', () => {
+    const local = saved({
+      examSessionId: 'exam-A',
+      examSessionVersion: 1,
+      examSessionRevision: 2,
+      examSessionDirty: true,
+      triggeredSortOrders: [1, 2],
+      nextSortOrder: 3,
+    })
+    const remote = saved({
+      examSessionId: 'exam-A',
+      examSessionVersion: 1,
+      triggeredSortOrders: [1, 2],
+      nextSortOrder: 3,
+    })
+
+    expect(reconcileRemoteExamProgress(local, remote, 'exam-A', 2)).toMatchObject({
+      examSessionVersion: 2,
+      examSessionDirty: false,
+      triggeredSortOrders: [1, 2],
+    })
+  })
+
+  it('finds only the active exam belonging to the current browser tab', async () => {
+    const currentTabId = getExamTabId()
+    sessionStorage.setItem('cityroute_exam_tab_id', currentTabId)
+    const tabA = saved({
+      tabId: currentTabId,
+      examSessionId: 'exam-tab-A',
+      triggeredSortOrders: [1, 2],
+    })
+    const tabB = saved({
+      tabId: 'other-tab',
+      examSessionId: 'exam-tab-B',
+      triggeredSortOrders: [1],
+    })
+    saveActiveExam(tabA, {}, `user:same-account:device:device-A:tab:${currentTabId}`)
+    saveActiveExam(tabB, {}, 'user:same-account:device:device-A:tab:tab-B')
+
+    expect(findActiveExam()?.examSessionId).toBe('exam-tab-A')
+  })
+
+  it('refuses to overwrite a server session with a newer local version', () => {
+    const local = saved({ examSessionId: 'exam-A', examSessionVersion: 4 })
+    const remote = saved({ examSessionId: 'exam-A', examSessionVersion: 2 })
+
+    expect(() => reconcileRemoteExamProgress(local, remote, 'exam-A', 3)).toThrow(
+      'ლოკალური გამოცდის სესიის ვერსია სერვერის ვერსიაზე ახალია',
+    )
   })
 
   it('clears only the selected route and leaves other route progress intact', () => {

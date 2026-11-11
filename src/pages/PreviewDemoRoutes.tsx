@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { ExamDriveSession } from '@/components/ExamDriveSession'
@@ -6,6 +6,9 @@ import { selectableRoutes } from '@/data/selectable-routes'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import type { PlanFeatures } from '@/lib/plan-features'
 import { hasSavedExamForSlug } from '@/lib/exam-persistence'
+import { PreviewGpsDemoPanel } from '@/components/PreviewGpsDemoPanel'
+import { createPreviewGpsSource } from '@/lib/preview-gps-source'
+import type { PreviewDemoControls } from '@/components/ExamDriveSession'
 
 const DEMO_SCOPE = 'preview-demo-user'
 const DEMO_FEATURES: PlanFeatures = {
@@ -70,6 +73,12 @@ function PreviewDemoRoutePage() {
     slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE) ? 'active' : 'preview',
   )
   const [navigationBlocked, setNavigationBlocked] = useState(false)
+  const [demoControls, setDemoControls] = useState<PreviewDemoControls | null>(null)
+  const demoGpsSource = useMemo(() => createPreviewGpsSource(), [slug])
+  const receiveDemoControls = useCallback(
+    (controls: PreviewDemoControls | null) => setDemoControls(controls),
+    [],
+  )
   const resumeDriving = Boolean(
     slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE) && navPhase !== 'summary',
   )
@@ -96,6 +105,12 @@ function PreviewDemoRoutePage() {
           გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
         </p>
       )}
+      <PreviewGpsDemoPanel
+        route={route}
+        routes={selectableRoutes(TELAVI_ROUTES_FALLBACK)}
+        controls={demoControls}
+        source={demoGpsSource}
+      />
       {navPhase === 'preview' && !resumeDriving && (
         <div className="route-toolbar">
           <Link
@@ -129,6 +144,8 @@ function PreviewDemoRoutePage() {
         onPhaseChange={setNavPhase}
         onReturnToMenu={() => navigate('/preview-demo', { replace: true })}
         persistenceScope={DEMO_SCOPE}
+        previewGpsSource={demoGpsSource}
+        onPreviewDemoControls={receiveDemoControls}
         offlineMaps
         planFeaturesOverride={DEMO_FEATURES}
         debugPanels={false}

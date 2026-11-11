@@ -108,14 +108,19 @@ vi.mock('@/components/ExamScoreboard', () => ({
 vi.mock('@/components/ExamSummary', () => ({
   ExamSummary: ({
     onRestart,
+    onFinish,
     onContinue,
+    finalized,
   }: {
     onRestart: () => void
+    onFinish?: () => void
     onContinue?: () => void
+    finalized?: boolean
   }) => (
     <div data-testid="exam-summary">
       {onContinue && <button onClick={onContinue}>გაგრძელება</button>}
-      <button onClick={onRestart}>დაიწყე თავიდან</button>
+      {!finalized && <button onClick={onFinish}>დასრულება</button>}
+      {finalized && <button onClick={onRestart}>ახალი გამოცდა</button>}
     </div>
   ),
 }))
@@ -132,7 +137,7 @@ vi.mock('@/components/RoutePreviewMap', () => ({
   RoutePreviewMap: () => <div data-testid="preview-map">Preview Map</div>,
 }))
 
-describe('Bug Condition Exploration - Finish Button Clears Session', () => {
+describe('Exam session finish and persistence', () => {
   const mockRoute = {
     id: 'test-route-id',
     slug: 'route-1',
@@ -168,7 +173,7 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
     localStorage.clear()
   })
 
-  it('[BUG EXPLORATION] should permanently clear session when finish button is clicked', async () => {
+  it('keeps a paused session until the summary is finalized', async () => {
     // SETUP: Create and save an active exam session
     const exam = createExamSession(mockRoute.id, mockRoute.name_ka)
     saveActiveExam({
@@ -211,10 +216,8 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
 
     console.log('🔴 Finish button clicked - testing for bug condition...')
 
-    // IMMEDIATE CHECK: localStorage should be cleared
-    const clearedData = localStorage.getItem('cityroute-active-exam')
-    expect(clearedData).toBeNull()
-    console.log('✅ localStorage cleared immediately after finish')
+    expect(localStorage.getItem('cityroute-active-exam')).not.toBeNull()
+    expect(screen.getByTestId('exam-summary')).toBeInTheDocument()
 
     // CRITICAL TEST: Wait for any async effects to run
     // The bug occurs when useEffect runs after clearActiveExam() and re-detects session
@@ -229,34 +232,14 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
     })
 
-    // VERIFICATION: Phase should be 'summary' and stay 'summary'
-    // This will FAIL on unfixed code because useEffect will force phase back to 'active'
-    try {
-      const summaryElement = screen.getByTestId('exam-summary')
-      expect(summaryElement).toBeInTheDocument()
-      console.log('✅ Summary phase maintained - bug does NOT exist (UNEXPECTED on unfixed code)')
-    } catch (error) {
-      // If summary is not found, we're likely back in active phase (the bug)
-      const finishButtonAgain = screen.queryByText('დასრულება')
-      if (finishButtonAgain) {
-        console.log('🐛 BUG DETECTED: Finish button reappeared - phase reverted to active!')
-        console.log('🐛 COUNTEREXAMPLE: Finish button clears localStorage, but useEffect restoration logic runs and forces phase back to active')
-        
-        // This assertion will fail, documenting the bug
-        expect(finishButtonAgain).not.toBeInTheDocument()
-      } else {
-        // Re-throw if it's a different error
-        throw error
-      }
-    }
+    expect(screen.getByTestId('exam-summary')).toBeInTheDocument()
+    expect(localStorage.getItem('cityroute-active-exam')).not.toBeNull()
 
-    // ADDITIONAL CHECK: Verify localStorage stays cleared
-    const finalData = localStorage.getItem('cityroute-active-exam')
-    expect(finalData).toBeNull()
-    console.log('✅ localStorage remains cleared after all effects')
+    await user.click(screen.getByRole('button', { name: 'დასრულება' }))
+    expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
   })
 
-  it('[BUG EXPLORATION] should not restore session after intentional finish', async () => {
+  it('does not restore a finalized session after unmount and remount', async () => {
     // SETUP: Create active session
     const exam = createExamSession(mockRoute.id, mockRoute.name_ka)
     saveActiveExam({
@@ -289,15 +272,16 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
 
     console.log('🔴 Testing restoration after finish...')
 
-    // Verify localStorage is cleared
-    expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
+    expect(localStorage.getItem('cityroute-active-exam')).not.toBeNull()
 
     // Wait for effects
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 200))
     })
 
-    // Simulate component unmount and remount (like navigating away and back)
+    await user.click(screen.getByRole('button', { name: 'დასრულება' }))
+    expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
+
     unmount()
     
     await act(async () => {
@@ -310,26 +294,11 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
     })
 
-    // VERIFICATION: Should be in preview phase (no saved session)
-    // The bug would cause it to restore the old session
-    try {
-      const previewMap = screen.getByTestId('preview-map')
-      expect(previewMap).toBeInTheDocument()
-      console.log('✅ Preview phase shown - no restoration after finish')
-    } catch (error) {
-      // If preview is not found, session was incorrectly restored
-      const finishButtonAgain = screen.queryByText('დასრულება')
-      if (finishButtonAgain) {
-        console.log('🐛 BUG DETECTED: Session was restored after intentional finish!')
-        console.log('🐛 COUNTEREXAMPLE: clearActiveExam() called but session restored on remount')
-        expect(finishButtonAgain).not.toBeInTheDocument()
-      } else {
-        throw error
-      }
-    }
+    expect(screen.queryByTestId('exam-summary')).toBeNull()
+    expect(screen.queryByText('დასრულება')).toBeNull()
   })
 
-  it('[BUG EXPLORATION] should maintain summary phase across re-renders', async () => {
+  it('maintains the paused summary across re-renders until finalization', async () => {
     // SETUP: Active session
     const exam = createExamSession(mockRoute.id, mockRoute.name_ka)
     saveActiveExam({
@@ -359,9 +328,6 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       await user.click(finishButton)
     })
 
-    console.log('🔴 Testing phase stability across re-renders...')
-
-    // Trigger multiple re-renders (simulating route prop changes)
     for (let i = 0; i < 3; i++) {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 100))
@@ -369,23 +335,10 @@ describe('Bug Condition Exploration - Finish Button Clears Session', () => {
       rerender(<ExamDriveSession route={mockRoute} />)
     }
 
-    // VERIFICATION: Summary should still be visible
-    try {
-      const summaryElement = screen.getByTestId('exam-summary')
-      expect(summaryElement).toBeInTheDocument()
-      console.log('✅ Summary phase stable across re-renders')
-    } catch (error) {
-      const finishButtonAgain = screen.queryByText('დასრულება')
-      if (finishButtonAgain) {
-        console.log('🐛 BUG DETECTED: Phase reverted to active after re-render!')
-        console.log('🐛 COUNTEREXAMPLE: Summary phase not maintained across useEffect runs')
-        expect(finishButtonAgain).not.toBeInTheDocument()
-      } else {
-        throw error
-      }
-    }
+    expect(screen.getByTestId('exam-summary')).toBeInTheDocument()
+    expect(localStorage.getItem('cityroute-active-exam')).not.toBeNull()
 
-    // Verify localStorage is still clear
+    await user.click(screen.getByRole('button', { name: 'დასრულება' }))
     expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
   })
 })

@@ -21,14 +21,30 @@ import {
   type ExamSessionSummary,
 } from '@/lib/exam-session'
 import {
+  isSavedExamState,
+  applyRemoteExamSaveVersion,
   loadActiveExam,
   saveActiveExam,
   clearActiveExam,
   examSessionOriginMs,
   examElapsedMsNow,
   hasSavedExamForSlug,
+  reconcileRemoteExamProgress,
   type SavedExamState,
 } from '@/lib/exam-persistence'
+import {
+  abandonRemoteExamSession,
+  createRemoteExamSession,
+  getRemoteExamSession,
+  listRemoteExamSessions,
+  newExamSessionMigrationKey,
+  REMOTE_EXAM_SESSION_BACKEND_ENABLED,
+  releaseExamTabLease,
+  RemoteExamSessionWriter,
+  toJson,
+} from '@/lib/exam-session-edge'
+import { createExamSessionLifecycle } from '@/lib/exam-session-lifecycle'
+import { isSupabaseConfigured } from '@/lib/supabase'
 import {
   distanceToPinMeters,
   formatGpsError,
@@ -75,6 +91,7 @@ import {
   AUDIO_HEADING_TOLERANCE_DEG,
   audioHeadingOk,
   identifyRoundaboutGateTarget,
+  pinAudioApproachWindowMeters,
   pinAudioTriggerDistanceMeters,
   updateRoundaboutReturnGate,
   isRoundaboutReturnGateOpened,
@@ -83,6 +100,7 @@ import {
 } from '@/lib/pin-audio'
 import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
 import { SPEED_LIMIT_DEBUG_PANEL } from '@/lib/debug-flags'
+import type { PreviewGpsSource } from '@/lib/preview-gps-source'
 import {
   clearRoutePinProgress,
   loadRoutePinProgress,
@@ -227,19 +245,36 @@ const devLog: typeof console.log = (...args) => {
 
 type Props = {
   route: RouteWithPins
+  userId?: string
+  deviceId?: string
+  tabId?: string
   onPhaseChange?: (phase: Phase) => void
   onReturnToMenu?: () => void
   persistenceScope?: string
+  previewGpsSource?: PreviewGpsSource
+  onPreviewDemoControls?: (controls: PreviewDemoControls | null) => void
   offlineMaps?: boolean
   planFeaturesOverride?: PlanFeatures
   debugPanels?: boolean
 }
 
+export type PreviewDemoControls = {
+  startAtPin: (sortOrder: number) => Promise<void>
+  reset: () => void
+  nextPinOrder: () => number | null
+  isActive: () => boolean
+}
+
 export function ExamDriveSession({
   route,
+  userId,
+  deviceId,
+  tabId,
   onPhaseChange,
   onReturnToMenu,
   persistenceScope,
+  previewGpsSource,
+  onPreviewDemoControls,
   offlineMaps = false,
   planFeaturesOverride,
   debugPanels,
@@ -250,11 +285,70 @@ export function ExamDriveSession({
   // Try to restore saved exam state (slug survives local-route-* → Supabase UUID)
   // savedEpoch is bumped by Finish/restart so a stale memo can never resurrect a finished exam.
   const [savedEpoch, setSavedEpoch] = useState(0)
-  const savedState = useMemo(
+  const [remoteSavedState, setRemoteSavedState] = useState<SavedExamState | null>(null)
+  const localSavedState = useMemo(
     () => loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [route.id, route.slug, route.name_ka, persistenceScope, savedEpoch],
   )
+  const savedState =
+    localSavedState ??
+    (remoteSavedState?.routeSlug === route.slug &&
+    remoteSavedState.userId === userId &&
+    remoteSavedState.deviceId === deviceId
+      ? remoteSavedState
+      : null)
+  const [remotePersistenceError, setRemotePersistenceError] = useState<string | null>(null)
+  const [remoteSessionLoading, setRemoteSessionLoading] = useState(
+    Boolean(REMOTE_EXAM_SESSION_BACKEND_ENABLED && isSupabaseConfigured && userId && deviceId),
+  )
+  const [remoteSessionCreating, setRemoteSessionCreating] = useState(false)
+  const [remoteRetryToken, setRemoteRetryToken] = useState(0)
+  const [remoteRestoreToken, setRemoteRestoreToken] = useState(0)
+  const remoteWriterRef = useRef<RemoteExamSessionWriter | null>(null)
+  const remoteSessionIdRef = useRef<string | null>(localSavedState?.examSessionId ?? null)
+  const remoteLoadKeyRef = useRef<string | null>(null)
+  const remoteCreatePromiseRef = useRef<Promise<void> | null>(null)
+  const remoteWriteBlockedRef = useRef(false)
+  const remoteWriteRevisionRef = useRef(localSavedState?.examSessionRevision ?? 0)
+  const pendingRemoteWritesRef = useRef(new Set<Promise<void>>())
+  const saveNowRef = useRef<((allowProgressRollback?: boolean) => void | Promise<void>) | null>(null)
+
+  function trackRemoteWrite<T>(operation: Promise<T>): Promise<T> {
+    const settled = operation.then(() => undefined, () => undefined)
+    pendingRemoteWritesRef.current.add(settled)
+    void settled.then(() => pendingRemoteWritesRef.current.delete(settled))
+    return operation
+  }
+
+  useEffect(() => {
+    if (!REMOTE_EXAM_SESSION_BACKEND_ENABLED || !isSupabaseConfigured || !userId || !deviceId || !tabId) return
+    const identity = { userId, deviceId, tabId }
+    const lifecycle = createExamSessionLifecycle({
+      save: () => saveNowRef.current?.(),
+      waitForPendingWrites: async () => {
+        const pending = [...pendingRemoteWritesRef.current]
+        if (remoteCreatePromiseRef.current) {
+          pending.push(remoteCreatePromiseRef.current.catch(() => undefined))
+        }
+        await Promise.all(pending)
+      },
+      releaseLease: () => releaseExamTabLease(identity),
+      onSaveFailure: () => {
+        console.warn('Final exam progress could not be confirmed; the tab lease will expire.')
+      },
+      onReleaseFailure: () => {
+        console.warn('Exam tab lease release could not be confirmed.')
+      },
+    })
+    window.addEventListener('pagehide', lifecycle.pagehide)
+    window.addEventListener('pageshow', lifecycle.pageshow)
+    return () => {
+      window.removeEventListener('pagehide', lifecycle.pagehide)
+      window.removeEventListener('pageshow', lifecycle.pageshow)
+      lifecycle.unmount()
+    }
+  }, [userId, deviceId, tabId])
   const [phase, setPhase] = useState<Phase>(savedState ? 'active' : 'preview')
   const sessionStartModeRef = useRef<'automatic' | 'manual'>(savedState?.startMode ?? 'manual')
   // The manual choice is kept per route (slug + scope), so a refresh keeps it and another route never sees it.
@@ -312,8 +406,15 @@ export function ExamDriveSession({
   )
   const [voiceVolume, setVoiceVolume] = useState(examVoiceVolume)
   const [nextPin, setNextPin] = useState<PinRow | null>(null)
+  const nextPinRef = useRef<PinRow | null>(null)
+  nextPinRef.current = nextPin
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
   const [routeComplete, setRouteComplete] = useState(false)
+  const [audioPlaybackError, setAudioPlaybackError] = useState<{
+    sortOrder: number
+    message: string
+  } | null>(null)
+  const [audioRetryToken, setAudioRetryToken] = useState(0)
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [pendingPinSortOrder, setPendingPinSortOrderState] = useState<number | null>(initialAudioQueue.pending)
   /** After mid-route დასრულება, summary offers გაგრძელება using kept localStorage progress. */
@@ -338,6 +439,115 @@ export function ExamDriveSession({
   useEffect(() => {
     phaseRef.current = phase
   }, [phase])
+
+  useEffect(() => {
+    if (!REMOTE_EXAM_SESSION_BACKEND_ENABLED || !isSupabaseConfigured || !userId || !deviceId) {
+      setRemoteSessionLoading(false)
+      return
+    }
+    if (!tabId) {
+      setRemoteSessionLoading(false)
+      setRemotePersistenceError('ამ მოწყობილობის ბრაუზერის tab-ის იდენტიფიკაცია ვერ მოხერხდა.')
+      return
+    }
+
+    const loadKey = `${userId}:${deviceId}:${tabId}:${route.slug}`
+    if (remoteLoadKeyRef.current === loadKey) return
+    remoteLoadKeyRef.current = loadKey
+    remoteWriterRef.current = null
+    remoteSessionIdRef.current = null
+    remoteWriteBlockedRef.current = false
+    setRemoteSavedState(null)
+    let cancelled = false
+    setRemoteSessionLoading(true)
+    setRemotePersistenceError(null)
+
+    void (async () => {
+      const tabIdentity = { userId, deviceId, tabId }
+      const local = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
+      let remote = local?.examSessionId
+        ? await getRemoteExamSession(local.examSessionId, tabIdentity)
+        : null
+      if (!local?.examSessionId) {
+        const candidates = (await listRemoteExamSessions(tabIdentity))
+          .filter((item) => item.route_slug === route.slug)
+        remote = candidates
+          .sort((first, second) => Date.parse(second.updated_at) - Date.parse(first.updated_at))[0] ?? null
+      }
+
+      if (local?.examSessionId && !remote) {
+        throw new Error('ამ მოწყობილობის შენახული გამოცდის სესია სერვერზე აღარ არსებობს.')
+      }
+      if (cancelled || !remote) return
+      if (
+        remote.user_id !== userId ||
+        remote.device_id !== deviceId ||
+        (remote.tab_id !== null && remote.tab_id !== tabId) ||
+        remote.route_slug !== route.slug ||
+        (remote.status !== 'active' && remote.status !== 'paused')
+      ) {
+        throw new Error('Սերվერული გამოცდის სესია չի համապատხვდება այս ანგარიშს, მოწყობილობას ან მარშრუტს.')
+      }
+
+      const remoteProgress = isSavedExamState(remote.progress) ? remote.progress : null
+      const source = reconcileRemoteExamProgress(
+        local,
+        remoteProgress,
+        remote.session_id,
+        remote.version,
+      )
+      if (!source) {
+        throw new Error('სერვერზე შენახული გამოცდის პროგრესი ვერ აღდგა.')
+      }
+
+      const restored: SavedExamState = {
+        ...source,
+        userId,
+        deviceId,
+        ...(tabId ? { tabId } : {}),
+        examSessionId: remote.session_id,
+        examSessionVersion: remote.version,
+        savedAt: Math.max(source.savedAt, Date.parse(remote.updated_at) || 0),
+      }
+      remoteSessionIdRef.current = remote.session_id
+      remoteWriterRef.current = new RemoteExamSessionWriter(remote.session_id, remote.version, tabIdentity)
+      remoteWriteRevisionRef.current = Math.max(
+        remoteWriteRevisionRef.current,
+        local?.examSessionRevision ?? 0,
+      )
+      remoteWriteBlockedRef.current = false
+      saveActiveExam(restored, { allowProgressRollback: true }, persistenceScope)
+      setRemoteSavedState(restored)
+      setSavedEpoch((value) => value + 1)
+      setRemoteRestoreToken((value) => value + 1)
+      if (restored.examSessionDirty) {
+        void persistRemoteSnapshot(restored).catch(() => {})
+      }
+    })()
+      .catch((error: unknown) => {
+        if (cancelled) return
+        const detail = error instanceof Error ? error.message : 'უცნობი შეცდომა'
+        console.error('Remote exam session restore failed:', error)
+        setRemotePersistenceError(`სერვერული გამოცდის სესია ვერ აღდგა: ${detail}`)
+      })
+      .finally(() => {
+        if (!cancelled) setRemoteSessionLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    userId,
+    deviceId,
+    tabId,
+    route.id,
+    route.slug,
+    route.name_ka,
+    persistenceScope,
+    remoteRetryToken,
+    remoteRestoreToken,
+  ])
 
   const finishRouteSlugRef = useRef<string | null>(null)
   const initialProgressRead = useMemo(
@@ -378,6 +588,7 @@ export function ExamDriveSession({
   const audioAttemptInFlightRef = useRef(false)
   const audioRetryTimerRef = useRef<number | null>(null)
   const audioQueueWatchdogRef = useRef<number | null>(null)
+  const audioPlaybackAttemptRef = useRef(0)
   const startAudioRetryTimerRef = useRef<number | null>(null)
   const startAudioPendingRef = useRef(false)
   const automaticFinishStartedRef = useRef(false)
@@ -390,7 +601,6 @@ export function ExamDriveSession({
   const audioSessionGenerationRef = useRef(0)
   const audioRouteSlugRef = useRef(route.slug)
   const saveOwnerRef = useRef(0)
-  const saveNowRef = useRef<((allowProgressRollback?: boolean) => void) | null>(null)
   const prevGpsRef = useRef<GpsPosition | null>(null)
   const speedTrackerRef = useRef(createSpeedTracker())
   const gpsFilterRef = useRef(createGpsFilter())
@@ -754,7 +964,16 @@ export function ExamDriveSession({
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
     setHeading(0)
-  }, [route.id, route.slug, route.name_ka, persistenceScope, sortedPins, features.mapNav, setPendingPinSortOrder])
+  }, [
+    route.id,
+    route.slug,
+    route.name_ka,
+    persistenceScope,
+    sortedPins,
+    features.mapNav,
+    setPendingPinSortOrder,
+    remoteRestoreToken,
+  ])
 
   // Local p2-/p3- ids and Supabase UUIDs share sort_order. Progress is kept by sort_order,
   // so a pin list swap re-derives the handled ids instead of dropping or guessing them.
@@ -791,7 +1010,9 @@ export function ExamDriveSession({
     if (!silent) setGpsStarting(true)
     setGpsError(null)
     try {
-      const pos = await requestGpsOnce({ allowCached: silent || hasGpsConsent() })
+      const pos = previewGpsSource
+        ? await previewGpsSource.getCurrentPosition()
+        : await requestGpsOnce({ allowCached: silent || hasGpsConsent() })
       const raw = gpsToLatLng(pos)
       setRawPos(pos)
       currentPositionRef.current = raw
@@ -802,7 +1023,7 @@ export function ExamDriveSession({
       prevGpsRef.current = pos
       setSpeedKmh(0)
       setGpsStarted(true)
-      markGpsConsentGranted()
+      if (!previewGpsSource) markGpsConsentGranted()
       return { position: raw, fix: pos, denied: false }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'GPS შეცდომა'
@@ -813,10 +1034,10 @@ export function ExamDriveSession({
     } finally {
       if (!silent) setGpsStarting(false)
     }
-  }, [polyline, markSpeedLimitFixFresh, updateSpeedRoadProgress])
+  }, [polyline, previewGpsSource, markSpeedLimitFixFresh, updateSpeedRoadProgress])
 
   useEffect(() => {
-    if (gpsStarted || gpsStarting || getGpsEnvironmentIssue()) return
+    if (previewGpsSource || gpsStarted || gpsStarting || getGpsEnvironmentIssue()) return
     let cancelled = false
     void (async () => {
       if (!(await shouldAutoStartGps())) return
@@ -826,7 +1047,7 @@ export function ExamDriveSession({
     return () => {
       cancelled = true
     }
-  }, [route.id, gpsStarted, gpsStarting, enableGps])
+  }, [route.id, gpsStarted, gpsStarting, enableGps, previewGpsSource])
 
   // Browser autoplay: the audio engine must be unlocked by a real user interaction.
   // Covers resume-after-reload where the "start" button is never pressed again.
@@ -920,12 +1141,15 @@ export function ExamDriveSession({
             }
           })()
         : {}
-      saveActiveExam(
-        {
+      const snapshot: SavedExamState = {
           routeId: route.id,
           routeSlug: route.slug,
           routeName: route.name_ka,
           phase: 'active',
+          ...(userId ? { userId } : {}),
+          ...(deviceId ? { deviceId } : {}),
+          ...(tabId ? { tabId } : {}),
+          ...(remoteSessionIdRef.current ? { examSessionId: remoteSessionIdRef.current } : {}),
           startMode: sessionStartModeRef.current,
           exam,
           userPos: currentPositionRef.current,
@@ -937,33 +1161,51 @@ export function ExamDriveSession({
           queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
           ...fieldTest,
           savedAt: Date.now(),
-        },
-        { allowProgressRollback },
-        persistenceScope,
-      )
+        }
+      saveActiveExam(snapshot, { allowProgressRollback }, persistenceScope)
+      return persistRemoteSnapshot(snapshot)
     }
 
     saveNowRef.current = saveState
-    saveState()
-    const id = window.setInterval(saveState, 5000)
-    const persistOnLeave = () => saveState()
-    const persistIfHidden = () => {
-      if (document.visibilityState === 'hidden') saveState()
+    const saveAndHandleFailure = () => {
+      const pendingSave = saveState()
+      if (pendingSave) void pendingSave.catch(() => undefined)
     }
-    window.addEventListener('pagehide', persistOnLeave)
+    saveAndHandleFailure()
+    const id = window.setInterval(saveAndHandleFailure, 5000)
+    const persistIfHidden = () => {
+      if (document.visibilityState === 'hidden') saveAndHandleFailure()
+    }
     document.addEventListener('visibilitychange', persistIfHidden)
     return () => {
       window.clearInterval(id)
-      window.removeEventListener('pagehide', persistOnLeave)
       document.removeEventListener('visibilitychange', persistIfHidden)
       if (saveNowRef.current === saveState) saveNowRef.current = null
-      if (!finishInProgressRef.current) saveState() // Only save on cleanup if not finishing
+      if (!finishInProgressRef.current) saveState()
     }
-  }, [phase, route.id, route.slug, route.name_ka, persistenceScope, exam, userPos, heading, speedKmh, elapsedMs, sortedPins])
+  }, [
+    phase,
+    route.id,
+    route.slug,
+    route.name_ka,
+    persistenceScope,
+    userId,
+    deviceId,
+    tabId,
+    exam,
+    userPos,
+    heading,
+    speedKmh,
+    elapsedMs,
+    sortedPins,
+  ])
 
   useEffect(() => {
     if (!gpsStarted) return
-    return watchGps(
+    const subscribe = previewGpsSource
+      ? previewGpsSource.watchPosition.bind(previewGpsSource)
+      : watchGps
+    return subscribe(
       (pos) => {
         // Apply GPS filter
         const reading: GpsReading = {
@@ -1028,10 +1270,16 @@ export function ExamDriveSession({
             pendingPinSortOrderRef.current,
             ...queuedAudioPinOrdersRef.current,
           ].filter((order): order is number => order !== null)
-          triggeredRef.current = new Set([
-            ...pinIdsForOrders(voicePins, handledOrdersRef.current),
-            ...pinIdsForOrders(voicePins, new Set(scheduledOrders)),
-          ])
+          // Keep handled order progression authoritative. Rebuilding triggered pins from
+          // audio scheduling must never move the UI back to an already handled PIN.
+          triggeredRef.current = new Set(
+            voicePins
+              .filter((pin) => (
+                handledOrdersRef.current?.has(pin.sort_order) ||
+                scheduledOrders.includes(pin.sort_order)
+              ))
+              .map((pin) => pin.id),
+          )
         }
         
         // Find the FIRST untriggered pin in sequence
@@ -1087,17 +1335,34 @@ export function ExamDriveSession({
 
         const previousRouteMatch = routeMatchStateRef.current
         const usesOrderedRouteContext = route.slug === 'route-3'
-        const pendingRouteProjection = usesOrderedRouteContext && pending
+        const usesRoute2Pin26Context =
+          route.slug === 'route-2' && pending?.sort_order === 26
+        const usesRouteContextTarget =
+          (route.slug === 'route-1' && pending?.sort_order === 32) ||
+          (route.slug === 'route-3' && pending?.sort_order === 29) ||
+          (route.slug === 'route-4' && pending?.sort_order === 29)
+        const orderedPendingProjection = pending
           ? projectOrderedPointsToRoute(
-              routeGeometry,
-              voicePins
-                .filter((pin) => pin.sort_order <= pending.sort_order)
-                .sort((first, second) => first.sort_order - second.sort_order)
-                .map((pin) => [pin.lat, pin.lng] as const),
-            )
+            routeGeometry,
+            voicePins
+              .filter((pin) => pin.sort_order <= pending.sort_order)
+              .sort((first, second) => first.sort_order - second.sort_order)
+              .map((pin) => [pin.lat, pin.lng] as const),
+          )
           : null
+        const usesOrderedPendingContext =
+          usesOrderedRouteContext || usesRouteContextTarget
+        const usesTargetOccurrenceContext =
+          usesRoute2Pin26Context || usesRouteContextTarget
+        const pendingRouteProjection = pending && usesTargetOccurrenceContext
+          ? projectPointToRoute(routeGeometry, [pending.lat, pending.lng])
+          : pending && usesOrderedPendingContext
+            ? orderedPendingProjection
+            : null
         let expectedChainageMeters: number | undefined
-        let expectedPinChainageMeters: number | undefined
+        let expectedPinChainageMeters = usesTargetOccurrenceContext || usesOrderedRouteContext
+          ? pendingRouteProjection?.chainageMeters
+          : undefined
         if (!previousRouteMatch) {
           const handledOrders = handledOrdersRef.current ?? new Set<number>()
           const routeContextPins = [
@@ -1127,13 +1392,15 @@ export function ExamDriveSession({
           const contextProjection = contextPin
             ? startsAtFirstPin
               ? projectPointToRoute(routeGeometry, routeStart)
-              : usesOrderedRouteContext
+            : usesOrderedPendingContext || usesRoute2Pin26Context
                 ? orderedContextProjection
                 : projectPointToRoute(routeGeometry, [contextPin.lat, contextPin.lng])
             : null
           if (contextProjection && contextProjection.crossTrackMeters <= 20) {
             expectedChainageMeters = contextProjection.chainageMeters
-            if (contextPin === pending) expectedPinChainageMeters = contextProjection.chainageMeters
+            if (contextPin === pending && !usesRoute2Pin26Context) {
+              expectedPinChainageMeters = contextProjection.chainageMeters
+            }
           }
         }
         const routeMatch = matchGpsPosition(
@@ -1168,6 +1435,22 @@ export function ExamDriveSession({
 
         if (!routeMatch.accepted || !routeMatch.nextState) return
         routeMatchStateRef.current = routeMatch.nextState
+        const matchedPosition: LatLng = [
+          routeMatch.projection.position[0],
+          routeMatch.projection.position[1],
+        ]
+        setUserPos(matchedPosition)
+        currentPositionRef.current = matchedPosition
+        if (
+          routeMatch.direction === 'forward' ||
+          routeMatch.direction === 'reverse'
+        ) {
+          const matchedHeading =
+            routeMatch.direction === 'reverse'
+              ? (routeMatch.projection.segmentBearingDegrees + 180) % 360
+              : routeMatch.projection.segmentBearingDegrees
+          setHeading(matchedHeading)
+        }
 
         const target = pending
         const gateTarget = target
@@ -1261,9 +1544,14 @@ export function ExamDriveSession({
             maxPinCrossTrackMeters: 20,
             maxFixCrossTrackMeters: 20,
             maxAccuracyMeters: 12,
-            approachWindowMeters: pinAudioTriggerDistanceMeters(route.slug, target.sort_order),
+            approachWindowMeters: pinAudioApproachWindowMeters(route.slug, target.sort_order),
             minimumForwardMeters: 2,
             expectedPinChainageMeters,
+            requireExpectedPinChainage: usesTargetOccurrenceContext,
+            gpsPosition: raw,
+            maxGpsToPinMeters: usesRoute2Pin26Context
+              ? 20
+              : pinAudioTriggerDistanceMeters(route.slug, target.sort_order),
           },
         )
 
@@ -1280,7 +1568,14 @@ export function ExamDriveSession({
           completion.fixProjection &&
           completion.pinProjection.chainageMeters >= completion.fixProjection.chainageMeters &&
           !audioHeadingOk(
-            headingMatches(raw, [target.lat, target.lng], pos.heading, AUDIO_HEADING_TOLERANCE_DEG),
+            headingMatches(
+              raw,
+              [target.lat, target.lng],
+              pos.heading,
+              usesRoute2Pin26Context || usesRouteContextTarget
+                ? 45
+                : AUDIO_HEADING_TOLERANCE_DEG,
+            ),
             pos.speed,
           )
         ) return
@@ -1314,20 +1609,22 @@ export function ExamDriveSession({
         } else if (!queuedAudioPinOrdersRef.current.includes(target.sort_order)) {
           queuedAudioPinOrdersRef.current.push(target.sort_order)
         }
-        saveNowRef.current?.()
+        const pendingSave = saveNowRef.current?.()
+        if (pendingSave) void pendingSave.catch(() => undefined)
       },
       (err) => {
         setGpsError(formatGpsError(err))
         clearSpeedLimitFixFreshness()
       },
     )
-  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline, clearSpeedLimitFixFreshness, markSpeedLimitFixFresh, updateSpeedRoadProgress])
+  }, [gpsStarted, voicePins, phase, route.slug, features.routeAudio, polyline, previewGpsSource, clearSpeedLimitFixFreshness, markSpeedLimitFixFresh, updateSpeedRoadProgress])
 
   useEffect(() => {
     if (
       phase !== 'active' ||
       !features.routeAudio ||
       pendingPinSortOrder === null ||
+      audioPlaybackError?.sortOrder === pendingPinSortOrder ||
       finishInProgressRef.current
     ) return
 
@@ -1349,7 +1646,7 @@ export function ExamDriveSession({
       }, AUDIO_RETRY_BASE_MS)
     }
 
-    const completePin = (voicePlayed: boolean) => {
+    const completePin = () => {
       if (!isCurrent()) return
       if (audioQueueWatchdogRef.current !== null) {
         clearTimeout(audioQueueWatchdogRef.current)
@@ -1359,17 +1656,12 @@ export function ExamDriveSession({
       const currentPin = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order) ?? target
       markPinHandled(currentPin)
       pinApproachRef.current.delete(currentPin.id)
-      if (voicePlayed) setLastSpoken(currentPin.instruction_ka)
+      setAudioPlaybackError(null)
+      setLastSpoken(currentPin.instruction_ka)
       setPendingPinSortOrder(queuedAudioPinOrdersRef.current.shift() ?? null)
-      saveNowRef.current?.()
+      const pendingSave = saveNowRef.current?.()
+      if (pendingSave) void pendingSave.catch(() => undefined)
     }
-
-    audioQueueWatchdogRef.current = window.setTimeout(() => {
-      if (!isCurrent()) return
-      console.warn('[AUDIO] PIN playback watchdog expired; advancing queued voice', target.sort_order)
-      audioEngine.stopAll()
-      completePin(false)
-    }, AUDIO_QUEUE_WATCHDOG_MS)
 
     const attemptPlayback = async () => {
       if (!isCurrent() || audioAttemptInFlightRef.current) return
@@ -1380,25 +1672,36 @@ export function ExamDriveSession({
 
       audioAttemptInFlightRef.current = true
       let settled = false
+      const attemptId = ++audioPlaybackAttemptRef.current
+      const isAttemptCurrent = () =>
+        attemptId === audioPlaybackAttemptRef.current && isCurrent()
       const failed = (reason: PlaybackFailureReason | null = null) => {
-        if (settled || !isCurrent()) return
+        if (settled || !isAttemptCurrent()) return
         settled = true
         audioAttemptInFlightRef.current = false
+        if (audioQueueWatchdogRef.current !== null) {
+          clearTimeout(audioQueueWatchdogRef.current)
+          audioQueueWatchdogRef.current = null
+        }
         if (reason !== null) {
           console.warn(
-            '[AUDIO] Skipping unavailable PIN voice and continuing navigation',
+            '[AUDIO] PIN voice failed; keeping PIN pending',
             target.sort_order,
             reason,
           )
-          completePin(false)
+          setAudioPlaybackError({
+            sortOrder: target.sort_order,
+            message: 'აუდიო ვერ ჩაირთო. PIN პროგრესში არ ჩაითვალა.',
+          })
           return
         }
+        audioPlaybackAttemptRef.current += 1
         scheduleRetry()
       }
       const completed = () => {
-        if (settled || !isCurrent()) return
+        if (settled || !isAttemptCurrent()) return
         settled = true
-        completePin(true)
+        completePin()
       }
 
       const currentTarget = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order)
@@ -1407,6 +1710,18 @@ export function ExamDriveSession({
         return
       }
       try {
+        audioQueueWatchdogRef.current = window.setTimeout(() => {
+          if (!isAttemptCurrent()) return
+          audioPlaybackAttemptRef.current += 1
+          console.warn('[AUDIO] PIN playback watchdog expired; keeping PIN pending', target.sort_order)
+          audioEngine.stopAll()
+          audioAttemptInFlightRef.current = false
+          audioQueueWatchdogRef.current = null
+          setAudioPlaybackError({
+            sortOrder: target.sort_order,
+            message: 'აუდიო ვერ დასრულდა. PIN პროგრესში არ ჩაითვალა.',
+          })
+        }, AUDIO_QUEUE_WATCHDOG_MS)
         const status = await audioEngine.playDetailed(
           currentTarget.audio_url,
           currentTarget.id,
@@ -1416,15 +1731,16 @@ export function ExamDriveSession({
         if (status === 'failed') failed('play-rejected')
         else if (status === 'busy' || status === 'cancelled') failed(null)
         else if (status === 'duplicate') {
+          audioPlaybackAttemptRef.current += 1
           audioAttemptInFlightRef.current = false
+          if (audioQueueWatchdogRef.current !== null) {
+            clearTimeout(audioQueueWatchdogRef.current)
+            audioQueueWatchdogRef.current = null
+          }
           scheduleRetry()
         }
       } catch (error) {
-        console.warn(
-          '[AUDIO] PIN playback threw; continuing navigation',
-          target.sort_order,
-          error,
-        )
+        console.warn('[AUDIO] PIN playback threw; keeping PIN pending', target.sort_order, error)
         failed('play-rejected')
       }
     }
@@ -1455,7 +1771,7 @@ export function ExamDriveSession({
         audioQueueWatchdogRef.current = null
       }
     }
-  }, [pendingPinSortOrder, phase, features.routeAudio, route.slug, voicePins, setPendingPinSortOrder])
+  }, [pendingPinSortOrder, phase, features.routeAudio, route.slug, voicePins, setPendingPinSortOrder, audioRetryToken, audioPlaybackError])
 
   const handleError = useCallback((errorId: string) => {
     setExam((prev) => recordExamError(prev, errorId, false))
@@ -1527,6 +1843,7 @@ export function ExamDriveSession({
     }
 
     audioSessionGenerationRef.current++
+    setAudioPlaybackError(null)
     const sessionGeneration = audioSessionGenerationRef.current
     audioEngine.stopAll()
     if (startAudioRetryTimerRef.current !== null) {
@@ -1607,10 +1924,11 @@ export function ExamDriveSession({
     if (startAudioPendingRef.current) playSessionStartAudio(sessionGeneration)
   }
 
-  async function handleStartSession() {
+  async function handleStartSession(startAtSortOrder?: number) {
     // Must run synchronously inside the click, before any await (GPS prompt would lose the gesture).
     audioEngine.unlock()
     if (gpsStarting) return
+    if (remoteSessionLoading || remoteSessionCreating || remotePersistenceError) return
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       const progressRead = readRoutePinProgress(route.slug, persistenceScope)
       if (progressRead.status === 'invalid' || progressRead.status === 'unavailable') {
@@ -1626,6 +1944,14 @@ export function ExamDriveSession({
     // Just ensure GPS is ready and stay in active phase
     // ============================================================
     if (savedState) {
+      try {
+        await ensureRemoteExamSession(savedState)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'უცნობი შეცდომა'
+        console.error('Could not bind the resumed exam to its server session:', error)
+        setRemotePersistenceError(`გამოცდის სერვერულ სესიასთან მიბმა ვერ მოხერხდა: ${detail}`)
+        return
+      }
       console.log('🔄 Resuming active session - not calling startSession()')
       sessionStartModeRef.current = savedState.startMode ?? 'manual'
       if (FIELD_TEST_SLUGS.has(route.slug)) {
@@ -1679,7 +2005,11 @@ export function ExamDriveSession({
     }
     
     // No saved state - this is a NEW session. Resume returned above.
-    const gpsResult = rawPos ? { position: userPos, fix: rawPos, denied: false } : await enableGps(false)
+    const gpsResult = previewGpsSource
+      ? await enableGps(false)
+      : rawPos
+        ? { position: userPos, fix: rawPos, denied: false }
+        : await enableGps(false)
     if (gpsResult.denied) return
     const gpsAutoStartPin = !gpsAutoStartBlockedRef.current &&
       gpsResult.position &&
@@ -1692,11 +2022,33 @@ export function ExamDriveSession({
           route.slug as 'route-1' | 'route-2' | 'route-3' | 'route-4',
         ).pin
       : null
-    const selectedSortOrder = previewSelectionMode === 'manual'
-      ? previewPin?.sort_order
-      : (gpsAutoStartPin ?? autoStartPin)?.sort_order
+    const selectedSortOrder = startAtSortOrder ?? (
+      previewSelectionMode === 'manual'
+        ? previewPin?.sort_order
+        : (gpsAutoStartPin ?? autoStartPin)?.sort_order
+    )
     if (selectedSortOrder === undefined || selectedSortOrder === null) return
-    startSession(selectedSortOrder, previewSelectionMode)
+    if (startAtSortOrder !== undefined) {
+      setPreviewSelectionMode('manual')
+      setPreviewPinSelection({ routeId: route.id, sortOrder: startAtSortOrder })
+      saveManualPinSelection(route.slug, startAtSortOrder, persistenceScope)
+    }
+    try {
+      await ensureRemoteExamSession(
+        undefined,
+        selectedSortOrder,
+        startAtSortOrder === undefined ? previewSelectionMode : 'manual',
+      )
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'უცნობი შეცდომა'
+      console.error('Could not create the server exam session:', error)
+      setRemotePersistenceError(`გამოცდის სერვერული სესია ვერ შეიქმნა: ${detail}`)
+      return
+    }
+    startSession(
+      selectedSortOrder,
+      startAtSortOrder === undefined ? previewSelectionMode : 'manual',
+    )
   }
 
   function fieldTestProgressFields() {
@@ -1776,15 +2128,192 @@ export function ExamDriveSession({
     setNextPin(pinsRef.current.find((item) => !triggeredRef.current.has(item.id)) ?? null)
   }
 
+  async function ensureRemoteExamSession(
+    initialState?: SavedExamState,
+    startSortOrder = 1,
+    startMode: 'automatic' | 'manual' = 'automatic',
+  ): Promise<void> {
+    if (!REMOTE_EXAM_SESSION_BACKEND_ENABLED || !isSupabaseConfigured || !userId || !deviceId) return
+    if (!tabId) throw new Error('ამ მოწყობილობის ბრაუზერის tab-ის იდენტიფიკაცია ვერ მოხერხდა.')
+    if (remoteWriterRef.current && remoteSessionIdRef.current) return
+    if (remoteCreatePromiseRef.current) return remoteCreatePromiseRef.current
+
+    setRemoteSessionCreating(true)
+    const creation = (async () => {
+      const priorOrders = voicePins
+        .filter((pin) => pin.sort_order < startSortOrder)
+        .map((pin) => pin.sort_order)
+      const progressFields = FIELD_TEST_SLUGS.has(route.slug)
+        ? {
+            triggeredSortOrders: priorOrders,
+            lastPassedSortOrder: priorOrders.at(-1) ?? null,
+            nextSortOrder: voicePins.find((pin) => pin.sort_order >= startSortOrder)?.sort_order ?? null,
+          }
+        : {}
+      const initialSnapshot: SavedExamState = initialState ?? {
+        routeId: route.id,
+        routeSlug: route.slug,
+        routeName: route.name_ka,
+        phase: 'active',
+        userId,
+        deviceId,
+        startMode,
+        exam: createExamSession(route.id, route.name_ka),
+        userPos: currentPositionRef.current,
+        heading,
+        speedKmh,
+        elapsedMs: 0,
+        triggeredPins: Array.from(pinIdsForOrders(voicePins, new Set(priorOrders))),
+        pendingPinSortOrder: null,
+        queuedPinSortOrders: [],
+        ...progressFields,
+        savedAt: Date.now(),
+      }
+      const sessionSnapshot: SavedExamState = {
+        ...initialSnapshot,
+        userId,
+        deviceId,
+        ...(tabId ? { tabId } : {}),
+      }
+      const migrationKeyStorageKey =
+        `cityroute-exam-create:${encodeURIComponent(userId)}:${encodeURIComponent(deviceId)}:${encodeURIComponent(tabId ?? 'no-tab')}:${encodeURIComponent(route.slug)}`
+      let migrationKey: string | null
+      try {
+        migrationKey = sessionStorage.getItem(migrationKeyStorageKey)
+        if (!migrationKey) {
+          migrationKey = newExamSessionMigrationKey()
+          sessionStorage.setItem(migrationKeyStorageKey, migrationKey)
+        }
+      } catch (error) {
+        throw new Error('გამოცდის სესიის უსაფრთხო აღდგენის გასაღები ვერ შეინახა.', { cause: error })
+      }
+
+      const session = await createRemoteExamSession({
+        userId,
+        routeSlug: route.slug,
+        deviceId,
+        tabId: tabId ?? '',
+        progress: toJson(sessionSnapshot),
+        errors: toJson(sessionSnapshot.exam.counts),
+        elapsedMs: sessionSnapshot.elapsedMs,
+        startedAt: new Date(sessionSnapshot.exam.startedAt).toISOString(),
+        migrationKey,
+      })
+      if (
+        session.user_id !== userId ||
+        session.device_id !== deviceId ||
+        session.tab_id !== (tabId ?? '') ||
+        session.route_slug !== route.slug
+      ) {
+        throw new Error('სერვერმა სხვა ანგარიშის, მოწყობილობის ან მარშრუტის გამოცდის სესია დააბრუნა.')
+      }
+
+      remoteSessionIdRef.current = session.session_id
+      remoteWriterRef.current = new RemoteExamSessionWriter(
+        session.session_id,
+        session.version,
+        { userId, deviceId, tabId },
+      )
+      remoteWriteBlockedRef.current = false
+      const initialRevision = ++remoteWriteRevisionRef.current
+      sessionStorage.removeItem(migrationKeyStorageKey)
+      const restored = {
+        ...sessionSnapshot,
+        userId,
+        deviceId,
+        examSessionId: session.session_id,
+        examSessionVersion: session.version,
+        examSessionRevision: initialRevision,
+        examSessionDirty: false,
+      }
+      saveActiveExam(restored, { allowProgressRollback: true }, persistenceScope)
+      setRemoteSavedState(restored)
+      setSavedEpoch((value) => value + 1)
+      setRemotePersistenceError(null)
+    })()
+    remoteCreatePromiseRef.current = creation
+    try {
+      await creation
+    } finally {
+      if (remoteCreatePromiseRef.current === creation) remoteCreatePromiseRef.current = null
+      setRemoteSessionCreating(false)
+    }
+  }
+
+  function persistRemoteSnapshot(
+    snapshot: SavedExamState,
+    status: 'active' | 'paused' = 'active',
+  ): Promise<void> {
+    if (!REMOTE_EXAM_SESSION_BACKEND_ENABLED || !isSupabaseConfigured || !userId || !deviceId) {
+      return Promise.resolve()
+    }
+    if (remoteWriteBlockedRef.current) {
+      return Promise.reject(new Error('სერვერული სესია შეიცვალა სხვა აქტიურ ჩანაწერში; ავტომატური გადაწერა შეჩერებულია.'))
+    }
+    const writer = remoteWriterRef.current
+    if (!writer || !snapshot.examSessionId) {
+      const error = new Error('გამოცდის სესია სერვერზე ჯერ არ არის მიბმული.')
+      setRemotePersistenceError(error.message)
+      return Promise.reject(error)
+    }
+    const stored = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
+    const revision = ++remoteWriteRevisionRef.current
+    const pendingSnapshot: SavedExamState = {
+      ...(stored?.examSessionId === snapshot.examSessionId ? stored : snapshot),
+      ...(tabId ? { tabId } : {}),
+      examSessionId: remoteSessionIdRef.current,
+      examSessionRevision: revision,
+      examSessionDirty: true,
+    }
+    saveActiveExam(pendingSnapshot, { allowProgressRollback: true }, persistenceScope)
+    const requestSnapshot =
+      loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope) ?? pendingSnapshot
+    const remoteOnlyFields = new Set([
+      'examSessionVersion',
+      'examSessionRevision',
+      'examSessionDirty',
+    ])
+    const remoteProgress = Object.fromEntries(
+      Object.entries(requestSnapshot).filter(([key]) => !remoteOnlyFields.has(key)),
+    )
+    const progress = toJson(remoteProgress)
+    const errors = toJson(requestSnapshot.exam.counts)
+    return trackRemoteWrite(writer.save(status, progress, errors, requestSnapshot.elapsedMs)
+      .then((session) => {
+        const current = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
+        const committed = applyRemoteExamSaveVersion(
+          current,
+          revision,
+          session.version,
+          requestSnapshot,
+        )
+        if (committed && committed !== current) {
+          saveActiveExam(committed, { allowProgressRollback: true }, persistenceScope)
+        }
+        setRemotePersistenceError(null)
+      })
+      .catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : 'უცნობი შეცდომა'
+        remoteWriteBlockedRef.current = true
+        console.error('Remote exam session save failed:', error)
+        setRemotePersistenceError(`სერვერზე გამოცდის პროგრესი ვერ შეინახა: ${detail}`)
+        throw error
+      }))
+  }
+
   function persistActiveExamNow() {
     const liveElapsed = sessionStartRef.current
       ? Math.max(0, Date.now() - sessionStartRef.current)
       : elapsedMs
-    saveActiveExam({
+    const snapshot: SavedExamState = {
       routeId: route.id,
       routeSlug: route.slug,
       routeName: route.name_ka,
       phase: 'active',
+      ...(userId ? { userId } : {}),
+      ...(deviceId ? { deviceId } : {}),
+      ...(tabId ? { tabId } : {}),
+      ...(remoteSessionIdRef.current ? { examSessionId: remoteSessionIdRef.current } : {}),
       exam,
       userPos: currentPositionRef.current,
       heading,
@@ -1796,7 +2325,9 @@ export function ExamDriveSession({
       queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
       ...(FIELD_TEST_SLUGS.has(route.slug) ? fieldTestProgressFields() : {}),
       savedAt: Date.now(),
-    }, {}, persistenceScope)
+    }
+    saveActiveExam(snapshot, {}, persistenceScope)
+    void persistRemoteSnapshot(snapshot).catch(() => {})
   }
 
   /** True when Telavi field-test routes still have an unhandled PIN (mid-route stop). */
@@ -1808,7 +2339,7 @@ export function ExamDriveSession({
     return nextSortOrder(pins, orders).nextSortOrder !== null
   }
 
-  function finishSession() {
+  async function finishSession() {
     if (finishInProgressRef.current) return
     audioSessionGenerationRef.current++
     finishInProgressRef.current = true
@@ -1852,11 +2383,15 @@ export function ExamDriveSession({
           }
         })()
       : {}
-    saveActiveExam({
+    const pausedSnapshot: SavedExamState = {
       routeId: route.id,
       routeSlug: route.slug,
       routeName: route.name_ka,
       phase: 'active',
+      ...(userId ? { userId } : {}),
+      ...(deviceId ? { deviceId } : {}),
+      ...(tabId ? { tabId } : {}),
+      ...(remoteSessionIdRef.current ? { examSessionId: remoteSessionIdRef.current } : {}),
       exam,
       userPos: currentPositionRef.current,
       heading,
@@ -1868,7 +2403,8 @@ export function ExamDriveSession({
       queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
       ...fieldTest,
       savedAt: pausedAt,
-    }, { allowProgressRollback: true }, persistenceScope)
+    }
+    saveActiveExam(pausedSnapshot, { allowProgressRollback: true }, persistenceScope)
     const persistedPause = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
     if (
       !persistedPause ||
@@ -1881,6 +2417,16 @@ export function ExamDriveSession({
       finishRouteSlugRef.current = null
       setResumeError('სესიის შენახვა ვერ მოხერხდა. სცადეთ ხელახლა; შენახული მონაცემები არ წაშლილა.')
       return
+    }
+    if (REMOTE_EXAM_SESSION_BACKEND_ENABLED && isSupabaseConfigured && userId && deviceId && tabId) {
+      try {
+        await persistRemoteSnapshot(persistedPause, 'paused')
+      } catch {
+        finishInProgressRef.current = false
+        finishRouteSlugRef.current = null
+        setResumeError('სერვერზე გამოცდის სესიის შენახვა ვერ მოხერხდა. პროგრესი ლოკალურად შენახულია; სცადეთ ხელახლა.')
+        return
+      }
     }
     const hasRemainingPins = routeHasRemainingPins()
     setSummaryCanContinue(hasRemainingPins)
@@ -1904,8 +2450,30 @@ export function ExamDriveSession({
     }
   }
 
-  function finalizeSession() {
+  async function finalizeSession() {
     if (!examSummary || summaryFinalized) return
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
+    if (REMOTE_EXAM_SESSION_BACKEND_ENABLED && isSupabaseConfigured && userId && deviceId && tabId) {
+      try {
+        if (!remoteWriterRef.current || !remoteSessionIdRef.current || !saved) {
+          throw new Error('სერვერული გამოცდის სესია ვერ მოიძებნა.')
+        }
+        await trackRemoteWrite(remoteWriterRef.current.finish(
+          toJson(saved),
+          toJson(saved.exam.counts),
+          saved.elapsedMs,
+          toJson(examSummary),
+        ))
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'უცნობი შეცდომა'
+        console.error('Remote exam session finish failed:', error)
+        setRemotePersistenceError(`გამოცდის სერვერზე დასრულება ვერ მოხერხდა: ${detail}`)
+        return
+      }
+      void releaseExamTabLease({ userId, deviceId, tabId }).catch(() => {
+        console.warn('Exam tab lease release could not be confirmed.')
+      })
+    }
     try {
       saveExamSummary(examSummary, persistenceScope)
     } catch (error) {
@@ -1914,6 +2482,8 @@ export function ExamDriveSession({
       return
     }
     clearActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
+    remoteSessionIdRef.current = null
+    remoteWriterRef.current = null
     setSummaryCanContinue(false)
     setSummaryFinalized(true)
     setResumeError(null)
@@ -1943,6 +2513,7 @@ export function ExamDriveSession({
     finishRouteSlugRef.current = null
     audioSessionGenerationRef.current++
     audioEngine.stopAll()
+    setAudioPlaybackError(null)
     queuedAudioPinOrdersRef.current = restoredAudio.queued
     setPendingPinSortOrder(restoredAudio.pending)
     setSummaryCanContinue(false)
@@ -1973,11 +2544,26 @@ export function ExamDriveSession({
     setSavedEpoch((v) => v + 1)
   }
 
-  function restartPreview() {
+  async function restartPreview() {
+    if (remoteWriterRef.current && remoteSessionIdRef.current) {
+      try {
+        await trackRemoteWrite(remoteWriterRef.current.abandon())
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'უცნობი შეცდომა'
+        console.error('Remote exam session abandon failed:', error)
+        setRemotePersistenceError(`გამოცდის სერვერულად გაუქმება ვერ მოხერხდა: ${detail}`)
+        return
+      }
+    }
+    remoteSessionIdRef.current = null
+    remoteWriterRef.current = null
+    setRemoteSavedState(null)
+    setRemotePersistenceError(null)
     const handled = new Set<number>()
     gpsAutoStartBlockedRef.current = true
     automaticFinishStartedRef.current = false
     startAudioPendingRef.current = false
+    setAudioPlaybackError(null)
     if (startAudioRetryTimerRef.current !== null) {
       clearTimeout(startAudioRetryTimerRef.current)
       startAudioRetryTimerRef.current = null
@@ -2013,6 +2599,35 @@ export function ExamDriveSession({
     setSavedEpoch((v) => v + 1)
   }
 
+  const previewDemoActionsRef = useRef<PreviewDemoControls | null>(null)
+  previewDemoActionsRef.current = {
+    startAtPin: (sortOrder) => handleStartSession(sortOrder),
+    reset: restartPreview,
+    nextPinOrder: () => nextPinRef.current?.sort_order ?? null,
+    isActive: () => phaseRef.current === 'active',
+  }
+  const previewDemoControlsRef = useRef<PreviewDemoControls | null>(null)
+  if (previewDemoControlsRef.current === null) {
+    const currentActions = () => {
+      if (!previewDemoActionsRef.current) {
+        throw new Error('Preview DEMO controls are not ready')
+      }
+      return previewDemoActionsRef.current
+    }
+    previewDemoControlsRef.current = {
+      startAtPin: (sortOrder) => currentActions().startAtPin(sortOrder),
+      reset: () => currentActions().reset(),
+      nextPinOrder: () => currentActions().nextPinOrder(),
+      isActive: () => currentActions().isActive(),
+    }
+  }
+
+  useEffect(() => {
+    if (!onPreviewDemoControls) return
+    onPreviewDemoControls(previewDemoControlsRef.current)
+    return () => onPreviewDemoControls(null)
+  }, [onPreviewDemoControls])
+
   const nextPinDistanceLabel =
     active && pinsActive && nextPin && userPos && showVoiceInToolbar
       ? (() => {
@@ -2034,6 +2649,14 @@ export function ExamDriveSession({
 
   return (
     <>
+    {remoteSessionLoading && userId && (
+      <p role="status" className="session-hint">სერვერული გამოცდის სესია იტვირთება...</p>
+    )}
+    {remotePersistenceError && userId && (
+      <p role="alert" data-testid="exam-session-persistence-error" className="error-text">
+        {remotePersistenceError}
+      </p>
+    )}
     <div
       className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}${active && debugPanelEnabled ? ' exam-session--sl-debug' : ''}`}
     >
@@ -2066,6 +2689,25 @@ export function ExamDriveSession({
                   </p>
                 )}
                 {!pinsActive && <p className="exam-voice-muted">ამ მარშრუტზე GPS წერტილები არ არის</p>}
+              </div>
+            )}
+
+            {audioPlaybackError && (
+              <div role="alert" data-testid="audio-playback-error">
+                <p className="error-text">
+                  PIN {audioPlaybackError.sortOrder}: {audioPlaybackError.message}
+                </p>
+                <button
+                  type="button"
+                  className="nav-start-btn"
+                  onClick={() => {
+                    audioAttemptInFlightRef.current = false
+                    setAudioPlaybackError(null)
+                    setAudioRetryToken((token) => token + 1)
+                  }}
+                >
+                  აუდიოს ხელახლა ცდა
+                </button>
               </div>
             )}
 
@@ -2284,6 +2926,9 @@ export function ExamDriveSession({
                 onClick={() => void handleStartSession()}
                 disabled={
                   gpsStarting ||
+                  remoteSessionLoading ||
+                  remoteSessionCreating ||
+                  Boolean(remotePersistenceError) ||
                   previewProgress.status !== 'resume' ||
                   Boolean(resumeError)
                 }

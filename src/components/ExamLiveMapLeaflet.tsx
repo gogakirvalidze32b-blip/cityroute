@@ -687,7 +687,7 @@ export function ExamLiveMapLeaflet({
               <CircleMarker
                 key={pin.id}
                 center={[pin.lat, pin.lng]}
-                radius={isPulse ? 18 : 13}
+                radius={isPulse ? 13 : 10}
                 pathOptions={{
                   color: isNext ? '#0f766e' : '#047857',
                   fillColor: isNext ? '#5eead4' : '#10b981',

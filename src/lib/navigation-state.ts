@@ -180,7 +180,11 @@ export class NavigationStateManager {
     const isOnRoute = distFromRoute <= this.MAX_OFF_ROUTE
     
     // Calculate initial progress
-    const progress = this.calculateRouteProgress(snappedPosition)
+    const distanceToStart = this.calculateDistance(update.position, this.route[0])
+    const distanceToFinish = this.calculateDistance(update.position, this.route[this.route.length - 1])
+    const progress = distanceToStart <= distanceToFinish && distanceToStart <= this.MAX_OFF_ROUTE
+      ? { meters: 0, segmentIndex: 0 }
+      : this.calculateRouteProgress(snappedPosition)
     
     // Initial heading from route direction
     const routeHeading = this.calculateRouteHeading(snappedPosition, progress.segmentIndex)

@@ -7,6 +7,18 @@ import {
   type LatLng,
 } from '@/lib/pure-route-geometry'
 
+function distanceMeters(a: LatLng, b: LatLng): number {
+  const earthRadiusMeters = 6371000
+  const latitudeDelta = ((b[0] - a[0]) * Math.PI) / 180
+  const longitudeDelta = ((b[1] - a[1]) * Math.PI) / 180
+  const latitude1 = (a[0] * Math.PI) / 180
+  const latitude2 = (b[0] * Math.PI) / 180
+  const value =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(latitude1) * Math.cos(latitude2) * Math.sin(longitudeDelta / 2) ** 2
+  return 2 * earthRadiusMeters * Math.asin(Math.sqrt(value))
+}
+
 export type AutoStartResult<T extends StartPinInput> = {
   /** PIN the Auto start will actually use. */
   pin: T | null
@@ -48,6 +60,26 @@ export function resolveAutoStart<T extends StartPinInput & { id: string }>(
         }))
         .sort((a, b) => a.distance - b.distance)
       if (candidates[0]) {
+        const start = routePolyline[0]
+        if (start && distanceMeters(currentPosition, start) <= 250) {
+          const firstOrder = [...candidates].sort(
+            (a, b) => a.item.sort_order - b.item.sort_order,
+          )[0]
+          if (firstOrder) return { pin: firstOrder.item, aheadSuggestion: null }
+        }
+        const routeStartCandidates = candidates.filter(
+          (candidate) =>
+            candidate.chainage <= 250 &&
+            Math.abs(gpsProjection.chainageMeters - candidate.chainage) <= 250,
+        )
+        if (gpsProjection.chainageMeters <= 250 && routeStartCandidates.length > 0) {
+          routeStartCandidates.sort(
+            (a, b) =>
+              Math.abs(a.chainage - gpsProjection.chainageMeters) -
+              Math.abs(b.chainage - gpsProjection.chainageMeters),
+          )
+          return { pin: routeStartCandidates[0].item, aheadSuggestion: null }
+        }
         return { pin: candidates[0].item, aheadSuggestion: null }
       }
     } catch {

@@ -173,6 +173,21 @@ describe('shared finish sequence', () => {
         previous,
       })).toBe(false)
       expect(match.direction).toBe('forward')
+
+      expect(isRouteFinishGpsReady({
+        routeSlug,
+        pins: route.pins,
+        handledOrders,
+        geometry,
+        match: {
+          ...match,
+          nextState: {
+            ...match.nextState!,
+            timestampMs: previous.timestampMs + 60_001,
+          },
+        },
+        previous,
+      })).toBe(false)
     },
   )
 

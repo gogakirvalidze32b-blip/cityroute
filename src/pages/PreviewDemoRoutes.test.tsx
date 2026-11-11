@@ -86,6 +86,12 @@ describe('isolated Preview Demo mode', () => {
 
     fireEvent.click(screen.getByTestId('demo-route-card-route-2'))
 
+    expect(await screen.findByTestId('preview-gps-demo-panel')).toBeTruthy()
+    expect(screen.getByLabelText('DEMO მარშრუტი')).toHaveValue('route-2')
+    expect(screen.getByRole('button', { name: 'PLAY' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'PAUSE' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'RESET DEMO' })).toBeEnabled()
+
     expect(await screen.findByTestId('demo-route-map')).toHaveAttribute('data-offline', 'true')
     expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' })).toHaveAttribute(
       'aria-pressed',
