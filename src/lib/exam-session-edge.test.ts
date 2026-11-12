@@ -42,11 +42,11 @@ const h = vi.hoisted(() => ({
 }))
 
 describe('Exam Session backend environment gate', () => {
-  it('disables remote Exam Session requests only on Vercel Preview', () => {
-    expect(shouldUseRemoteExamSessionBackend('preview')).toBe(false)
-    expect(shouldUseRemoteExamSessionBackend('production')).toBe(true)
-    expect(shouldUseRemoteExamSessionBackend('development')).toBe(true)
-    expect(shouldUseRemoteExamSessionBackend(undefined)).toBe(true)
+  it('enables remote Exam Session requests only on Vercel Preview', () => {
+    expect(shouldUseRemoteExamSessionBackend('preview')).toBe(true)
+    expect(shouldUseRemoteExamSessionBackend('production')).toBe(false)
+    expect(shouldUseRemoteExamSessionBackend('development')).toBe(false)
+    expect(shouldUseRemoteExamSessionBackend(undefined)).toBe(false)
   })
 })
 

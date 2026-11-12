@@ -2,7 +2,7 @@ import { getSupabase } from '@/lib/supabase'
 import type { Json } from '@/types/database'
 
 export function shouldUseRemoteExamSessionBackend(vercelEnv?: string): boolean {
-  return vercelEnv !== 'preview'
+  return vercelEnv === 'preview'
 }
 
 export const REMOTE_EXAM_SESSION_BACKEND_ENABLED =
