@@ -1,31 +1,42 @@
-# PostgreSQL CLI dumps only; this is not a complete Supabase project backup.
-# The three independent dumps are not a single consistent snapshot. Pause
-# Production writes before dispatching and keep them paused until completion.
+# PostgreSQL logical dump only — NOT a complete Supabase project backup.
+# Missing from this artifact: Auth config, Storage objects/CDN, Edge Functions,
+# Secrets, Dashboard settings, DNS, and platform add-ons.
 #
-# Create the age identity locally with:
+# Consistency model:
+# - database.dump is one pg_dump custom-format archive. PostgreSQL takes a single
+#   read-only snapshot for that run, so schema + data are mutually consistent
+#   without pausing Production writers.
+# - roles.sql is a separate pg_dumpall --roles-only dump (globals, no role
+#   passwords). It is taken immediately before the database dump and is NOT the
+#   same snapshot. Role drift risk is low; do not treat roles.sql + database.dump
+#   as one atomic cluster image.
+# - Credentials: mode-600 PGPASSFILE + PGHOST/PGPORT/PGUSER/PGDATABASE/PGSSLMODE.
+#   Full DATABASE_URL and password must never appear on docker, pg_dump, or
+#   pg_dumpall command-line arguments (no URI argv, no $(cat …) substitution).
+# - Containers run as the Actions runner UID/GID (--user $(id -u):$(id -g)) so
+#   libpq accepts the bind-mounted .pgpass (owner must equal euid; mode 0600).
+#
+# age identity (local only — never upload the private key):
 #   age-keygen -o "$HOME/.config/age/cityroute-backup-identity.txt"
-# Set the printed public recipient as the GitHub Actions variable AGE_RECIPIENT.
-# Never upload or store the private identity in GitHub.
-# Before dispatch, derive the recipient locally and compare it character-for-
-# character with the GitHub variable:
-#   age-keygen -y "$HOME/.config/age/cityroute-backup-identity.txt"
-# On Windows PowerShell, the equivalent check is:
+#   age-keygen -y "$HOME/.config/age/cityroute-backup-identity.txt"  # -> vars.AGE_RECIPIENT
+# Windows:
 #   $identity = "$env:USERPROFILE\.config\age\cityroute-backup-identity.txt"
 #   age-keygen -y $identity
-# After downloading the artifact, decrypt it locally with:
+#
+# After download:
 #   age --decrypt -i "$HOME/.config/age/cityroute-backup-identity.txt" \
 #     -o cityroute-production-backup.tar.gz backup.tar.gz.age
 #   tar -xzf cityroute-production-backup.tar.gz
 #   sha256sum --check SHA256SUMS.txt
-# On Windows, use age.exe with the same --decrypt/-i/-o arguments, then compare
-# each Get-FileHash -Algorithm SHA256 result with SHA256SUMS.txt.
-name: CityRoute Production PostgreSQL CLI dumps (not a full Supabase backup)
+# Restore testing: see operations/production-postgresql-backup.md
+# Never restore this artifact onto Production from this workflow.
+name: CityRoute Production PostgreSQL dump (not a full Supabase backup)
 
 on:
   workflow_dispatch:
     inputs:
-      production_writes_paused:
-        description: Confirm Production writes are paused and will remain paused through all three dumps.
+      acknowledge_postgres_dump_only:
+        description: Confirm this is a PostgreSQL logical dump only (not a full Supabase backup) and restore tests stay off Production.
         type: boolean
         required: true
         default: false
@@ -40,23 +51,18 @@ concurrency:
 jobs:
   backup:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - name: Require Production write pause confirmation
+      - name: Require dump-scope acknowledgement
         shell: bash
         env:
-          PRODUCTION_WRITES_PAUSED: ${{ inputs.production_writes_paused }}
+          ACK: ${{ inputs.acknowledge_postgres_dump_only }}
         run: |
           set -euo pipefail
-          if [[ "$PRODUCTION_WRITES_PAUSED" != "true" ]]; then
-            echo "::error::Pause Production writes, then dispatch again and confirm the required input."
+          if [[ "$ACK" != "true" ]]; then
+            echo "::error::Re-dispatch and confirm this is a PostgreSQL dump only; restore tests must stay off Production."
             exit 1
           fi
-
-      - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: 2.122.0
 
       - name: Install age
         shell: bash
@@ -68,9 +74,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(supabase --version)" = "2.122.0"
           docker version --format '{{.Server.Version}}' >/dev/null
           age --version >/dev/null
+          docker pull postgres:17.6 >/dev/null
 
       - name: Dump and encrypt Production database
         id: backup
@@ -88,20 +94,48 @@ jobs:
           : "${SUPABASE_DB_PASSWORD:?Missing SUPABASE_DB_PASSWORD secret}"
           : "${AGE_RECIPIENT:?Missing AGE_RECIPIENT repository variable}"
 
-          db_url_with_password="$(python3 - <<'PY'
+          # Mask password early so accidental echoes cannot land in Actions logs.
+          echo "::add-mask::${SUPABASE_DB_PASSWORD}"
+
+          if [[ ! "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]]; then
+            echo "::error::AGE_RECIPIENT is not a valid age public recipient."
+            exit 1
+          fi
+
+          work_dir="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID"
+          archive="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID.tar.gz"
+          encrypted_archive="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID.tar.gz.age"
+          mkdir -m 700 "$work_dir"
+          pgpass_file="$work_dir/.pgpass"
+          libpq_env_file="$work_dir/libpq.env"
+
+          cleanup() {
+            rm -f "$pgpass_file" "$libpq_env_file" \
+              "$work_dir/run_roles_dump.sh" "$work_dir/run_database_dump.sh"
+            rm -rf "$work_dir"
+            rm -f "$archive"
+          }
+          trap cleanup EXIT
+
+          # Validate Production endpoint; write mode-600 PGPASSFILE + non-secret libpq env.
+          # Password never printed; never placed on docker/pg_dump/pg_dumpall argv.
+          python3 - "$work_dir" <<'PY'
           import os
           import sys
-          from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
+          from pathlib import Path
+          from urllib.parse import parse_qsl, unquote, urlsplit
 
+          work_dir = Path(sys.argv[1])
           try:
               url = urlsplit(os.environ["SUPABASE_DB_URL"])
               query_params = parse_qsl(url.query, keep_blank_values=True)
               sslmode_values = [value for key, value in query_params if key == "sslmode"]
+              username = unquote(url.username or "")
               valid = (
                   url.scheme in ("postgres", "postgresql")
                   and url.hostname == "aws-1-eu-central-1.pooler.supabase.com"
                   and url.port == 5432
-                  and unquote(url.username or "") == "postgres.tuylbbdhvfcobxynwtnt"
+                  and username == "postgres.tuylbbdhvfcobxynwtnt"
                   and url.path == "/postgres"
                   and url.password is None
                   and not any(key.lower() == "password" for key, _ in query_params)
@@ -114,34 +148,49 @@ jobs:
           if not valid:
               sys.exit("SUPABASE_DB_URL does not match the expected Production pooler endpoint.")
 
-          username = quote(unquote(url.username or ""), safe="")
-          host = url.netloc.rsplit("@", 1)[-1]
-          password = quote(os.environ["SUPABASE_DB_PASSWORD"], safe="")
-          print(urlunsplit((url.scheme, f"{username}:{password}@{host}", url.path, url.query, "")))
+          password = os.environ["SUPABASE_DB_PASSWORD"]
+          if not password or "\n" in password or "\r" in password:
+              sys.exit("SUPABASE_DB_PASSWORD is missing or contains newlines.")
+
+          def escape_pgpass_field(value: str) -> str:
+              return value.replace("\\", "\\\\").replace(":", "\\:")
+
+          host = url.hostname
+          port = str(url.port)
+          database = "postgres"
+          pgpass = work_dir / ".pgpass"
+          libpq_env = work_dir / "libpq.env"
+
+          pgpass.write_text(
+              f"{escape_pgpass_field(host)}:{escape_pgpass_field(port)}:"
+              f"{escape_pgpass_field(database)}:{escape_pgpass_field(username)}:"
+              f"{escape_pgpass_field(password)}\n",
+              encoding="utf-8",
+          )
+          pgpass.chmod(0o600)
+
+          # Non-secret libpq settings only — password stays exclusively in .pgpass.
+          libpq_env.write_text(
+              "\n".join(
+                  [
+                      f"PGHOST={host}",
+                      f"PGPORT={port}",
+                      f"PGUSER={username}",
+                      f"PGDATABASE={database}",
+                      "PGSSLMODE=require",
+                      "",
+                  ]
+              ),
+              encoding="utf-8",
+          )
+          libpq_env.chmod(0o600)
+          print("libpq_credentials=prepared")
           PY
-          )"
-          echo "::add-mask::$db_url_with_password"
-
-          if [[ ! "$AGE_RECIPIENT" =~ ^age1[0-9a-z]+$ ]]; then
-            echo "::error::AGE_RECIPIENT is not a valid age public recipient."
-            exit 1
-          fi
-
-          work_dir="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID"
-          archive="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID.tar.gz"
-          encrypted_archive="$RUNNER_TEMP/cityroute-production-backup-$GITHUB_RUN_ID.tar.gz.age"
-          mkdir -m 700 "$work_dir"
-
-          cleanup() {
-            rm -rf "$work_dir"
-            rm -f "$archive"
-          }
-          trap cleanup EXIT
 
           report_cli_failure() {
             local dump_name="$1"
             local log_file="$2"
-            echo "::error::$dump_name dump failed. Sanitized Supabase CLI output:"
+            echo "::error::$dump_name failed. Sanitized diagnostic output:"
             python3 - "$log_file" <<'PY'
           import os
           import re
@@ -158,7 +207,7 @@ jobs:
 
           secret_values = set()
           sensitive_name = re.compile(
-              r"(PASSWORD|TOKEN|SECRET|CREDENTIAL|PRIVATE_KEY|DB_URL|CONNECTION_STRING)",
+              r"(PASSWORD|TOKEN|SECRET|CREDENTIAL|PRIVATE_KEY|DB_URL|CONNECTION_STRING|PGPASS)",
               re.IGNORECASE,
           )
           for name, value in os.environ.items():
@@ -172,7 +221,8 @@ jobs:
                   secret_values.add(quote_plus(value, safe=""))
 
           for secret in sorted(secret_values, key=len, reverse=True):
-              output = output.replace(secret, "[REDACTED]")
+              if secret:
+                  output = output.replace(secret, "[REDACTED]")
 
           redactions = (
               (re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb)://[^\s\"'<>]+"), "[REDACTED_CONNECTION_URL]"),
@@ -180,56 +230,193 @@ jobs:
               (re.compile(r"(?i)\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sbp_[A-Za-z0-9_-]{20,})\b"), "[REDACTED_TOKEN]"),
               (re.compile(r"(?i)\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"), "[REDACTED_JWT]"),
               (re.compile(r"(?i)\bsb_secret_[A-Za-z0-9_-]+\b"), "[REDACTED_TOKEN]"),
+              (re.compile(r"(?i)\bage1[0-9a-z]{20,}"), "[REDACTED_AGE_RECIPIENT]"),
+              (re.compile(r"(?i)\bCOPY\s+\S+\s+FROM\s+stdin;.*", re.DOTALL), "[REDACTED_COPY_PAYLOAD]"),
               (re.compile(r"(?i)\b(?:password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|secret|api[_-]?key|authorization)(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"), r"\1[REDACTED]"),
+              (re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"), "[REDACTED_EMAIL]"),
           )
           for pattern, replacement in redactions:
               output = pattern.sub(replacement, output)
 
           lines = output.splitlines()[-80:]
           if not lines:
-              lines = ["<Supabase CLI returned no diagnostic output>"]
+              lines = ["<tool returned no diagnostic output>"]
           for line in lines:
               print("CLI: " + line[:1000])
           PY
           }
 
-          dump_args=(--db-url "$db_url_with_password")
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-          if ! supabase db dump "${dump_args[@]}" \
-            --file "$work_dir/roles.sql" --role-only \
+          # Helper scripts contain no secrets. They assert PGPASSFILE owner==euid and
+          # mode 0600/0400 inside the container, then exec dump tools (password stays
+          # in the file; never on argv).
+          roles_script="$work_dir/run_roles_dump.sh"
+          database_script="$work_dir/run_database_dump.sh"
+          cat > "$roles_script" <<'EOS'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          set +x
+          umask 077
+          : "${PGPASSFILE:?PGPASSFILE unset}"
+          owner="$(stat -c '%u' "$PGPASSFILE")"
+          mode="$(stat -c '%a' "$PGPASSFILE")"
+          euid="$(id -u)"
+          egid="$(id -g)"
+          echo "pgpass_preflight owner=${owner} euid=${euid} egid=${egid} mode=${mode}"
+          if [[ "$owner" != "$euid" ]]; then
+            echo "PGPASSFILE owner ${owner} != euid ${euid}; libpq would ignore the file." >&2
+            exit 1
+          fi
+          if [[ "$mode" != "600" && "$mode" != "400" ]]; then
+            echo "PGPASSFILE mode ${mode} must be 600 or 400." >&2
+            exit 1
+          fi
+          exec pg_dumpall --roles-only --no-role-passwords -f /backup/roles.sql
+          EOS
+          cat > "$database_script" <<'EOS'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          set +x
+          umask 077
+          : "${PGPASSFILE:?PGPASSFILE unset}"
+          owner="$(stat -c '%u' "$PGPASSFILE")"
+          mode="$(stat -c '%a' "$PGPASSFILE")"
+          euid="$(id -u)"
+          egid="$(id -g)"
+          echo "pgpass_preflight owner=${owner} euid=${euid} egid=${egid} mode=${mode}"
+          if [[ "$owner" != "$euid" ]]; then
+            echo "PGPASSFILE owner ${owner} != euid ${euid}; libpq would ignore the file." >&2
+            exit 1
+          fi
+          if [[ "$mode" != "600" && "$mode" != "400" ]]; then
+            echo "PGPASSFILE mode ${mode} must be 600 or 400." >&2
+            exit 1
+          fi
+          exec pg_dump --format=custom --compress=9 --no-owner \
+            --file=/backup/database.dump \
+            --exclude-table=storage.buckets_vectors \
+            --exclude-table=storage.vector_indexes
+          EOS
+          # Strip YAML-leading indentation from heredoc bodies if present; rewrite cleanly.
+          python3 - "$roles_script" "$database_script" <<'PY'
+          from pathlib import Path
+          import sys
+          for path_str in sys.argv[1:]:
+              path = Path(path_str)
+              lines = path.read_text(encoding="utf-8").splitlines()
+              # Drop accidental leading spaces from workflow indentation bleed-through.
+              cleaned = []
+              for line in lines:
+                  if line.startswith("          "):
+                      cleaned.append(line[10:])
+                  else:
+                      cleaned.append(line)
+              if not cleaned[0].startswith("#!"):
+                  cleaned.insert(0, "#!/usr/bin/env bash")
+              path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
+              path.chmod(0o700)
+          print("dump_helpers=prepared")
+          PY
+
+          runner_uid="$(id -u)"
+          runner_gid="$(id -g)"
+
+          # Same UID/GID as the Actions runner that created mode-600 .pgpass so libpq
+          # accepts the bind-mounted file (owner must equal euid).
+          docker_libpq_args=(
+            --rm
+            --user "${runner_uid}:${runner_gid}"
+            --network host
+            --env-file "$libpq_env_file"
+            -e PGPASSFILE=/backup/.pgpass
+            -v "$work_dir:/backup:rw"
+            --entrypoint bash
+            postgres:17.6
+          )
+
+          # 1) Roles (separate snapshot — globals, no role passwords).
+          if ! docker run "${docker_libpq_args[@]}" \
+            /backup/run_roles_dump.sh \
             >"$work_dir/roles.log" 2>&1; then
             report_cli_failure "roles.sql" "$work_dir/roles.log"
             exit 1
           fi
 
-          if ! supabase db dump "${dump_args[@]}" \
-            --file "$work_dir/schema.sql" \
-            >"$work_dir/schema.log" 2>&1; then
-            report_cli_failure "schema.sql" "$work_dir/schema.log"
+          # 2) One consistent database snapshot (schema + data) via pg_dump custom format.
+          if ! docker run "${docker_libpq_args[@]}" \
+            /backup/run_database_dump.sh \
+            >"$work_dir/database.log" 2>&1; then
+            report_cli_failure "database.dump" "$work_dir/database.log"
             exit 1
           fi
 
-          if ! supabase db dump "${dump_args[@]}" \
-            --file "$work_dir/data.sql" --data-only --use-copy \
-            --exclude "storage.buckets_vectors" \
-            --exclude "storage.vector_indexes" \
-            >"$work_dir/data.log" 2>&1; then
-            report_cli_failure "data.sql" "$work_dir/data.log"
-            exit 1
-          fi
+          # Drop credential + helper files before packing/hashing (must never enter tar/.age).
+          rm -f "$pgpass_file" "$libpq_env_file" "$roles_script" "$database_script"
 
-          for name in roles.sql schema.sql data.sql; do
+          finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          for name in roles.sql database.dump; do
             if [[ ! -s "$work_dir/$name" ]]; then
               echo "::error::$name is missing or empty."
               exit 1
             fi
           done
 
+          # Refuse to proceed if dump logs look like they contain tabular payloads.
+          python3 - "$work_dir" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          work = pathlib.Path(sys.argv[1])
+          suspicious = re.compile(
+              r"(?i)(COPY\s+\S+\s+FROM\s+stdin|INSERT\s+INTO\s+|email\s*=|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})"
+          )
+          for log_name in ("roles.log", "database.log"):
+              text = (work / log_name).read_text(encoding="utf-8", errors="replace")
+              if suspicious.search(text):
+                  # Do not print the log body — only fail closed.
+                  print(f"::error::{log_name} contained payload-like content; refusing to continue.")
+                  sys.exit(1)
+          print("log_hygiene=ok")
+          PY
+
+          cat > "$work_dir/MANIFEST.txt" <<EOF
+          project_ref=tuylbbdhvfcobxynwtnt
+          region=eu-central-1
+          dump_started_at_utc=$started_at
+          dump_finished_at_utc=$finished_at
+          github_run_id=$GITHUB_RUN_ID
+          github_sha=$GITHUB_SHA
+          consistency=database.dump is one pg_dump snapshot (schema+data). roles.sql is a separate globals dump taken immediately before database.dump and is not the same snapshot.
+          scope=PostgreSQL logical dump only. Not a full Supabase project backup.
+          pg_dump_image=postgres:17.6
+          roles_tool=pg_dumpall --roles-only --no-role-passwords
+          credentials=PGPASSFILE plus PGHOST/PGPORT/PGUSER/PGDATABASE/PGSSLMODE; container --user matches runner UID/GID so libpq accepts bind-mounted .pgpass (password never on argv)
+          restore_policy=Restore only onto an isolated non-Production PostgreSQL. Never restore onto Production from CI.
+          EOF
+
+          # Refuse to pack if credential or helper files somehow remain.
+          if [[ -e "$pgpass_file" || -e "$libpq_env_file" || -e "$roles_script" || -e "$database_script" ]]; then
+            echo "::error::credential/helper files still present before archive; aborting."
+            exit 1
+          fi
+          if compgen -G "$work_dir/.pgpass*" > /dev/null \
+            || compgen -G "$work_dir/libpq.env*" > /dev/null \
+            || compgen -G "$work_dir/db_url*" > /dev/null \
+            || compgen -G "$work_dir/run_*_dump.sh" > /dev/null; then
+            echo "::error::unexpected credential/helper path under work_dir; aborting."
+            exit 1
+          fi
+
           (
             cd "$work_dir"
-            sha256sum roles.sql schema.sql data.sql > SHA256SUMS.txt
+            # Hash dump payloads + manifest only. Never hash/log file contents into Actions.
+            sha256sum roles.sql database.dump MANIFEST.txt > SHA256SUMS.txt
             sha256sum --check SHA256SUMS.txt
-            tar -czf "$archive" roles.sql schema.sql data.sql SHA256SUMS.txt
+            # Do not include *.log, .pgpass, or libpq.env in the artifact.
+            tar -czf "$archive" roles.sql database.dump MANIFEST.txt SHA256SUMS.txt
           )
           tar -tzf "$archive" >/dev/null
 
@@ -240,20 +427,29 @@ jobs:
             exit 1
           fi
 
-          for name in roles schema data; do
-            file="$work_dir/$name.sql"
-            echo "${name}_size=$(stat -c '%s' "$file")" >> "$GITHUB_OUTPUT"
-            echo "${name}_sha256=$(sha256sum "$file" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
-          done
+          # Prove ciphertext is not a plain tar (no user/payment rows in the uploaded blob as plaintext).
+          if tar -tzf "$encrypted_archive" >/dev/null 2>&1; then
+            echo "::error::Encrypted archive unexpectedly readable as tar.gz; aborting upload."
+            exit 1
+          fi
+
+          echo "roles_size=$(stat -c '%s' "$work_dir/roles.sql")" >> "$GITHUB_OUTPUT"
+          echo "roles_sha256=$(sha256sum "$work_dir/roles.sql" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "database_size=$(stat -c '%s' "$work_dir/database.dump")" >> "$GITHUB_OUTPUT"
+          echo "database_sha256=$(sha256sum "$work_dir/database.dump" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           echo "archive_path=$encrypted_archive" >> "$GITHUB_OUTPUT"
           echo "archive_size=$(stat -c '%s' "$encrypted_archive")" >> "$GITHUB_OUTPUT"
           echo "archive_sha256=$(sha256sum "$encrypted_archive" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
           {
-            echo "This artifact contains PostgreSQL CLI dumps only; it is not a complete Supabase project backup."
-            echo "The roles, schema, and data dumps were taken in separate runs and are not a single consistent snapshot."
-            echo "Compare AGE_RECIPIENT character-for-character with the local age-keygen -y output; never upload the private identity."
-            echo "After downloading, decrypt with the matching private identity and verify SHA256SUMS.txt locally."
+            echo "### CityRoute Production PostgreSQL dump"
+            echo
+            echo "- Scope: **PostgreSQL logical dump only** (not a full Supabase backup)."
+            echo "- Consistency: \`database.dump\` = one \`pg_dump\` snapshot. \`roles.sql\` = separate globals dump."
+            echo "- Encryption: age recipient from repository variable \`AGE_RECIPIENT\`."
+            echo "- Artifact contains only ciphertext; plaintext dumps stay on the runner and are deleted after this step."
+            echo "- Restore tests: isolated PostgreSQL only — see \`operations/production-postgresql-backup.md\`."
+            echo "- Started: \`$started_at\` / Finished: \`$finished_at\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload encrypted backup
@@ -262,25 +458,26 @@ jobs:
           name: cityroute-production-backup-${{ github.run_id }}
           path: ${{ steps.backup.outputs.archive_path }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
+          compression-level: 0
 
       - name: Report sizes and SHA-256 hashes
         shell: bash
         env:
           ROLES_SIZE: ${{ steps.backup.outputs.roles_size }}
           ROLES_SHA256: ${{ steps.backup.outputs.roles_sha256 }}
-          SCHEMA_SIZE: ${{ steps.backup.outputs.schema_size }}
-          SCHEMA_SHA256: ${{ steps.backup.outputs.schema_sha256 }}
-          DATA_SIZE: ${{ steps.backup.outputs.data_size }}
-          DATA_SHA256: ${{ steps.backup.outputs.data_sha256 }}
+          DATABASE_SIZE: ${{ steps.backup.outputs.database_size }}
+          DATABASE_SHA256: ${{ steps.backup.outputs.database_sha256 }}
           ARCHIVE_SIZE: ${{ steps.backup.outputs.archive_size }}
           ARCHIVE_SHA256: ${{ steps.backup.outputs.archive_sha256 }}
         run: |
+          set -euo pipefail
+          # Sizes and hashes only — never dump row previews.
           {
+            echo
             echo "| File | Size (bytes) | SHA-256 |"
             echo "|---|---:|---|"
             echo "| roles.sql | $ROLES_SIZE | $ROLES_SHA256 |"
-            echo "| schema.sql | $SCHEMA_SIZE | $SCHEMA_SHA256 |"
-            echo "| data.sql | $DATA_SIZE | $DATA_SHA256 |"
-            echo "| Encrypted archive | $ARCHIVE_SIZE | $ARCHIVE_SHA256 |"
+            echo "| database.dump | $DATABASE_SIZE | $DATABASE_SHA256 |"
+            echo "| Encrypted archive (.age) | $ARCHIVE_SIZE | $ARCHIVE_SHA256 |"
           } >> "$GITHUB_STEP_SUMMARY"
