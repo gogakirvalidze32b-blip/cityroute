@@ -22,6 +22,7 @@ vi.mock('@/lib/audio', () => ({
     unlock: vi.fn(),
     isBusy: vi.fn(() => false),
     stopAll: vi.fn(),
+    preload: vi.fn(),
     preloadAll: vi.fn(),
   },
 }))
@@ -66,6 +67,8 @@ vi.mock('@/lib/route-nav', () => ({
   resolveHeading: () => 0,
   resolveExamSpeedKmh: () => 5,
   formatDuration: (ms: number) => `${Math.floor(ms / 1000)}s`,
+  routeLengthMeters: () => 5000,
+  seedAlongRouteMeters: () => 0,
 }))
 vi.mock('@/components/ExamLiveMap', () => ({
   ExamLiveMap: ({ nextPin }: { nextPin: PinRow | null }) => (

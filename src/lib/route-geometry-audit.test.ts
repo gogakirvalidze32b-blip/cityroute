@@ -259,7 +259,7 @@ describe('isolated route geometry comparison audit', () => {
     expect(repeatedDirectedSegmentCount(ROAD_GEOMETRIES['route-2'])).toBeGreaterThan(0)
   })
 
-  it('converts all 16 source speed-zone u boundaries to monotonic road chainage', () => {
+  it('converts all source speed-zone u boundaries to monotonic road chainage', () => {
     let zoneCount = 0
     for (const routeId of ACTIVE_ROUTE_IDS) {
       const road = ROAD_GEOMETRIES[routeId]
@@ -277,7 +277,7 @@ describe('isolated route geometry comparison audit', () => {
         expect(toMeters).toBeLessThanOrEqual(cumulativeDistances(road).at(-1)! + 0.01)
       }
     }
-    expect(zoneCount).toBe(16)
+    expect(zoneCount).toBe(25)
   })
 
   it('identifies repeated-place ambiguity rather than choosing an arbitrary pass', () => {

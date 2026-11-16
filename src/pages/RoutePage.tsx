@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 
 import { ExamDriveSession } from '@/components/ExamDriveSession'
 
@@ -47,7 +47,6 @@ function CarFullscreenButton({ floating = false }: { floating?: boolean }) {
 
 export function RoutePage() {
   const { slug } = useParams<{ slug: string }>()
-  const location = useLocation()
   const navigate = useNavigate()
   const { hasAccess, deviceBlocked, user } = useAuth()
   const { routes } = useRoutes()
@@ -71,7 +70,6 @@ export function RoutePage() {
   const [navPhase, setNavPhase] = useState<NavPhase>(() =>
     slug && tabId && hasSavedExamForSlug(slug, routeName, persistenceScope) ? 'active' : 'preview',
   )
-  const [navigationBlocked, setNavigationBlocked] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -98,7 +96,8 @@ export function RoutePage() {
   const resumeDriving = Boolean(
     slug && hasSavedExamForSlug(slug, routeName, persistenceScope) && navPhase !== 'summary',
   )
-  const driving = navPhase === 'active' || resumeDriving
+  // Keep the route/map shell mounted through Summary (no involuntary leave of the map context).
+  const driving = navPhase === 'active' || navPhase === 'summary' || resumeDriving
 
   useEffect(() => {
     if (!slug || navPhase === 'summary') return
@@ -129,28 +128,9 @@ export function RoutePage() {
     <div
       className={`route-page route-page--exam${driving ? ' route-page--driving' : ''}${navPhase === 'summary' ? ' route-page--summary' : ''}`}
     >
-      {(location.state as { activeExamNavigationBlocked?: boolean } | null)?.activeExamNavigationBlocked && (
-        <p role="alert" className="exam-navigation-blocked">
-          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
-        </p>
-      )}
-      {navigationBlocked && (
-        <p role="alert" className="exam-navigation-blocked">
-          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
-        </p>
-      )}
       {navPhase === 'preview' && !resumeDriving && (
         <div className="route-toolbar">
-          <Link
-            to="/"
-            className="ghost"
-            onClick={(event) => {
-              if (slug && hasSavedExamForSlug(slug, routeName, persistenceScope)) {
-                event.preventDefault()
-                setNavigationBlocked(true)
-              }
-            }}
-          >
+          <Link to="/" className="ghost">
             ← მარშრუტები
           </Link>
 

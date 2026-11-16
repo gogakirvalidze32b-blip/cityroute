@@ -3,6 +3,35 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(45);
 
+create function pg_temp.confirm_bog(p_user uuid, p_payment text, p_merchant text, p_amount numeric, p_slots integer)
+returns void language plpgsql as $confirm$
+declare
+  v_result jsonb;
+  v_amount text := case p_amount when 99 then '99.00' when 179 then '179.00' else p_amount::text end;
+begin
+  insert into public.payment_transactions (
+    user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata
+  ) values (
+    p_user, 'bog', p_payment, p_merchant, p_amount, 'GEL', 'pending',
+    pg_catalog.jsonb_build_object('provider', 'bog', 'device_slots', p_slots, 'package_price', p_amount)
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', 'cityroute_bog_confirmer', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
+  v_result := public.update_bog_payment_status(
+    p_payment, 'success', p_payment || '-bank',
+    pg_catalog.jsonb_build_object(
+      'bank_status', 'completed', 'bank_amount', v_amount,
+      'bank_currency', 'GEL', 'bank_external_order_id', p_merchant
+    )
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', '', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{}', true);
+  if v_result->>'status' is distinct from 'success' or v_result->>'success' is distinct from 'true' then
+    raise exception 'BOG activation failed for %: %', p_payment, v_result;
+  end if;
+end
+$confirm$;
+
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -21,25 +50,6 @@ values (
   pg_catalog.now()
 )
 on conflict (id) do nothing;
-
-insert into public.profiles (
-  id, subscription_status, subscription_plan, subscription_expires_at,
-  device_slots, subscription_payment_id
-)
-values (
-  '00000000-0000-0000-0000-000000000301',
-  'trial',
-  'premium',
-  pg_catalog.now() + interval '12 hours',
-  1,
-  null
-)
-on conflict (id) do update
-set subscription_status = excluded.subscription_status,
-    subscription_plan = excluded.subscription_plan,
-    subscription_expires_at = excluded.subscription_expires_at,
-    device_slots = excluded.device_slots,
-    subscription_payment_id = excluded.subscription_payment_id;
 
 insert into public.cities (
   id, slug, name_ka, name_en, center_lat, center_lng, zoom, active, sort_order
@@ -111,13 +121,7 @@ select set_config('request.headers', '{"x-cityroute-device-fingerprint":"015-tri
 select is(public.deactivate_current_session()->>'status', 'deactivated', 'Trial device B logout releases its slot');
 
 reset role;
-update public.profiles
-set subscription_status = 'active',
-    subscription_plan = 'premium',
-    subscription_expires_at = pg_catalog.now() + interval '30 days',
-    device_slots = 1,
-    subscription_payment_id = 'premium-99-test'
-where id = '00000000-0000-0000-0000-000000000301';
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000301', 'premium-99-test', 'merchant-premium-99-test', 99, 1);
 
 set local role authenticated;
 select set_config(
@@ -148,25 +152,7 @@ select set_config(
 select is(public.deactivate_current_session()->>'status', 'deactivated', 'Premium 99 device B logout frees the slot');
 
 reset role;
-insert into public.payment_transactions (
-  user_id, provider, payment_id, merchant_payment_id, amount, currency,
-  status, metadata, paid_at
-)
-values (
-  '00000000-0000-0000-0000-000000000301',
-  'bog',
-  'premium-179-test',
-  'merchant-premium-179-test',
-  179,
-  'GEL',
-  'success',
-  '{"provider":"bog","device_slots":2,"bank_status":"completed","bank_amount":"179","bank_currency":"GEL","bank_external_order_id":"merchant-premium-179-test"}',
-  pg_catalog.now()
-);
-update public.profiles
-set device_slots = 2,
-    subscription_payment_id = 'premium-179-test'
-where id = '00000000-0000-0000-0000-000000000301';
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000301', 'premium-179-test', 'merchant-premium-179-test', 179, 2);
 
 select is(
   public.current_device_session_limit('00000000-0000-0000-0000-000000000301'),
@@ -265,29 +251,19 @@ select is(
   2,
   'device B and the newly activated Premium 179 device C remain active'
 );
-update public.profiles
-set subscription_payment_id = 'unverified-or-mismatched-payment'
-where id = '00000000-0000-0000-0000-000000000301';
+select throws_ok(
+  $$update public.profiles
+    set subscription_payment_id = 'unverified-or-mismatched-payment'
+    where id = '00000000-0000-0000-0000-000000000301'$$,
+  '42501',
+  'device slots and payment reference can change only during confirmed premium activation',
+  'a paid payment reference cannot be replaced by hand'
+);
 select is(
   public.current_device_session_limit('00000000-0000-0000-0000-000000000301'),
-  1,
-  'a mismatched current payment reference removes the second slot'
+  2,
+  'the verified 179 limit remains after the rejected payment rewrite'
 );
-set local role authenticated;
-select set_config(
-  'request.jwt.claims',
-  '{"sub":"00000000-0000-0000-0000-000000000301","session_id":"00000000-0000-0000-0000-000000000317","role":"authenticated"}',
-  true
-);
-select is(
-  public.has_active_access('00000000-0000-0000-0000-000000000301'),
-  false,
-  'access is denied if the verified 179 entitlement no longer matches'
-);
-reset role;
-update public.profiles
-set subscription_payment_id = 'premium-179-test'
-where id = '00000000-0000-0000-0000-000000000301';
 set local role authenticated;
 select set_config(
   'request.jwt.claims',
@@ -297,10 +273,11 @@ select set_config(
 select is(
   public.has_active_access('00000000-0000-0000-0000-000000000301'),
   true,
-  'restoring the matching verified payment restores Premium access'
+  'access remains because the verified payment reference was not changed'
 );
 
 reset role;
+select set_config('cityroute.bog_payment_write', 'on', true);
 update public.payment_transactions
 set metadata = jsonb_set(metadata, '{bank_amount}', '"178"')
 where payment_id = 'premium-179-test';
@@ -312,6 +289,7 @@ select is(
 update public.payment_transactions
 set metadata = jsonb_set(metadata, '{bank_amount}', '"179"')
 where payment_id = 'premium-179-test';
+select set_config('cityroute.bog_payment_write', 'off', true);
 select is(
   public.current_device_session_limit('00000000-0000-0000-0000-000000000301'),
   2,

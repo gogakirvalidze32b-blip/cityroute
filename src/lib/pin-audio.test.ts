@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   AUDIO_HEADING_TOLERANCE_DEG,
+  AUDIO_SPECIAL_TRIGGER_DISTANCE_M,
   AUDIO_TRIGGER_DISTANCE_M,
   audioHeadingOk,
   decidePinAudio,
@@ -49,15 +50,15 @@ function makeRunner(ids: string[]) {
 }
 
 describe('PinAudio', () => {
-  it('audio constants: 10 m trigger, 90 heading tolerance', () => {
-    expect(AUDIO_TRIGGER_DISTANCE_M).toBe(10)
+  it('audio constants: 18 m trigger, 90 heading tolerance', () => {
+    expect(AUDIO_TRIGGER_DISTANCE_M).toBe(18)
     expect(AUDIO_HEADING_TOLERANCE_DEG).toBe(90)
   })
 
-  it('plays the next PIN at 10 m, not at 11 m', () => {
+  it('plays the next PIN at 18 m, not at 19 m', () => {
     const r = makeRunner(['a', 'b'])
-    expect(r.step({ dists: [11, 300] })).toBe(null)
-    expect(r.step({ dists: [10, 300] })?.reason).toBe('in-range')
+    expect(r.step({ dists: [19, 300] })).toBe(null)
+    expect(r.step({ dists: [18, 300] })?.reason).toBe('in-range')
     expect(r.played).toEqual(['a'])
   })
 
@@ -70,8 +71,8 @@ describe('PinAudio', () => {
 
   it('wrong heading alone does not lose the voice: it plays once the PIN is passed', () => {
     const r = makeRunner(['a', 'b'])
-    expect(r.step({ dists: [15, 300], ok: [false, true] })).toBe(null)
-    expect(r.step({ dists: [12, 300], ok: [false, true] })).toBe(null)
+    expect(r.step({ dists: [22, 300], ok: [false, true] })).toBe(null)
+    expect(r.step({ dists: [18, 300], ok: [false, true] })).toBe(null)
     const d = r.step({ dists: [26, 300], ok: [false, true] })
     expect(d?.reason).toBe('passed')
     expect(r.played).toEqual(['a'])
@@ -182,12 +183,14 @@ describe('final 300 m right-turn PIN audio', () => {
       )).toBe(true)
       const contextTarget = scenario.route === 'route-1' || scenario.route === 'route-4'
       expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder)).toBe(
-        contextTarget ? 20 : 10,
+        contextTarget ? AUDIO_SPECIAL_TRIGGER_DISTANCE_M : AUDIO_TRIGGER_DISTANCE_M,
       )
       expect(pinAudioApproachWindowMeters(scenario.route, scenario.sortOrder)).toBe(
-        scenario.route === 'route-2' ? 5 : contextTarget ? 20 : 10,
+        contextTarget ? AUDIO_SPECIAL_TRIGGER_DISTANCE_M : AUDIO_TRIGGER_DISTANCE_M,
       )
-      expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder - 1)).toBe(10)
+      expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder - 1)).toBe(
+        AUDIO_TRIGGER_DISTANCE_M,
+      )
       expect(ROUNDABOUT_TARGETS.some(
         (target) => target.route === scenario.route && target.sortOrder === scenario.sortOrder,
       )).toBe(false)
@@ -197,22 +200,22 @@ describe('final 300 m right-turn PIN audio', () => {
   it('keeps the normal PIN-audio trigger distance for other PINs', () => {
     expect(pinAudioTriggerDistanceMeters('route-1', 31)).toBe(AUDIO_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-3', 28)).toBe(AUDIO_TRIGGER_DISTANCE_M)
-    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(20)
+    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 25)).toBe(AUDIO_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 27)).toBe(AUDIO_TRIGGER_DISTANCE_M)
   })
 
-  it('preserves the configured start/finish PIN radius and Route 2 PIN 26 window', () => {
-    expect(pinAudioTriggerDistanceMeters('route-1', 1)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-1', 32)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-1', 35)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-2', 29)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-3', 30)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-4', 29)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-4', 32)).toBe(20)
-    expect(pinAudioTriggerDistanceMeters('route-2', 26)).toBe(10)
-    expect(pinAudioApproachWindowMeters('route-2', 26)).toBe(5)
+  it('preserves the configured start/finish PIN radius on every route', () => {
+    expect(pinAudioTriggerDistanceMeters('route-1', 1)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-1', 32)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-1', 35)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-2', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-3', 30)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-4', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-4', 32)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-2', 26)).toBe(AUDIO_TRIGGER_DISTANCE_M)
+    expect(pinAudioApproachWindowMeters('route-2', 26)).toBe(AUDIO_TRIGGER_DISTANCE_M)
   })
 })
 

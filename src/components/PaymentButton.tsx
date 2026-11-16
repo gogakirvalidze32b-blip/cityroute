@@ -4,7 +4,7 @@ import { getSupabase } from '@/lib/supabase'
 import { getOrCreateBogPaymentRequestId } from '@/lib/bog-payment-request'
 
 type PaymentButtonProps = {
-  deviceSlots: 1 | 2
+  deviceSlots: number
   onError?: (error: string) => void
   disabled?: boolean
 }
@@ -37,7 +37,7 @@ export function PaymentButton({ deviceSlots, onError, disabled }: PaymentButtonP
           requestId,
         }),
       })
-      const data: { success?: boolean; paymentUrl?: string; error?: string } = await response.json()
+      const data: { success?: boolean; paymentUrl?: string; error?: string; code?: string } = await response.json()
       if (!response.ok || !data.success || !data.paymentUrl) {
         throw new Error(data.error || 'BOG-ით გადახდა ვერ დაიწყო')
       }

@@ -13,6 +13,20 @@ import type { SubscriptionPlan } from '@/data/subscription-plans'
 export type Database = {
   public: {
     Tables: {
+      device_slot_packages: {
+        Row: {
+          subscription_plan: string
+          device_slots: number
+          price_amount: number
+          currency: string
+          active: boolean
+          sort_order: number
+          updated_at: string
+        }
+        Insert: Database['public']['Tables']['device_slot_packages']['Row']
+        Update: Partial<Database['public']['Tables']['device_slot_packages']['Row']>
+        Relationships: []
+      }
       profiles: {
         Row: {
           id: string
@@ -88,6 +102,22 @@ export type Database = {
         Args: Record<string, never>
         Returns: Json
       }
+      admin_list_device_sessions: {
+        Args: { p_profile_id: string }
+        Returns: {
+          session_id: string
+          session_created_at: string
+          activated_at: string
+          last_activity_at: string
+          last_seen_at: string
+          status: string
+          revoked_at: string | null
+        }[]
+      }
+      admin_revoke_device_session: {
+        Args: { p_profile_id: string; p_session_id: string; p_reason: string }
+        Returns: Json
+      }
       bind_device: {
         Args: { fp: string }
         Returns: Json
@@ -100,9 +130,66 @@ export type Database = {
         Args: Record<string, never>
         Returns: Json
       }
+      create_exam_session: {
+        Args: {
+          p_route_slug: string
+          p_device_id: string
+          p_tab_id?: string | null
+          p_progress?: Json
+          p_errors?: Json
+          p_elapsed_ms?: number
+          p_started_at?: string | null
+          p_migration_key?: string | null
+          p_status?: string
+        }
+        Returns: Json
+      }
+      get_exam_session: {
+        Args: { p_session_id: string }
+        Returns: Json
+      }
+      list_active_exam_sessions: {
+        Args: Record<string, never>
+        Returns: Json
+      }
+      update_exam_session: {
+        Args: {
+          p_session_id: string
+          p_expected_version: number
+          p_status: string
+          p_progress: Json
+          p_errors: Json
+          p_elapsed_ms: number
+        }
+        Returns: Json
+      }
+      finish_exam_session: {
+        Args: {
+          p_session_id: string
+          p_expected_version: number
+          p_progress: Json
+          p_errors: Json
+          p_elapsed_ms: number
+          p_summary: Json
+        }
+        Returns: Json
+      }
+      abandon_exam_session: {
+        Args: { p_session_id: string; p_expected_version: number }
+        Returns: Json
+      }
       grant_device_session_limit_override: {
-        Args: { p_profile_id: string; p_reason: string }
+        Args: { p_profile_id: string; p_reason: string; p_session_limit: number }
         Returns: { override_id: number; granted_at: string }[]
+      }
+      get_device_session_limit_override: {
+        Args: { p_profile_id: string }
+        Returns: {
+          override_id: number
+          session_limit: number
+          granted_at: string
+          grant_reason: string
+        }[]
       }
       has_current_active_session: {
         Args: Record<string, never>

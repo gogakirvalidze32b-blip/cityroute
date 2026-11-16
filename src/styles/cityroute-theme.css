@@ -396,19 +396,21 @@ textarea::placeholder {
 }
 
 .exam-live-map__hud small,
-.exam-navigation-dock__metric small,
-.exam-navigation-dock__volume-label {
+.exam-navigation-dock__metric small {
   color: var(--cr-muted);
 }
 
 .exam-live-map__hud strong,
-.exam-navigation-dock__metric strong,
-.exam-navigation-dock__volume output {
+.exam-navigation-dock__metric strong {
   color: var(--cr-text);
 }
 
-.exam-navigation-dock__volume input {
-  accent-color: var(--cr-turquoise);
+.exam-navigation-dock__progress {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+.exam-navigation-dock__progress-fill {
+  background: linear-gradient(90deg, var(--cr-turquoise), #2dd4bf);
 }
 
 .exam-live-map__maneuver {

@@ -42,11 +42,15 @@ const h = vi.hoisted(() => ({
   deactivateHttpStatus: 204,
   deactivateResponse: { status: 'deactivated', deactivated_sessions: 1 } as unknown,
   deactivateWait: null as null | (() => Promise<{ data: unknown; error: unknown }>),
+  examTabRevocationError: null as unknown,
+  examTabRevocationWait: null as null | (() => Promise<void>),
   signOutCallback: false,
   signOutOptions: null as unknown,
   signOut: null as null | (() => Promise<void>),
   rpcCalls: [] as string[],
   rpcArgs: [] as Array<{ name: string; args: unknown }>,
+  realtimeCallback: null as null | (() => void),
+  realtimeStatusCallback: null as null | ((status: string) => void),
   events: [] as string[],
   flow: [] as string[],
   profileUpdates: [] as unknown[],
@@ -63,6 +67,7 @@ vi.mock('@/lib/supabase', () => ({
       signOut: async (options: unknown) => {
         h.events.push('local signOut')
         h.signOutOptions = options
+        h.authSession = null
         if (h.signOutCallback) h.cb?.('SIGNED_OUT', null)
         return { error: null }
       },
@@ -123,7 +128,32 @@ vi.mock('@/lib/supabase', () => ({
       }
       return { data: h.sessionResponse, error: h.sessionError }
     },
+    channel: () => {
+      const channel = {
+        on: (_event: string, _filter: unknown, callback: () => void) => {
+          h.realtimeCallback = callback
+          return channel
+        },
+        subscribe: (callback?: (status: string) => void) => {
+          h.realtimeStatusCallback = callback ?? null
+          callback?.('SUBSCRIBED')
+          return channel
+        },
+      }
+      return channel
+    },
+    removeChannel: async () => {
+      h.realtimeCallback = null
+      return 'ok'
+    },
   }),
+}))
+vi.mock('@/lib/exam-session-edge', () => ({
+  revokeExamTab: async () => {
+    h.events.push('exam_tab_revoke')
+    if (h.examTabRevocationWait) await h.examTabRevocationWait()
+    if (h.examTabRevocationError) throw h.examTabRevocationError
+  },
 }))
 
 const profile = (id: string) => ({
@@ -249,12 +279,16 @@ describe('AuthContext – tab refocus', () => {
     h.deactivateHttpStatus = 204
     h.deactivateResponse = { status: 'deactivated', deactivated_sessions: 1 }
     h.deactivateWait = null
+    h.examTabRevocationError = null
+    h.examTabRevocationWait = null
     h.serverModel = null
     h.signOutCallback = false
     h.signOutOptions = null
     h.signOut = null
     h.rpcCalls.length = 0
     h.rpcArgs.length = 0
+    h.realtimeCallback = null
+    h.realtimeStatusCallback = null
     h.events.length = 0
     h.flow.length = 0
     h.profileUpdates.length = 0
@@ -666,7 +700,7 @@ describe('AuthContext – tab refocus', () => {
 
     expect(h.rpcCalls).toContain('deactivate_current_session')
     expect(h.rpcArgs).toContainEqual({ name: 'deactivate_current_session', args: undefined })
-    expect(h.events).toEqual(['deactivate_current_session', 'local signOut'])
+    expect(h.events).toEqual(['exam_tab_revoke', 'deactivate_current_session', 'local signOut'])
     expect(h.signOutOptions).toEqual({ scope: 'local' })
     expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
     expect(diagnostic).toHaveBeenCalledWith(
@@ -697,6 +731,7 @@ describe('AuthContext – tab refocus', () => {
       pendingSignOut = h.signOut?.()
       await Promise.resolve()
     })
+
     expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
     expect(h.signOutOptions).toBeNull()
 
@@ -711,7 +746,62 @@ describe('AuthContext – tab refocus', () => {
     expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
   })
 
-  it('treats an already inactive session as a successful logout', async () => {
+  it('signs out locally when tab revocation times out', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.examTabRevocationWait = () => new Promise(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick()
+    await tick()
+
+    let pendingSignOut: Promise<void> | undefined
+    await act(async () => {
+      pendingSignOut = h.signOut?.()
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
+
+    await act(async () => { await pendingSignOut })
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
+    expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
+      'Exam tab-ის გაუქმება ვერ დადასტურდა',
+    )
+  }, 10_000)
+
+  it('signs out locally when tab revocation fails', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.examTabRevocationError = new Error('revocation unavailable')
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick()
+    await tick()
+
+    await act(async () => { await h.signOut?.() })
+
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
+    expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
+      'Exam tab-ის გაუქმება ვერ დადასტურდა',
+    )
+  })
+
+  it('does not restore stale authenticated UI after completed sign-out', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.signOutCallback = true
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick()
+    await tick()
+
+    await act(async () => { await h.signOut?.() })
+    await act(async () => { h.cb?.('SIGNED_IN', { user: { id: 'u1' } }) })
+    await tick()
+
+    expect(screen.getByTestId('s').textContent).toBe('noaccess:none')
+    expect(h.rpcCalls.filter((name) => name === 'activate_current_session')).toHaveLength(1)
+  })
+
+  it('warns when the server reports an inactive session without confirming revocation', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.deactivateResponse = { status: 'inactive', deactivated_sessions: 0 }
     render(<AuthProvider><Gate /></AuthProvider>)
@@ -719,6 +809,22 @@ describe('AuthContext – tab refocus', () => {
 
     await act(async () => { await h.signOut?.() })
 
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+    expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
+      'ამ მოწყობილობის სესიის გაუქმება სერვერზე ვერ დადასტურდა',
+    )
+  })
+
+  it('confirms a 204 logout response by checking the server revocation state', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.deactivateResponse = null
+    h.presenceResponse = { status: 'revoked' }
+    render(<AuthProvider><Gate /></AuthProvider>)
+    await tick(); await tick()
+
+    await act(async () => { await h.signOut?.() })
+
+    expect(h.rpcCalls).toContain('presence_current_session')
     expect(h.signOutOptions).toEqual({ scope: 'local' })
     expect(screen.getByTestId('sign-out-warning')).toBeEmptyDOMElement()
   })
@@ -793,7 +899,7 @@ describe('AuthContext – tab refocus', () => {
       args: undefined,
     })
     expect(h.signOutOptions).toEqual({ scope: 'local' })
-    expect(h.events).toEqual(['deactivate_current_session', 'local signOut'])
+    expect(h.events).toEqual(['exam_tab_revoke', 'deactivate_current_session', 'local signOut'])
   })
 
   it('warns and signs out locally for an unexpected RPC response', async () => {
@@ -861,7 +967,7 @@ describe('AuthContext – tab refocus', () => {
     expect(h.rpcCalls).toContain('heartbeat_current_session')
     expect(screen.getByTestId('entitlement').textContent).toContain('no-plan:no-entitlement')
     expect(screen.getByTestId('sign-out-warning')).toHaveTextContent(
-      'ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.',
+      'თქვენი სესია დასრულებულია. გთხოვთ, ხელახლა შეხვიდეთ.',
     )
     expect(h.rpcCalls).not.toContain('deactivate_current_session')
   })
@@ -896,6 +1002,38 @@ describe('AuthContext – tab refocus', () => {
     expect(h.rpcCalls).not.toContain('activate_current_session')
     expect(h.rpcCalls).not.toContain('deactivate_current_session')
   }, 15000)
+
+  it('signs the revoked device out immediately after a Realtime notification', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    h.signOutCallback = true
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/protected']}>
+          <Routes>
+            <Route path="/login" element={<p>Login page</p>} />
+            <Route element={<ProtectedRoute />}>
+              <Route path="/protected" element={<p>Protected page</p>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+    await tick()
+    await tick()
+    expect(screen.getByText('Protected page')).toBeTruthy()
+    expect(h.realtimeCallback).toBeTypeOf('function')
+
+    h.presenceResponse = { status: 'revoked' }
+    await act(async () => {
+      h.realtimeCallback?.()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(screen.getByText('Login page')).toBeTruthy())
+    expect(h.rpcCalls).toContain('presence_current_session')
+    expect(h.signOutOptions).toEqual({ scope: 'local' })
+  })
 
   it('does not sign out a device whose slot was only released by idleness', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
@@ -953,6 +1091,7 @@ describe('AuthContext – tab refocus', () => {
 
     const renderDevice = (sessionId: string) => {
       h.currentDeviceSession = sessionId
+      h.authSession = { user: { id: 'u1' }, access_token: 'token-u1' }
       h.signOutCallback = true
       h.signOutOptions = null
       return render(
@@ -1085,6 +1224,7 @@ describe('AuthContext – tab refocus', () => {
 
     const renderDevice = (sessionId: string) => {
       h.currentDeviceSession = sessionId
+      h.authSession = { user: { id: 'u1' }, access_token: 'token-u1' }
       h.signOutCallback = true
       h.signOutOptions = null
       return render(
@@ -1191,6 +1331,24 @@ describe('AuthContext – tab refocus', () => {
       await elapse(65_000)
 
       expect(screen.getByText('Protected page')).toBeTruthy()
+      expect(server.isActive('session-A')).toBe(true)
+      expect(server.isActive('session-B')).toBe(true)
+      expect(server.isActive('session-C')).toBe(false)
+      expect(h.signOutOptions).toBeNull()
+    })
+
+    it('shows the device limit when C is denied and preserves A and B', async () => {
+      const server = createSlotServer(2)
+      expect(server.login('session-A')).toBe(true)
+      expect(server.login('session-B')).toBe(true)
+      h.currentDeviceSession = 'session-C'
+      h.signOutCallback = true
+
+      render(<AuthProvider><Gate /></AuthProvider>)
+      await load()
+
+      expect(text()).toContain('მაქსიმუმ 2 მოწყობილობა')
+      expect(text()).toContain('noaccess:u1')
       expect(server.isActive('session-A')).toBe(true)
       expect(server.isActive('session-B')).toBe(true)
       expect(server.isActive('session-C')).toBe(false)

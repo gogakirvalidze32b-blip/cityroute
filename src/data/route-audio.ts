@@ -8,7 +8,7 @@ import {
 
 export { audioPublicUrl }
 
-export const EXAM_START_TEXT = 'გთხოვთ დაიწყოთ'
+export const EXAM_START_TEXT = 'დაწყება'
 export const EXAM_FINISH_TEXT = 'ფინიში'
 export const EXAM_SUCCESS_TEXT = 'გილოცავთ'
 

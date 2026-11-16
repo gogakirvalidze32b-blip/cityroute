@@ -326,3 +326,13 @@
   .sa-list { border-right: none; }
   .sa-back { display: inline-flex; }
 }
+.sa-device-limits {
+  padding: 0.8rem;
+  border-bottom: 1px solid var(--border, #d1d5db);
+}
+.sa-device-limits h2 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.sa-device-limits form { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; }
+.sa-device-limits label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; }
+.sa-device-limits input { min-height: 38px; max-width: 16rem; padding: 0.4rem; }
+.sa-device-limits button { min-height: 38px; padding: 0.4rem 0.75rem; background: #0f766e; color: #fff; }
+.sa-device-limits > p { margin: 0.35rem 0; }

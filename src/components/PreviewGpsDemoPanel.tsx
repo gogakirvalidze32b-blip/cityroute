@@ -3,18 +3,31 @@ import { useNavigate } from 'react-router-dom'
 import { audioEngine } from '@/lib/audio'
 import { examRouteLine } from '@/lib/pin-route-line'
 import {
-  prepareRouteGeometry,
-  projectOrderedPointsToRoute,
-  type ActiveRouteId,
-  type PreparedRouteGeometry,
-  type RouteProjection,
-} from '@/lib/pure-route-geometry'
+  DEFAULT_DEMO_SPEED_KMH,
+  DEFAULT_DEMO_TIME_SCALE,
+  DEMO_NEAR_PIN_SPEED_KMH,
+  DEMO_PIN_HOLD_SLACK_METERS,
+  DEMO_SPEED_KMH_OPTIONS,
+  DEMO_START_APPROACH_LEAD_METERS,
+  DEMO_TIME_SCALE_OPTIONS,
+  demoAdaptiveSpeedKmh,
+  demoAdvanceCappedToNextPin,
+  demoAdvanceMeters,
+  demoMicroChainages,
+  demoTickIntervalForSpeed,
+  type DemoSpeedKmh,
+  type DemoTimeScale,
+} from '@/lib/preview-gps-demo-speed'
+import {
+  prepareDemoRouteGeometry,
+  resolveDemoPinChainage,
+} from '@/lib/preview-gps-demo-pin'
+import type { ActiveRouteId, PreparedRouteGeometry, RouteProjection } from '@/lib/pure-route-geometry'
 import type { PreviewGpsSource } from '@/lib/preview-gps-source'
 import type { GpsPosition } from '@/lib/gps'
 import type { RouteWithPins } from '@/types/database'
 import type { PreviewDemoControls } from './ExamDriveSession'
 
-const GPS_INTERVAL_MS = 1000
 const FIX_ACCURACY_METERS = 5
 
 function bearingDegrees(from: readonly [number, number], to: readonly [number, number]) {
@@ -57,20 +70,17 @@ function positionAtChainage(
   }
 }
 
-function orderedPinProjection(
+function demoPinChainageMeters(
   route: RouteWithPins,
   geometry: PreparedRouteGeometry,
   sortOrder: number,
-): RouteProjection {
-  const points = [...route.pins]
-    .filter((pin) => pin.sort_order <= sortOrder)
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .map((pin) => [pin.lat, pin.lng] as const)
-  const projection = projectOrderedPointsToRoute(geometry, points, 40)
-  if (!projection) {
+  afterChainageMeters = 0,
+): number {
+  const chainage = resolveDemoPinChainage(geometry, route.pins, sortOrder, afterChainageMeters)
+  if (chainage === null) {
     throw new Error(`PIN ${sortOrder} cannot be placed on the displayed route line in sequence.`)
   }
-  return projection
+  return chainage
 }
 
 function gpsPosition(projection: RouteProjection, speedKmh: number): GpsPosition {
@@ -98,7 +108,7 @@ export function PreviewGpsDemoPanel({
   const navigate = useNavigate()
   const routeLine = useMemo(() => examRouteLine(route.slug, route.pins), [route.slug, route.pins])
   const geometry = useMemo(
-    () => prepareRouteGeometry(route.slug as ActiveRouteId, routeLine),
+    () => prepareDemoRouteGeometry(route.slug as ActiveRouteId, routeLine),
     [route.slug, routeLine],
   )
   const sortedPins = useMemo(
@@ -106,28 +116,62 @@ export function PreviewGpsDemoPanel({
     [route.pins],
   )
   const [startPinOrder, setStartPinOrder] = useState(sortedPins[0]?.sort_order ?? 1)
-  const [speedKmh, setSpeedKmh] = useState(20)
+  /** Selected cruise ceiling; live speed adapts 20↔this based on distance to next PIN. */
+  const [speedKmh, setSpeedKmh] = useState<DemoSpeedKmh>(DEFAULT_DEMO_SPEED_KMH)
+  const [timeScale, setTimeScale] = useState<DemoTimeScale>(DEFAULT_DEMO_TIME_SCALE)
+  const [liveSpeedKmh, setLiveSpeedKmh] = useState(DEMO_NEAR_PIN_SPEED_KMH)
   const [running, setRunning] = useState(false)
+  const [seekingNextPin, setSeekingNextPin] = useState(false)
   const [nextPinOrder, setNextPinOrder] = useState<number | null>(startPinOrder)
   const [status, setStatus] = useState('მზადაა')
   const chainageRef = useRef(0)
-  const speedRef = useRef(speedKmh)
+  const cruiseSpeedRef = useRef(speedKmh)
+  const liveSpeedRef = useRef(DEMO_NEAR_PIN_SPEED_KMH)
+  const timeScaleRef = useRef(timeScale)
   const timerRef = useRef<number | null>(null)
   const runningRef = useRef(false)
   const stopAtPinRef = useRef<number | null>(null)
   const controlsRef = useRef<PreviewDemoControls | null>(controls)
 
-  speedRef.current = speedKmh
+  cruiseSpeedRef.current = speedKmh
+  timeScaleRef.current = timeScale
   controlsRef.current = controls
 
   const publishAt = useCallback(
-    (chainageMeters: number) => {
+    (chainageMeters: number, speedForFixKmh: number = liveSpeedRef.current) => {
       const projection = positionAtChainage(geometry, chainageMeters)
       chainageRef.current = projection.chainageMeters
-      source.publish(gpsPosition(projection, speedRef.current))
+      liveSpeedRef.current = speedForFixKmh
+      source.publish(gpsPosition(projection, speedForFixKmh))
       return projection
     },
     [geometry, source],
+  )
+
+  /** Park demo GPS on the PIN itself so Auto დაწყება/გაგრძელება picks that unfinished PIN. */
+  const publishPreviewAtPin = useCallback(
+    (pinOrder: number) => {
+      if (controlsRef.current?.isActive()) return
+      try {
+        const priorOrder = [...route.pins]
+          .map((pin) => pin.sort_order)
+          .filter((order) => order < pinOrder)
+          .sort((a, b) => b - a)[0]
+        const after =
+          priorOrder !== undefined
+            ? resolveDemoPinChainage(geometry, route.pins, priorOrder, 0) ?? 0
+            : 0
+        const pinChainage = demoPinChainageMeters(route, geometry, pinOrder, after)
+        liveSpeedRef.current = DEMO_NEAR_PIN_SPEED_KMH
+        setLiveSpeedKmh(DEMO_NEAR_PIN_SPEED_KMH)
+        // Exact pin chainage (not approach lead) — lead would sit nearer the previous PIN.
+        publishAt(pinChainage, DEMO_NEAR_PIN_SPEED_KMH)
+        setStatus(`მზადაა · GPS PIN ${pinOrder}-თან · შემდეგი PIN ${pinOrder}`)
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'DEMO GPS პოზიცია ვერ დაყენდა')
+      }
+    },
+    [geometry, publishAt, route],
   )
 
   const pause = useCallback((message = 'შეჩერებულია') => {
@@ -137,12 +181,35 @@ export function PreviewGpsDemoPanel({
       window.clearTimeout(timerRef.current)
       timerRef.current = null
     }
+    setSeekingNextPin(false)
     setRunning(false)
     setStatus(message)
   }, [])
 
   const scheduleFix = useCallback(() => {
     if (!runningRef.current) return
+
+    // Pre-compute live speed for tick spacing (20 near PIN, up to cruise on open road).
+    const apiPreview = controlsRef.current
+    const previewPinOrder = apiPreview?.nextPinOrder() ?? null
+    let previewPinChainage: number | null = null
+    if (previewPinOrder !== null) {
+      try {
+        previewPinChainage = demoPinChainageMeters(
+          route,
+          geometry,
+          previewPinOrder,
+          chainageRef.current,
+        )
+      } catch {
+        previewPinChainage = null
+      }
+    }
+    const previewDistance =
+      previewPinChainage !== null ? Math.max(0, previewPinChainage - chainageRef.current) : null
+    const previewLiveSpeed = demoAdaptiveSpeedKmh(previewDistance, cruiseSpeedRef.current)
+    const tickMs = demoTickIntervalForSpeed(previewLiveSpeed, timeScaleRef.current)
+
     timerRef.current = window.setTimeout(() => {
       if (!runningRef.current) return
 
@@ -155,35 +222,85 @@ export function PreviewGpsDemoPanel({
         return
       }
 
-      if (audioEngine.isBusy()) {
-        setStatus('აუდიოს დასრულებას ველოდები')
+      let nextPinChainage: number | null = null
+      if (currentPinOrder !== null) {
+        try {
+          nextPinChainage = demoPinChainageMeters(
+            route,
+            geometry,
+            currentPinOrder,
+            chainageRef.current,
+          )
+        } catch {
+          nextPinChainage = null
+        }
+      }
+
+      const distanceToPin =
+        nextPinChainage !== null
+          ? Math.max(0, nextPinChainage - chainageRef.current)
+          : null
+      const liveSpeed = demoAdaptiveSpeedKmh(distanceToPin, cruiseSpeedRef.current)
+      liveSpeedRef.current = liveSpeed
+      setLiveSpeedKmh(liveSpeed)
+
+      // Wait for audio without reversing — keep the last forward pose on the route line.
+      if (audioEngine.isBusy() && distanceToPin !== null && distanceToPin <= DEMO_PIN_HOLD_SLACK_METERS) {
+        setStatus(`აუდიოს დასრულებას ველოდები · ${Math.round(liveSpeed)} კმ/სთ`)
         scheduleFix()
         return
       }
 
-      const nextChainage = Math.min(
-        geometry.totalLengthMeters,
-        chainageRef.current + (speedRef.current / 3.6) * (GPS_INTERVAL_MS / 1000),
+      const requested = demoAdvanceMeters(liveSpeed, timeScaleRef.current, tickMs)
+      const advance = demoAdvanceCappedToNextPin(
+        chainageRef.current,
+        requested,
+        nextPinChainage,
       )
-      const projection = publishAt(nextChainage)
-      const nextOrder = api?.nextPinOrder() ?? null
-      setNextPinOrder(nextOrder)
 
-      if (stopAtPin !== null && nextChainage >= geometry.totalLengthMeters) {
-        pause(`PIN ${stopAtPin} ვერ დადასტურდა — ტრასის ბოლო მიღწეულია`)
+      if (advance <= 0 || chainageRef.current >= geometry.totalLengthMeters) {
+        pause('მარშრუტის ბოლო წერტილი მიღწეულია')
         return
       }
+
+      const microChainages = demoMicroChainages(
+        chainageRef.current,
+        advance,
+        geometry.totalLengthMeters,
+      )
+
+      if (microChainages.length === 0) {
+        pause('მარშრუტის ბოლო წერტილი მიღწეულია')
+        return
+      }
+
+      const nextChainage = microChainages[0]!
+      // Always forward along the route line — never reverse (prevents map spin at PIN 1).
+      if (nextChainage < chainageRef.current) {
+        scheduleFix()
+        return
+      }
+      const projection = publishAt(nextChainage, liveSpeed)
+      const pinAfter = api?.nextPinOrder() ?? null
+      setNextPinOrder(pinAfter)
+
+      const stopTarget = stopAtPinRef.current
+      if (stopTarget !== null && pinAfter !== stopTarget) {
+        pause(`PIN ${stopTarget} დასრულდა — აუდიო დასრულებულია`)
+        return
+      }
+
       if (nextChainage >= geometry.totalLengthMeters) {
         pause('მარშრუტის ბოლო წერტილი მიღწეულია')
         return
       }
 
       setStatus(
-        `GPS fix · ${projection.position[0].toFixed(6)}, ${projection.position[1].toFixed(6)}`,
+        `GPS fix · ${projection.position[0].toFixed(6)}, ${projection.position[1].toFixed(6)} · ${Math.round(liveSpeed)} კმ/სთ · ${timeScaleRef.current}x`,
       )
       scheduleFix()
-    }, GPS_INTERVAL_MS)
-  }, [geometry.totalLengthMeters, pause, publishAt])
+    }, tickMs)
+  }, [geometry, pause, publishAt, route, source])
 
   const startFromSelectedPin = useCallback(async () => {
     const api = controlsRef.current
@@ -195,15 +312,39 @@ export function PreviewGpsDemoPanel({
       setStatus('სესია უკვე აქტიურია — გამოიყენეთ RESUME ან RESET DEMO')
       return
     }
+    const manualStart = api.manualStartPinOrder()
+    const playPinOrder = manualStart ?? startPinOrder
+    if (manualStart !== null && manualStart !== startPinOrder) {
+      setStartPinOrder(manualStart)
+      setNextPinOrder(manualStart)
+    }
     try {
       pause('ვიწყებ DEMO GPS-ს')
-      const projection = orderedPinProjection(route, geometry, startPinOrder)
-      chainageRef.current = projection.chainageMeters
+      const priorOrder = [...route.pins]
+        .map((pin) => pin.sort_order)
+        .filter((order) => order < playPinOrder)
+        .sort((a, b) => b - a)[0]
+      const after =
+        priorOrder !== undefined
+          ? resolveDemoPinChainage(geometry, route.pins, priorOrder, 0) ?? 0
+          : 0
+      const pinChainage = demoPinChainageMeters(route, geometry, playPinOrder, after)
+      // Start upstream of the PIN so the arrow visibly approaches instead of spawning on it.
+      const startChainage = Math.max(
+        0,
+        pinChainage - DEMO_START_APPROACH_LEAD_METERS,
+      )
+      const startProjection = positionAtChainage(geometry, startChainage)
+      chainageRef.current = startProjection.chainageMeters
       source.clear()
-      source.publish(gpsPosition(projection, 0))
-      await api.startAtPin(startPinOrder)
-      setNextPinOrder(startPinOrder)
-      setStatus(`DEMO აქტიურია PIN ${startPinOrder}-დან`)
+      liveSpeedRef.current = DEMO_NEAR_PIN_SPEED_KMH
+      setLiveSpeedKmh(DEMO_NEAR_PIN_SPEED_KMH)
+      source.publish(gpsPosition(startProjection, DEMO_NEAR_PIN_SPEED_KMH))
+      await api.startAtPin(playPinOrder)
+      setNextPinOrder(playPinOrder)
+      setStatus(
+        `DEMO აქტიურია PIN ${playPinOrder}-დან · ${DEMO_NEAR_PIN_SPEED_KMH}→${cruiseSpeedRef.current} კმ/სთ · ${timeScaleRef.current}x`,
+      )
       runningRef.current = true
       setRunning(true)
       scheduleFix()
@@ -223,7 +364,7 @@ export function PreviewGpsDemoPanel({
     }
     runningRef.current = true
     setRunning(true)
-    setStatus('გრძელდება')
+    setStatus(`გრძელდება · ${DEMO_NEAR_PIN_SPEED_KMH}→${cruiseSpeedRef.current} კმ/სთ · ${timeScaleRef.current}x`)
     scheduleFix()
   }, [geometry.totalLengthMeters, scheduleFix])
 
@@ -235,12 +376,13 @@ export function PreviewGpsDemoPanel({
       return
     }
     try {
-      const target = orderedPinProjection(route, geometry, targetOrder)
-      if (target.chainageMeters < chainageRef.current) {
+      const targetChainage = demoPinChainageMeters(route, geometry, targetOrder, chainageRef.current)
+      if (targetChainage < chainageRef.current) {
         setStatus(`PIN ${targetOrder} მარშრუტის მიმდინარე პოზიციის უკანაა`)
         return
       }
       stopAtPinRef.current = targetOrder
+      setSeekingNextPin(true)
       setStatus(`GPS-ით მივდივარ PIN ${targetOrder}-მდე`)
       if (!runningRef.current) {
         runningRef.current = true
@@ -248,6 +390,7 @@ export function PreviewGpsDemoPanel({
         scheduleFix()
       }
     } catch (error) {
+      setSeekingNextPin(false)
       setStatus(error instanceof Error ? error.message : 'PIN-ის ტრასაზე განთავსება ვერ მოხერხდა')
     }
   }, [geometry, route, scheduleFix])
@@ -258,18 +401,21 @@ export function PreviewGpsDemoPanel({
     chainageRef.current = 0
     controlsRef.current?.reset()
     setNextPinOrder(startPinOrder)
-  }, [pause, source, startPinOrder])
+    publishPreviewAtPin(startPinOrder)
+  }, [pause, publishPreviewAtPin, source, startPinOrder])
 
   useEffect(() => {
-    setStartPinOrder(sortedPins[0]?.sort_order ?? 1)
-    setNextPinOrder(sortedPins[0]?.sort_order ?? 1)
+    const firstOrder = sortedPins[0]?.sort_order ?? 1
+    setStartPinOrder(firstOrder)
+    setNextPinOrder(firstOrder)
     pause('მზადაა')
     source.clear()
+    publishPreviewAtPin(firstOrder)
     return () => {
       pause('შეჩერებულია')
       source.clear()
     }
-  }, [route.slug, sortedPins, pause, source])
+  }, [route.slug, sortedPins, pause, source, publishPreviewAtPin])
 
   useEffect(() => {
     if (!controls) return
@@ -302,7 +448,7 @@ export function PreviewGpsDemoPanel({
         <strong>PREVIEW GPS DEMO</strong>
         <p style={{ margin: '0.25rem 0 0' }}>
           სიმულაცია იყენებს რუკაზე ნაჩვენებ route line-ს და იგივე GPS/Navigation Engine-ს.
-          პროგრესი იზოლირებულია DEMO სესიაში.
+          პროგრესი იზოლირებულია DEMO სესიაში. სიჩქარე/სწრაფი რეჟიმი მხოლოდ ამ პანელს ეხება.
         </p>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'end' }}>
@@ -311,7 +457,7 @@ export function PreviewGpsDemoPanel({
           <select
             aria-label="DEMO მარშრუტი"
             value={route.slug}
-            disabled={Boolean(controlsRef.current?.isActive())}
+            disabled={Boolean(controls?.isActive())}
             onChange={(event) => navigate(`/preview-demo/route/${event.currentTarget.value}`)}
           >
             {routes.map((item) => (
@@ -326,11 +472,12 @@ export function PreviewGpsDemoPanel({
           <select
             aria-label="DEMO საწყისი PIN"
             value={startPinOrder}
-            disabled={Boolean(controlsRef.current?.isActive())}
+            disabled={Boolean(controls?.isActive())}
             onChange={(event) => {
               const selectedOrder = Number(event.currentTarget.value)
               setStartPinOrder(selectedOrder)
               setNextPinOrder(selectedOrder)
+              publishPreviewAtPin(selectedOrder)
             }}
           >
             {sortedPins.map((pin) => (
@@ -341,16 +488,34 @@ export function PreviewGpsDemoPanel({
           </select>
         </label>
         <label>
-          სიჩქარე: {speedKmh} კმ/სთ
-          <input
+          კრუიზი (ცარიელზე) · ახლა {Math.round(liveSpeedKmh)} კმ/სთ
+          <select
             aria-label="DEMO სიჩქარე"
-            type="range"
-            min="5"
-            max="60"
-            step="5"
+            data-testid="demo-speed-kmh"
             value={speedKmh}
-            onChange={(event) => setSpeedKmh(Number(event.currentTarget.value))}
-          />
+            onChange={(event) => setSpeedKmh(Number(event.currentTarget.value) as DemoSpeedKmh)}
+          >
+            {DEMO_SPEED_KMH_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {DEMO_NEAR_PIN_SPEED_KMH}→{option} კმ/სთ
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          სწრაფი რეჟიმი
+          <select
+            aria-label="DEMO სწრაფი რეჟიმი"
+            data-testid="demo-time-scale"
+            value={timeScale}
+            onChange={(event) => setTimeScale(Number(event.currentTarget.value) as DemoTimeScale)}
+          >
+            {DEMO_TIME_SCALE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}x
+              </option>
+            ))}
+          </select>
         </label>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -374,7 +539,7 @@ export function PreviewGpsDemoPanel({
         <button
           type="button"
           onClick={nextPin}
-          disabled={!controls?.isActive() || nextPinOrder === null || stopAtPinRef.current !== null}
+          disabled={!controls?.isActive() || nextPinOrder === null || seekingNextPin}
         >
           NEXT PIN
         </button>

@@ -40,6 +40,7 @@ vi.mock('@/lib/audio', () => ({
     unlock: vi.fn(),
     isBusy: vi.fn(() => false),
     stopAll: vi.fn(),
+    preload: vi.fn(),
     preloadAll: vi.fn(),
     setVolume: vi.fn(),
   },
@@ -139,7 +140,7 @@ describe('isolated Preview Demo mode', () => {
     expect(externalWebSocket).not.toHaveBeenCalled()
   })
 
-  it('restores an active demo route from refresh and blocks browser history navigation', async () => {
+  it('restores an active demo route from refresh and allows explicit leave without the exit alert', async () => {
     const route = TELAVI_ROUTES_FALLBACK.find((candidate) => candidate.slug === 'route-1')!
     saveActiveExam({
       routeId: route.id,
@@ -163,14 +164,17 @@ describe('isolated Preview Demo mode', () => {
       expect(document.querySelector('.exam-session--active')).toBeTruthy()
     })
     expect(window.location.pathname).toBe('/preview-demo/route/route-1')
+    expect(screen.queryByText(/გთხოვთ,?\s*დაასრულოთ/)).toBeNull()
 
+    // Explicit leave (history / menu) must not trap the user or show the removed alert.
     window.history.pushState({}, '', '/preview-demo')
     window.dispatchEvent(new PopStateEvent('popstate'))
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe('/preview-demo/route/route-1')
+      expect(window.location.pathname).toBe('/preview-demo')
     })
-    expect(screen.getByRole('alert')).toHaveTextContent('გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(/გთხოვთ,?\s*დაასრულოთ/)).toBeNull()
 
     clearActiveExam(route.id, route.slug, route.name_ka, 'preview-demo-user')
   })

@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ChatThread } from '@/components/support/ChatThread'
 import { Composer } from '@/components/support/Composer'
 import { useAuth } from '@/context/AuthContext'
 import {
+  adminListDeviceSessions,
+  adminGetDeviceLimitOverride,
+  adminGrantDeviceLimitOverride,
   adminListConversations,
+  adminRevokeDeviceSession,
+  adminRevokeDeviceLimitOverride,
   adminSetStatus,
   checkIsSupportAdmin,
   subscribeToAdminFeed,
@@ -225,6 +230,7 @@ function AdminWorkspace() {
       </aside>
 
       <section className="sa-detail">
+        <DeviceLimitOverridePanel />
         {selected ? (
           <ConversationPane key={selected.id} conv={selected} onChanged={() => void refresh()} onBack={() => select(null)} />
         ) : selectedId && listLoading ? (
@@ -236,6 +242,220 @@ function AdminWorkspace() {
         )}
       </section>
     </div>
+  )
+}
+
+function DeviceLimitOverridePanel() {
+  const [profileId, setProfileId] = useState('')
+  const [loadedProfileId, setLoadedProfileId] = useState('')
+  const [override, setOverride] = useState<Awaited<ReturnType<typeof adminGetDeviceLimitOverride>>>(null)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [limit, setLimit] = useState('2')
+  const [grantReason, setGrantReason] = useState('')
+  const [revokeReason, setRevokeReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [deviceSessions, setDeviceSessions] = useState<Awaited<ReturnType<typeof adminListDeviceSessions>>>([])
+  const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [sessionsError, setSessionsError] = useState<string | null>(null)
+  const [sessionReasons, setSessionReasons] = useState<Record<string, string>>({})
+  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null)
+
+  async function loadSessions(targetProfileId: string) {
+    setSessionsLoading(true)
+    setSessionsError(null)
+    try {
+      setDeviceSessions(await adminListDeviceSessions(targetProfileId))
+    } catch (e) {
+      setSessionsError(toSupportError(e).userMessage)
+      setDeviceSessions([])
+    } finally {
+      setSessionsLoading(false)
+    }
+  }
+
+  async function loadOverride(targetProfileId: string) {
+    setLoading(true)
+    setError(null)
+    try {
+      setOverride(await adminGetDeviceLimitOverride(targetProfileId))
+      setLoadedProfileId(targetProfileId)
+      setLoadError(null)
+      void loadSessions(targetProfileId)
+    } catch (e) {
+      setLoadError(toSupportError(e).userMessage)
+      setLoadedProfileId('')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function lookup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const targetProfileId = profileId.trim()
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetProfileId)) {
+      setError('შეიყვანეთ მომხმარებლის ვალიდური UUID.')
+      return
+    }
+    await loadOverride(targetProfileId)
+  }
+
+  async function grant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!loadedProfileId || profileId.trim() !== loadedProfileId) return
+    const sessionLimit = Number(limit)
+    if (!Number.isInteger(sessionLimit) || sessionLimit < 1 || sessionLimit > 100) {
+      setError('ლიმიტი უნდა იყოს მთელი რიცხვი 1-დან 100-მდე.')
+      return
+    }
+    if (grantReason.trim().length < 5 || grantReason.trim().length > 500) {
+      setError('მიზეზი უნდა შეიცავდეს 5-დან 500 სიმბოლომდე.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      await adminGrantDeviceLimitOverride(loadedProfileId, sessionLimit, grantReason.trim())
+      setGrantReason('')
+      await loadOverride(loadedProfileId)
+    } catch (e) {
+      setError(toSupportError(e).userMessage)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function revoke(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!override || !loadedProfileId || profileId.trim() !== loadedProfileId) return
+    if (revokeReason.trim().length < 5 || revokeReason.trim().length > 500) {
+      setError('გაუქმების მიზეზი უნდა შეიცავდეს 5-დან 500 სიმბოლომდე.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      await adminRevokeDeviceLimitOverride(override.override_id, revokeReason.trim())
+      setRevokeReason('')
+      await loadOverride(loadedProfileId)
+    } catch (e) {
+      setError(toSupportError(e).userMessage)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function revokeDeviceSession(event: FormEvent<HTMLFormElement>, sessionId: string) {
+    event.preventDefault()
+    if (!loadedProfileId || profileId.trim() !== loadedProfileId) return
+    const reason = sessionReasons[sessionId]?.trim() ?? ''
+    if (reason.length < 5 || reason.length > 500) {
+      setSessionsError('გაუქმების მიზეზი უნდა შეიცავდეს 5-დან 500 სიმბოლომდე.')
+      return
+    }
+    setRevokingSessionId(sessionId)
+    setSessionsError(null)
+    try {
+      await adminRevokeDeviceSession(loadedProfileId, sessionId, reason)
+      setSessionReasons((current) => ({ ...current, [sessionId]: '' }))
+      await loadSessions(loadedProfileId)
+    } catch (e) {
+      setSessionsError(toSupportError(e).userMessage)
+    } finally {
+      setRevokingSessionId(null)
+    }
+  }
+
+  return (
+    <section className="sa-device-limits" aria-labelledby="sa-device-limits-title">
+      <h2 id="sa-device-limits-title">მოწყობილობების ლიმიტი</h2>
+      <form onSubmit={(event) => void lookup(event)}>
+        <label>
+          მომხმარებლის პროფილის UUID
+          <input value={profileId} onChange={(event) => setProfileId(event.target.value)} required />
+        </label>
+        <button type="submit" disabled={loading}>
+          {loading ? 'იტვირთება...' : 'მომხმარებლის მოძებნა'}
+        </button>
+      </form>
+      {loadError && <p role="alert">{loadError}</p>}
+      {loadedProfileId && profileId.trim() === loadedProfileId && override ? (
+        <>
+          <p>აქტიური ადმინისტრატორის ლიმიტი: <strong>{override.session_limit}</strong></p>
+          <p className="muted">მიზეზი: {override.grant_reason}</p>
+          <form onSubmit={(event) => void revoke(event)}>
+            <label>
+              გაუქმების მიზეზი
+              <input value={revokeReason} onChange={(event) => setRevokeReason(event.target.value)} minLength={5} maxLength={500} required />
+            </label>
+            <button type="submit" disabled={saving}>
+              {saving ? 'ინახება...' : 'გაუქმება (პაკეტის ლიმიტის აღდგენა)'}
+            </button>
+          </form>
+        </>
+      ) : loadedProfileId && profileId.trim() === loadedProfileId && !loading && !loadError ? (
+        <form onSubmit={(event) => void grant(event)}>
+          <label>
+            მოწყობილობების ლიმიტი (1–100)
+            <input type="number" min={1} max={100} step={1} value={limit} onChange={(event) => setLimit(event.target.value)} required />
+          </label>
+          <label>
+            მინიჭების მიზეზი
+            <input value={grantReason} onChange={(event) => setGrantReason(event.target.value)} minLength={5} maxLength={500} required />
+          </label>
+          <button type="submit" disabled={saving}>
+            {saving ? 'ინახება...' : 'ლიმიტის მინიჭება'}
+          </button>
+        </form>
+      ) : null}
+      {loadedProfileId && profileId.trim() === loadedProfileId && (
+        <section aria-labelledby="sa-device-sessions-title">
+          <h3 id="sa-device-sessions-title">მოწყობილობის სესიები</h3>
+          {sessionsLoading && <p className="muted">სესიები იტვირთება...</p>}
+          {sessionsError && <p className="sc-inline-error" role="alert">{sessionsError}</p>}
+          {!sessionsLoading && !sessionsError && deviceSessions.length === 0 && (
+            <p className="muted">აქტიური სესიის ჩანაწერები არ მოიძებნა.</p>
+          )}
+          {deviceSessions.map((deviceSession) => (
+            <article key={deviceSession.session_id} className="sa-device-session">
+              <p>Session ID: <code>{deviceSession.session_id}</code></p>
+              <p>სტატუსი: <strong>{deviceSession.status}</strong></p>
+              <p className="muted">
+                ბოლო აქტივობა: {new Date(deviceSession.last_activity_at).toLocaleString()}
+                {' · '}ბოლო presence: {new Date(deviceSession.last_seen_at).toLocaleString()}
+              </p>
+              <form onSubmit={(event) => void revokeDeviceSession(event, deviceSession.session_id)}>
+                <label>
+                  გაუქმების მიზეზი
+                  <input
+                    value={sessionReasons[deviceSession.session_id] ?? ''}
+                    onChange={(event) => setSessionReasons((current) => ({
+                      ...current,
+                      [deviceSession.session_id]: event.target.value,
+                    }))}
+                    minLength={5}
+                    maxLength={500}
+                    required
+                  />
+                </label>
+                <button type="submit" disabled={revokingSessionId !== null}>
+                  {revokingSessionId === deviceSession.session_id ? 'უქმდება...' : 'სესიის გაუქმება'}
+                </button>
+              </form>
+            </article>
+          ))}
+        </section>
+      )}
+      {loading && <p className="muted">იტვირთება...</p>}
+      {!loadedProfileId && !loading && !loadError && (
+        <p className="muted">მოძებნეთ მომხმარებელი UUID-ით, რომ ნახოთ ან შეცვალოთ მისი ლიმიტი.</p>
+      )}
+      {error && <p className="sc-inline-error" role="alert">{error}</p>}
+      {loadedProfileId && profileId.trim() === loadedProfileId && (
+        <p className="muted">მომხმარებლის ID: {loadedProfileId}</p>
+      )}
+    </section>
   )
 }
 

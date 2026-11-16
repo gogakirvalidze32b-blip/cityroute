@@ -4,6 +4,35 @@ create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 select plan(14);
 
+create function pg_temp.confirm_bog(p_user uuid, p_payment text, p_merchant text, p_amount numeric, p_slots integer)
+returns void language plpgsql as $confirm$
+declare
+  v_result jsonb;
+  v_amount text := case p_amount when 99 then '99.00' when 179 then '179.00' else p_amount::text end;
+begin
+  insert into public.payment_transactions (
+    user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata
+  ) values (
+    p_user, 'bog', p_payment, p_merchant, p_amount, 'GEL', 'pending',
+    pg_catalog.jsonb_build_object('provider', 'bog', 'device_slots', p_slots, 'package_price', p_amount)
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', 'cityroute_bog_confirmer', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
+  v_result := public.update_bog_payment_status(
+    p_payment, 'success', p_payment || '-bank',
+    pg_catalog.jsonb_build_object(
+      'bank_status', 'completed', 'bank_amount', v_amount,
+      'bank_currency', 'GEL', 'bank_external_order_id', p_merchant
+    )
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', '', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{}', true);
+  if v_result->>'status' is distinct from 'success' or v_result->>'success' is distinct from 'true' then
+    raise exception 'BOG activation failed for %: %', p_payment, v_result;
+  end if;
+end
+$confirm$;
+
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -29,49 +58,20 @@ values
   )
 on conflict (id) do nothing;
 
-insert into public.profiles (
-  id, subscription_status, subscription_plan, subscription_expires_at,
-  device_slots, subscription_payment_id
-)
-values
-  (
-    '00000000-0000-0000-0000-000000000971',
-    'trial', 'premium', pg_catalog.now() + interval '12 hours', 1, null
-  ),
-  (
-    '00000000-0000-0000-0000-000000000972',
-    'active', 'premium', pg_catalog.now() + interval '30 days', 2, 'snapshot-paid-179'
-  ),
-  (
-    '00000000-0000-0000-0000-000000000973',
-    'active', 'premium', pg_catalog.now() + interval '30 days', 1, 'snapshot-failed-99'
-  )
-on conflict (id) do update
-set subscription_status = excluded.subscription_status,
-    subscription_plan = excluded.subscription_plan,
-    subscription_expires_at = excluded.subscription_expires_at,
-    device_slots = excluded.device_slots,
-    subscription_payment_id = excluded.subscription_payment_id;
-
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000972', 'snapshot-paid-179', 'merchant-snapshot-paid-179', 179, 2);
+select set_config('cityroute.bog_payment_write', 'on', true);
 insert into public.payment_transactions (
   user_id, provider, payment_id, merchant_payment_id, amount, currency,
   status, metadata, paid_at
 )
-values
-  (
-    '00000000-0000-0000-0000-000000000972',
-    'bog', 'snapshot-paid-179', 'merchant-snapshot-paid-179',
-    179, 'GEL', 'success',
-    '{"provider":"bog","device_slots":2,"bank_status":"completed","bank_amount":"179","bank_currency":"GEL","bank_external_order_id":"merchant-snapshot-paid-179"}',
-    pg_catalog.now()
-  ),
-  (
-    '00000000-0000-0000-0000-000000000973',
-    'bog', 'snapshot-failed-99', 'merchant-snapshot-failed-99',
-    99, 'GEL', 'failed',
-    '{"provider":"bog","device_slots":1,"bank_status":"rejected","bank_amount":"99","bank_currency":"GEL","bank_external_order_id":"merchant-snapshot-failed-99"}',
-    null
-  );
+values (
+  '00000000-0000-0000-0000-000000000973',
+  'bog', 'snapshot-failed-99', 'merchant-snapshot-failed-99',
+  99, 'GEL', 'failed',
+  '{"provider":"bog","device_slots":1,"bank_status":"rejected","bank_amount":"99","bank_currency":"GEL","bank_external_order_id":"merchant-snapshot-failed-99"}',
+  null
+);
+select set_config('cityroute.bog_payment_write', 'off', true);
 
 insert into auth.sessions (id, user_id, created_at, updated_at, not_after)
 values
@@ -169,18 +169,18 @@ select set_config(
 );
 select is(
   public.get_current_account_entitlement()->>'entitlement',
-  'inactive',
-  'a linked failed payment is not reported as Premium'
+  'trial',
+  'a failed payment does not become Premium'
 );
 select is(
   public.get_current_account_entitlement()->>'payment_status',
-  'failed',
-  'the failed payment state is visible in the snapshot'
+  null,
+  'an unlinked failed payment is not shown as the account payment'
 );
 select is(
   (public.get_current_account_entitlement()->>'access_active')::boolean,
-  false,
-  'a linked failed payment does not grant access'
+  true,
+  'the account remains on Trial access'
 );
 
 reset role;

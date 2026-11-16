@@ -35,6 +35,7 @@ import { MapBasemapLayers } from '@/components/MapBasemapLayers'
 import { MAP_TILES } from '@/lib/map-tiles'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { TELAVI_CENTER, YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
+import { formatPinInstructionLabel } from '@/lib/pin-instruction-label'
 
 type NavPhase = 'preview' | 'active' | 'summary'
 
@@ -663,7 +664,8 @@ export function NavigationMap({ route, practiceMode = false, onPhaseChange }: Pr
             </div>
             {pinsActive && nextPin && userPos && (
               <p className="next-instruction">
-                {Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng]))}m — {nextPin.instruction_ka}
+                {Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng]))}m —{' '}
+                {formatPinInstructionLabel(nextPin.sort_order, nextPin.instruction_ka)}
               </p>
             )}
             {!getGpsEnvironmentIssue() && !gpsStarted && (

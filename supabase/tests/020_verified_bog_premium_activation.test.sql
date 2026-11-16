@@ -2,7 +2,7 @@ begin;
 set local role postgres;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(31);
+select plan(32);
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -40,16 +40,11 @@ insert into public.profiles (
   device_slots, subscription_payment_id
 )
 values
-  ('00000000-0000-0000-0000-000000000901', 'trial', 'premium', pg_catalog.now() + interval '12 hours', 1, null),
-  ('00000000-0000-0000-0000-000000000902', 'trial', 'premium', pg_catalog.now() + interval '12 hours', 1, null),
-  ('00000000-0000-0000-0000-000000000903', 'trial', 'premium', pg_catalog.now() + interval '12 hours', 1, null),
-  ('00000000-0000-0000-0000-000000000904', 'trial', 'premium', pg_catalog.now() + interval '12 hours', 1, null)
-on conflict (id) do update
-set subscription_status = excluded.subscription_status,
-    subscription_plan = excluded.subscription_plan,
-    subscription_expires_at = excluded.subscription_expires_at,
-    device_slots = excluded.device_slots,
-    subscription_payment_id = excluded.subscription_payment_id;
+  ('00000000-0000-0000-0000-000000000901', 'trial', null, pg_catalog.now() + interval '12 hours', 1, null),
+  ('00000000-0000-0000-0000-000000000902', 'trial', null, pg_catalog.now() + interval '12 hours', 1, null),
+  ('00000000-0000-0000-0000-000000000903', 'trial', null, pg_catalog.now() + interval '12 hours', 1, null),
+  ('00000000-0000-0000-0000-000000000904', 'trial', null, pg_catalog.now() + interval '12 hours', 1, null)
+on conflict (id) do nothing;
 
 insert into public.payment_transactions (
   user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata
@@ -72,8 +67,8 @@ values
     179, 'GEL', 'pending', '{"provider":"bog","device_slots":2}'
   );
 
-set local role service_role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+set local role postgres;
+select set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
 select is(
   public.update_bog_payment_status(
     'bog-verified-99', 'success', 'bank-transaction-99',
@@ -121,8 +116,8 @@ select is(
   '99 GEL payment is the authoritative one-device entitlement'
 );
 
-set local role service_role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+set local role postgres;
+select set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
 select is(
   (public.update_bog_payment_status(
     'bog-verified-99', 'success', 'bank-transaction-99',
@@ -134,8 +129,8 @@ select is(
 reset role;
 set local role postgres;
 
-set local role service_role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+set local role postgres;
+select set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
 select is(
   public.update_bog_payment_status(
     'bog-verified-179', 'success', 'bank-transaction-179',
@@ -172,20 +167,22 @@ select is(
   2,
   '179 GEL payment is the authoritative two-device entitlement'
 );
-update public.profiles
-set subscription_expires_at = pg_catalog.now() - interval '1 second'
-where id = '00000000-0000-0000-0000-000000000902';
+select throws_ok(
+  $$update public.profiles
+    set subscription_expires_at = pg_catalog.now() - interval '1 second'
+    where id = '00000000-0000-0000-0000-000000000902'$$,
+  '42501',
+  'subscription expiry can change only during confirmed premium activation',
+  'a paid expiry cannot be rewritten by hand'
+);
 select is(
   public.current_verified_premium_device_slots('00000000-0000-0000-0000-000000000902'),
-  0,
-  'expired subscription no longer grants paid device slots'
+  2,
+  'rejected expiry rewrite leaves the verified two-device entitlement in place'
 );
-update public.profiles
-set subscription_expires_at = pg_catalog.now() + interval '30 days'
-where id = '00000000-0000-0000-0000-000000000902';
 
-set local role service_role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+set local role postgres;
+select set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
 select is(
   public.update_bog_payment_status(
     'bog-pending-99', 'processing', null,
@@ -212,8 +209,8 @@ select is(
   'pending payment grants no paid device slots'
 );
 
-set local role service_role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+set local role postgres;
+select set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
 select throws_ok(
   $$select public.update_bog_payment_status(
     'bog-mismatch-179', 'success', 'bank-transaction-mismatch',
@@ -337,8 +334,8 @@ select is(
   'device-scoped logout revokes only the current device session'
 );
 
-set local role service_role;
-select set_config('request.jwt.claims', '{"role":"service_role"}', true);
+set local role postgres;
+select set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
 select is(
   public.update_bog_payment_status(
     'bog-verified-179', 'refunded', 'bank-refund-179',

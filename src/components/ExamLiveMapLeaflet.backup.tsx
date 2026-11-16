@@ -7,6 +7,7 @@ import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
+import { formatPinInstructionLabel } from '@/lib/pin-instruction-label'
 import { GpsInterpolator, type GpsState } from '@/lib/gps-interpolation'
 import { snapToRoute } from '@/lib/route-snapping'
 
@@ -248,8 +249,10 @@ export function ExamLiveMapLeaflet({ route, userPos, heading, nextPin, mapBadge 
 
       {nextPin && (
         <div className="exam-live-map__hud">
-          <small>შემდეგი · {nextPinDist} მ</small>
-          <strong>{nextPin.instruction_ka}</strong>
+          <small>შემდეგი · PIN {nextPin.sort_order} · {nextPinDist} მ</small>
+          <strong>
+            {formatPinInstructionLabel(nextPin.sort_order, nextPin.instruction_ka)}
+          </strong>
         </div>
       )}
 

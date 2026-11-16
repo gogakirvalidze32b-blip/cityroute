@@ -27,7 +27,7 @@ describe('exam panel buttons', () => {
         onRecordSevere={onRecordSevere}
       />,
     )
-    expect(screen.getByText('01:05')).toBeTruthy()
+    expect(screen.queryByText('01:05')).toBeNull()
     expect(screen.getByText('42')).toBeTruthy()
     expect(screen.getByRole('img', { name: 'სიჩქარის ლიმიტი უცნობია' }).textContent).toBe('—')
     expect(screen.queryByText('rpm')).toBeNull()

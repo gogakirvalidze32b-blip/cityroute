@@ -8,9 +8,20 @@
  * passes a PIN quickly or GPS skips a few metres.
  */
 
-/** Maximum GPS-to-PIN trigger distance for ordinary PINs. */
-export const AUDIO_TRIGGER_DISTANCE_M = 10
-const ROUTE_2_PIN_26_APPROACH_WINDOW_M = 5
+/**
+ * Maximum GPS-to-PIN trigger distance for ordinary PINs.
+ * 18 m keeps margin for phone GPS noise and pins slightly off the centerline
+ * (e.g. route-4 PIN 21 ~10 m offline) so voices are not skipped at driving speed.
+ */
+export const AUDIO_TRIGGER_DISTANCE_M = 18
+/** Start / finish / loop-context PINs get a wider bubble. */
+export const AUDIO_SPECIAL_TRIGGER_DISTANCE_M = 25
+/**
+ * GPS accuracy / cross-track ceilings used when deciding PIN audio.
+ * Phone GPS in Telavi often reports 15–25 m; the old 12 m gate dropped voices.
+ */
+export const AUDIO_GPS_MAX_ACCURACY_M = 25
+export const AUDIO_GPS_MAX_CROSS_TRACK_M = 28
 const ROUTE_FINISH_PIN_ORDERS: Readonly<Record<string, number>> = {
   'route-1': 35,
   'route-2': 29,
@@ -29,16 +40,13 @@ export function pinAudioTriggerDistanceMeters(route: string, sortOrder: number):
     ROUTE_FINISH_PIN_ORDERS[route] === sortOrder ||
     ROUTE_CONTEXT_TRIGGER_ORDERS[route] === sortOrder
   ) {
-    return 20
+    return AUDIO_SPECIAL_TRIGGER_DISTANCE_M
   }
 
   return AUDIO_TRIGGER_DISTANCE_M
 }
 
 export function pinAudioApproachWindowMeters(route: string, sortOrder: number): number {
-  if (route === 'route-2' && sortOrder === 26) {
-    return ROUTE_2_PIN_26_APPROACH_WINDOW_M
-  }
   return pinAudioTriggerDistanceMeters(route, sortOrder)
 }
 

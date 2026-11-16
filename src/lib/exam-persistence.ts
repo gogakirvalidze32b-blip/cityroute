@@ -2,7 +2,7 @@
  * Exam session persistence - save/restore active exam state
  */
 
-import type { ExamSession } from './exam-session'
+import type { ExamSession, ExamSessionSummary } from './exam-session'
 import type { LatLng } from './gps'
 import { normalizeRemovedRoutePinOrders } from './route-resume'
 import { getExamTabId } from './device'
@@ -12,7 +12,8 @@ export type SavedExamState = {
   /** Stable across local-route-* → Supabase UUID. Preferred match key. */
   routeSlug?: string
   routeName: string
-  phase: 'active'
+  /** `summary` survives Finish → Refresh; legacy saves are always `active`. */
+  phase: 'active' | 'summary'
   userId?: string
   deviceId?: string
   tabId?: string
@@ -26,6 +27,8 @@ export type SavedExamState = {
   heading: number
   speedKmh: number
   elapsedMs: number
+  /** GPS path length for the current exam (meters). Optional for legacy saves. */
+  distanceMeters?: number
   triggeredPins: string[]
   /** Handled pins by sort_order. Survives local `p2-*` ids versus Supabase UUIDs. */
   triggeredSortOrders?: number[]
@@ -35,6 +38,9 @@ export type SavedExamState = {
   queuedPinSortOrders?: number[]
   lastPassedSortOrder?: number | null
   nextSortOrder?: number | null
+  /** Present when phase is `summary` so Finish survives a page refresh. */
+  summary?: ExamSessionSummary
+  summaryCanContinue?: boolean
   savedAt: number
 }
 
@@ -97,7 +103,7 @@ export function isSavedExamState(value: unknown): value is SavedExamState {
   return (
     typeof state.routeId === 'string' &&
     typeof state.routeName === 'string' &&
-    state.phase === 'active' &&
+    (state.phase === 'active' || state.phase === 'summary') &&
     typeof state.exam === 'object' &&
     state.exam !== null &&
     typeof state.exam.routeId === 'string' &&
@@ -118,6 +124,11 @@ export function isSavedExamState(value: unknown): value is SavedExamState {
     Number.isFinite(state.speedKmh) &&
     typeof state.elapsedMs === 'number' &&
     Number.isFinite(state.elapsedMs) &&
+    (!('distanceMeters' in state) ||
+      state.distanceMeters === undefined ||
+      (typeof state.distanceMeters === 'number' &&
+        Number.isFinite(state.distanceMeters) &&
+        state.distanceMeters >= 0)) &&
     Array.isArray(state.triggeredPins) &&
     state.triggeredPins.every((pinId) => typeof pinId === 'string') &&
     typeof state.savedAt === 'number' &&
@@ -135,7 +146,22 @@ export function isSavedExamState(value: unknown): value is SavedExamState {
         Number.isInteger(state.examSessionRevision) &&
         state.examSessionRevision >= 1)) &&
     (!('examSessionDirty' in state) || typeof state.examSessionDirty === 'boolean') &&
-    (!('startMode' in state) || state.startMode === 'automatic' || state.startMode === 'manual')
+    (!('startMode' in state) || state.startMode === 'automatic' || state.startMode === 'manual') &&
+    (!('summaryCanContinue' in state) || typeof state.summaryCanContinue === 'boolean') &&
+    (!('summary' in state) ||
+      state.summary === undefined ||
+      (typeof state.summary === 'object' &&
+        state.summary !== null &&
+        typeof state.summary.routeId === 'string' &&
+        typeof state.summary.routeName === 'string' &&
+        typeof state.summary.startedAt === 'number' &&
+        typeof state.summary.finishedAt === 'number' &&
+        typeof state.summary.elapsedMs === 'number' &&
+        typeof state.summary.minorTotal === 'number' &&
+        typeof state.summary.severeTotal === 'number' &&
+        typeof state.summary.failedMinor === 'boolean' &&
+        typeof state.summary.counts === 'object' &&
+        state.summary.counts !== null))
   )
 }
 

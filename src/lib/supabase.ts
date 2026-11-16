@@ -43,12 +43,30 @@ export function getSupabase() {
         headers: {
           'x-cityroute-device-fingerprint': getDeviceFingerprint(),
         },
-        fetch: (url, options = {}) => {
+        fetch: (request, options: RequestInit = {}) => {
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 წამი timeout
-          
-          return fetch(url, {
-            ...options,
+
+          const requestUrl = request instanceof Request ? request.url : String(request)
+          const requestMethod = options.method ?? (request instanceof Request ? request.method : 'GET')
+          let requestOptions: RequestInit = options
+          const parsedUrl = new URL(requestUrl, typeof window === 'undefined' ? 'http://localhost' : window.location.origin)
+          if (
+            parsedUrl.pathname.endsWith('/rest/v1/rpc/deactivate_current_session') &&
+            requestMethod.toUpperCase() === 'POST'
+          ) {
+            const headers = new Headers(options.headers)
+            const preferences = (headers.get('Prefer') ?? '')
+              .split(',')
+              .map((preference) => preference.trim())
+              .filter((preference) => preference && !/^return\s*=/i.test(preference))
+            preferences.push('return=representation')
+            headers.set('Prefer', preferences.join(', '))
+            requestOptions = { ...options, headers }
+          }
+
+          return fetch(request, {
+            ...requestOptions,
             signal: controller.signal,
           }).finally(() => clearTimeout(timeoutId))
         },

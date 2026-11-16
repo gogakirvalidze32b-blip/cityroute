@@ -10,6 +10,7 @@ import {
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import type { YMaps21GeoObject, YMaps21Map } from '@/types/yandex-maps-21-global'
 import type { PinRow, RouteWithPins } from '@/types/database'
+import { formatPinInstructionLabel } from '@/lib/pin-instruction-label'
 
 type MapLayers = {
   pinObjects?: YMaps21GeoObject[]
@@ -170,8 +171,10 @@ export function ExamLiveMapYandex({ pins, userPos, heading: _heading, nextPin, o
 
       {nextPin && (
         <div className="exam-live-map__hud">
-          <small>შემდეგი · {nextPinDist} მ</small>
-          <strong>{nextPin.instruction_ka}</strong>
+          <small>შემდეგი · PIN {nextPin.sort_order} · {nextPinDist} მ</small>
+          <strong>
+            {formatPinInstructionLabel(nextPin.sort_order, nextPin.instruction_ka)}
+          </strong>
         </div>
       )}
 

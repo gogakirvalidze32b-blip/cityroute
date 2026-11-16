@@ -54,7 +54,7 @@ revoke all on public.device_session_limit_overrides from public, anon, authentic
 
 create or replace function public.current_device_session_limit(p_profile_id uuid)
 returns integer
-language sql
+language sql87
 stable
 security definer
 set search_path = pg_catalog, public

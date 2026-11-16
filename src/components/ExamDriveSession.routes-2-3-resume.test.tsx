@@ -36,6 +36,7 @@ vi.mock('@/lib/audio', () => ({
     unlock: vi.fn(),
     isBusy: vi.fn(() => false),
     stopAll: vi.fn(),
+    preload: vi.fn(),
     preloadAll: vi.fn(),
   },
 }))
@@ -76,6 +77,8 @@ vi.mock('@/lib/route-nav', () => ({
   resolveHeading: () => 0,
   resolveExamSpeedKmh: () => 5,
   formatDuration: (ms: number) => `${Math.floor(ms / 1000)}s`,
+  routeLengthMeters: () => 5000,
+  seedAlongRouteMeters: () => 0,
 }))
 
 vi.mock('@/components/ExamLiveMap', () => ({
@@ -938,10 +941,10 @@ describe('Telavi field-test routes keep strict progress and resume on production
     await settle()
     await chooseManualPinMode()
     await act(async () => {
-      await userEvent.setup().selectOptions(screen.getByRole('combobox'), '9')
+      await userEvent.setup().selectOptions(screen.getByRole('combobox'), '4')
     })
     await pressStart()
-    expect(nextOrder()).toBe(9)
+    expect(nextOrder()).toBe(4)
     first.unmount()
     cleanup()
     expect(localStorage.getItem('cityroute-manual-pin:route-1')).toBeNull()
@@ -975,6 +978,29 @@ describe('Telavi field-test routes keep strict progress and resume on production
       expect(loadActiveExam(route.id, route.slug, route.name_ka)?.startMode).toBe('automatic')
       expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
       view.unmount()
+  })
+
+  it('Auto დასრულება@15 then გაგრძელება resumes the next saved PIN, not a later GPS pin', async () => {
+    const route = routeBySlug('route-1')
+    saveRoutePinProgress(route.slug, Array.from({ length: 14 }, (_, i) => i + 1))
+    gps.once = movingFix(route, 15)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+    expect(nextOrder()).toBe(15)
+    await driveTo(route, 15)
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(loadRoutePinProgress(route.slug)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1))
+    gps.once = movingFix(route, 17)
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+    })
+    await settle(80)
+    expect(nextOrder()).toBe(16)
+    expect(loadRoutePinProgress(route.slug)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1))
   })
 
   it('Continue keeps Auto progress and does not create a new exam', async () => {
@@ -1059,17 +1085,26 @@ describe('Telavi field-test routes keep strict progress and resume on production
     })
     expect(screen.getByTestId('exam-summary')).toBeTruthy()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.elapsedMs).toBeGreaterThan(0)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('summary')
     cleanup()
 
     gps.once = null
     render(<ExamDriveSession route={route} />)
     await settle()
 
-    expect(nextOrder()).toBe(16)
+    expect(screen.getByTestId('exam-summary')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('summary')
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual(
       Array.from({ length: 15 }, (_, index) => index + 1),
     )
     expect(loadRoutePinProgress(route.slug)).toEqual(Array.from({ length: 15 }, (_, index) => index + 1))
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+    })
+    await settle()
+    expect(screen.queryByTestId('exam-summary')).toBeNull()
+    expect(nextOrder()).toBe(16)
   })
 
   it('Manual pause preserves the next PIN and mode across summary and refresh', async () => {
@@ -1110,9 +1145,17 @@ describe('Telavi field-test routes keep strict progress and resume on production
     gps.once = fix(route, 3)
     render(<ExamDriveSession route={route} />)
     await settle()
+    expect(screen.getByTestId('exam-summary')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('summary')
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.startMode).toBe('manual')
-    expect(nextOrder()).toBe(3)
     expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+    })
+    await settle()
+    expect(nextOrder()).toBe(3)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.startMode).toBe('manual')
   })
 
   it('starts and resumes from a manually selected PIN while marking earlier PINs complete', async () => {
@@ -1590,18 +1633,20 @@ describe('Telavi field-test routes keep strict progress and resume on production
         await userEvent.setup().click(screen.getByRole('button', { name: 'ახალი გამოცდა' }))
       })
       await settle()
+      expect(loadRoutePinProgress(route.slug)).toBeNull()
+      // Fresh GPS after restart: at the route start this begins on PIN 1.
+      gps.once = fix(route, 1)
       await pressStart()
 
       expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(0)
       expect(nextOrder()).toBe(1)
-      expect(loadRoutePinProgress(route.slug)).toBeNull()
 
       view.unmount()
       gps.once = fix(route, 1)
       view = render(<ExamDriveSession route={route} />)
       await settle()
+      // Active exam from the fresh start resumes; progress stays empty until PIN 1 is handled.
       expect(nextOrder()).toBe(1)
-      expect(loadRoutePinProgress(route.slug)).toBeNull()
       view.unmount()
     } finally {
       nowSpy.mockRestore()
@@ -1680,7 +1725,8 @@ describe('Telavi field-test routes keep strict progress and resume on production
         await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
       })
       await settle()
-      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.elapsedMs).toBe(0)
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('summary')
+      expect(loadActiveExam(route.id, route.slug, route.name_ka)?.elapsedMs).toBe(125_000)
       expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
 
       now += 120_000
@@ -1691,7 +1737,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
       await settle()
       expect(screen.queryByTestId('exam-summary')).toBeNull()
       expect(nextOrder()).toBe(3)
-      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(0)
+      expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBe(125_000)
       expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
       expect(playDetailed).not.toHaveBeenCalled()
       view.unmount()
@@ -1979,6 +2025,12 @@ describe('Telavi field-test routes keep strict progress and resume on production
     render(<ExamDriveSession route={route1} />)
     await settle()
     expect(loadRoutePinProgress(route1.slug)).toEqual([1, 2])
+    expect(screen.getByTestId('exam-summary')).toBeTruthy()
+    expect(loadActiveExam(route1.id, route1.slug, route1.name_ka)?.phase).toBe('summary')
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გაგრძელება' }))
+    })
+    await settle()
     expect(nextOrder()).toBe(3)
     expect(loadRoutePinProgress(route1.slug)).toEqual([1, 2])
     expect(loadRoutePinProgress(route2.slug)).toEqual([1, 2, 3])
@@ -2112,23 +2164,237 @@ describe('Telavi field-test routes keep strict progress and resume on production
     second.unmount()
   })
 
-  it('a new route 1 exam always starts at PIN 1 even when the first GPS fix is near PIN 10', async () => {
+  it('a new route 1 exam starts at the nearest GPS PIN, not always PIN 1', async () => {
     const route = routeBySlug('route-1')
-    gps.once = fix(route, 10)
+    gps.once = movingFix(route, 10)
     const first = render(<ExamDriveSession route={route} />)
     await settle()
     await pressStart()
-    expect(nextOrder()).toBe(1)
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
-    await driveTo(route, 10)
-    expect(playedOrders(route)).toEqual([])
-    expect(nextOrder()).toBe(1)
+    expect(nextOrder()).toBe(10)
+    expect(loadRoutePinProgress(route.slug)).toEqual(
+      Array.from({ length: 9 }, (_, index) => index + 1),
+    )
     first.unmount()
+    cleanup()
 
+    localStorage.clear()
     gps.once = fix(route, 1)
     render(<ExamDriveSession route={route} />)
     await settle()
+    await pressStart()
     expect(nextOrder()).toBe(1)
-    expect(screen.queryByRole('button', { name: /გამოცდის დაწყება/ })).toBeNull()
+  })
+})
+
+describe('GPS resume / Manual Start / Finish Summary targeted FIXES', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    simulatedRouteChainage.clear()
+    simulatedInitialFix.clear()
+    simulatedGpsTime = 0
+    playDetailed.mockReset()
+    playDetailed.mockImplementation((_url, _id, _instruction, options) => {
+      if (audioTestState.autoEnd) options?.onEnded?.()
+      return Promise.resolve('played')
+    })
+    vi.mocked(audioEngine.play).mockReset()
+    vi.mocked(audioEngine.play).mockImplementation(() => Promise.resolve(true))
+    gps.onFix = null
+    gps.once = null
+    audioTestState.autoEnd = true
+  })
+  afterEach(() => {
+    cleanup()
+    localStorage.clear()
+  })
+
+  it('corrupt progress + GPS near PIN 16 does not invent completed PINs 1–15', async () => {
+    const route = routeBySlug('route-2')
+    localStorage.setItem(`cityroute-pin-progress:${route.slug}`, '{')
+    const pin16 = pinAt(route, 16)
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam: createExamSession(route.id, route.name_ka),
+      userPos: [pin16.lat, pin16.lng],
+      heading: 0,
+      speedKmh: 20,
+      elapsedMs: 60_000,
+      triggeredPins: [],
+      triggeredSortOrders: [],
+      lastPassedSortOrder: null,
+      nextSortOrder: 1,
+      savedAt: Date.now(),
+    })
+    gps.once = fix(route, 16)
+
+    render(<ExamDriveSession route={route} />)
+    await settle()
+
+    expect(screen.getByTestId('resume-error')).toBeTruthy()
+    expect(loadRoutePinProgress(route.slug)).toBeNull()
+    const saved = loadActiveExam(route.id, route.slug, route.name_ka)
+    expect(saved?.triggeredSortOrders ?? []).toEqual([])
+    expect(Array.from({ length: 15 }, (_, index) => index + 1).every((order) =>
+      !(saved?.triggeredSortOrders ?? []).includes(order),
+    )).toBe(true)
+  })
+
+  it('valid progress PIN 1–13 with GPS near PIN 15–16 continues from saved next PIN 14', async () => {
+    const route = routeBySlug('route-2')
+    const completed = Array.from({ length: 13 }, (_, index) => index + 1)
+    saveRoutePinProgress(route.slug, completed)
+    gps.once = movingFix(route, 16)
+
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(screen.getByTestId('preview').getAttribute('data-selected-order')).toBe('14')
+    await pressStart()
+    expect(nextOrder()).toBe(14)
+    expect(loadRoutePinProgress(route.slug)).toEqual(completed)
+  })
+
+  it('Manual Start on PIN 20 with progress 1–13 keeps 1–13 and fills the gap to start at 20', async () => {
+    const route = routeBySlug('route-2')
+    const completed = Array.from({ length: 13 }, (_, index) => index + 1)
+    saveRoutePinProgress(route.slug, completed)
+    gps.once = fix(route, 1)
+
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await chooseManualPinMode()
+    await userEvent.setup().selectOptions(
+      screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }),
+      '20',
+    )
+    await pressStart()
+
+    expect(screen.queryByTestId('resume-error')).toBeNull()
+    expect(nextOrder()).toBe(20)
+    expect(loadRoutePinProgress(route.slug)).toEqual(
+      Array.from({ length: 19 }, (_, index) => index + 1),
+    )
+  })
+
+  it('Manual Start on the next allowed PIN works normally', async () => {
+    const route = routeBySlug('route-2')
+    saveRoutePinProgress(route.slug, [1, 2, 3])
+    gps.once = fix(route, 1)
+
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await chooseManualPinMode()
+    const picker = screen.getByRole('combobox', { name: 'PIN-ების არჩევა' }) as HTMLSelectElement
+    expect(picker.value).toBe('4')
+    await pressStart()
+    expect(nextOrder()).toBe(4)
+    expect(loadRoutePinProgress(route.slug)).toEqual([1, 2, 3])
+  })
+
+  it('Finish → Summary → Refresh restores Summary, not active Drive', async () => {
+    const route = routeBySlug('route-2')
+    const first = await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(screen.getByTestId('exam-summary')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('summary')
+    first.unmount()
+    cleanup()
+
+    gps.once = null
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(screen.getByTestId('exam-summary')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('summary')
+    expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
+    // Map shell may stay mounted under Summary; active drive session chrome must not.
+    expect(document.querySelector('.exam-session--summary')).toBeTruthy()
+    expect(document.querySelector('.exam-session--active')).toBeNull()
+    expect(document.querySelector('.exam-finish-fab')).toBeNull()
+  })
+
+  it('Active Exam → Refresh restores the active exam', async () => {
+    const route = routeBySlug('route-2')
+    const first = await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    expect(nextOrder()).toBe(3)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('active')
+    first.unmount()
+    cleanup()
+
+    gps.once = null
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(screen.queryByTestId('exam-summary')).toBeNull()
+    expect(nextOrder()).toBe(3)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('active')
+    expect(loadRoutePinProgress(route.slug)).toEqual([1, 2])
+  })
+
+  it('Restart starts a new exam and does not restore the old Summary', async () => {
+    const route = routeBySlug('route-2')
+    const view = await startAtPin1(route)
+    await driveTo(route, 1)
+    await driveTo(route, 2)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(screen.getByTestId('exam-summary')).toBeTruthy()
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
+    })
+    await settle()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
+
+    await act(async () => {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'ახალი გამოცდა' }))
+    })
+    await settle()
+    expect(screen.queryByTestId('exam-summary')).toBeNull()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
+
+    await pressStart()
+    expect(nextOrder()).toBe(1)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('active')
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    view.unmount()
+  })
+
+  it.each(cases)('%s: valid mid-route progress still resumes on remount', async (slug) => {
+    const route = routeBySlug(slug)
+    const completed = Array.from({ length: 5 }, (_, index) => index + 1)
+    saveRoutePinProgress(route.slug, completed)
+    const nextPin = pinAt(route, 6)
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam: createExamSession(route.id, route.name_ka),
+      userPos: [nextPin.lat, nextPin.lng],
+      heading: 0,
+      speedKmh: 10,
+      elapsedMs: 12_000,
+      triggeredPins: sorted(route).filter((pin) => completed.includes(pin.sort_order)).map((pin) => pin.id),
+      triggeredSortOrders: completed,
+      lastPassedSortOrder: 5,
+      nextSortOrder: 6,
+      savedAt: Date.now(),
+    })
+    gps.once = null
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(nextOrder()).toBe(6)
+    expect(loadRoutePinProgress(route.slug)).toEqual(completed)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.phase).toBe('active')
   })
 })

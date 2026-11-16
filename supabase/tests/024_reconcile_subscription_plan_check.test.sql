@@ -2,7 +2,36 @@ begin;
 set local role postgres;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
-select plan(6);
+select plan(7);
+
+create function pg_temp.confirm_bog(p_user uuid, p_payment text, p_merchant text, p_amount numeric, p_slots integer)
+returns void language plpgsql as $confirm$
+declare
+  v_result jsonb;
+  v_amount text := case p_amount when 99 then '99.00' when 179 then '179.00' else p_amount::text end;
+begin
+  insert into public.payment_transactions (
+    user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata
+  ) values (
+    p_user, 'bog', p_payment, p_merchant, p_amount, 'GEL', 'pending',
+    pg_catalog.jsonb_build_object('provider', 'bog', 'device_slots', p_slots, 'package_price', p_amount)
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', 'cityroute_bog_confirmer', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
+  v_result := public.update_bog_payment_status(
+    p_payment, 'success', p_payment || '-bank',
+    pg_catalog.jsonb_build_object(
+      'bank_status', 'completed', 'bank_amount', v_amount,
+      'bank_currency', 'GEL', 'bank_external_order_id', p_merchant
+    )
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', '', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{}', true);
+  if v_result->>'status' is distinct from 'success' or v_result->>'success' is distinct from 'true' then
+    raise exception 'BOG activation failed for %: %', p_payment, v_result;
+  end if;
+end
+$confirm$;
 
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -15,14 +44,6 @@ values (
   pg_catalog.now(), '{}', '{}', pg_catalog.now(), pg_catalog.now()
 )
 on conflict (id) do nothing;
-
-update public.profiles
-set subscription_status = 'active',
-    subscription_plan = 'premium',
-    subscription_expires_at = '2030-01-01 00:00:00+00',
-    device_slots = 2,
-    subscription_payment_id = 'preserve-plan-check-024'
-where id = '00000000-0000-0000-0000-000000000981';
 
 select ok(
   exists (
@@ -61,24 +82,31 @@ select lives_ok(
   'premium plan is accepted'
 );
 
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000981', 'preserve-plan-check-024', 'merchant-preserve-plan-check-024', 179, 2);
 select is(
   (
-    select jsonb_build_object(
+    select pg_catalog.jsonb_build_object(
       'subscription_status', subscription_status,
-      'subscription_expires_at', subscription_expires_at,
       'device_slots', device_slots,
       'subscription_payment_id', subscription_payment_id
     )
     from public.profiles
     where id = '00000000-0000-0000-0000-000000000981'
   ),
-  jsonb_build_object(
+  pg_catalog.jsonb_build_object(
     'subscription_status', 'active',
-    'subscription_expires_at', '2030-01-01 00:00:00+00'::timestamptz,
     'device_slots', 2,
     'subscription_payment_id', 'preserve-plan-check-024'
   ),
-  'plan selection does not alter status, expiry, payment reference, or device slots'
+  'activation keeps status, device slots, and payment reference'
+);
+select ok(
+  (
+    select subscription_expires_at > pg_catalog.now() + interval '20 days'
+    from public.profiles
+    where id = '00000000-0000-0000-0000-000000000981'
+  ),
+  'confirmed activation writes an expiry at least 20 days ahead'
 );
 
 select * from finish();

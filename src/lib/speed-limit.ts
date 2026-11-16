@@ -171,10 +171,22 @@ export function resolveSpeedZone(
     hits.push({ zone, offsetM: d })
   }
   if (hits.length === 0) return null
-  hits.sort((a, b) => a.offsetM - b.offsetM)
+  // Prefer a zone that strictly contains roadU (without slack) so continuous abutting
+  // sections keep a posted limit at the shared boundary instead of becoming ambiguous.
+  const u = hasU ? (roadU as number) : null
+  hits.sort((a, b) => {
+    if (u != null) {
+      const aStrict = u >= a.zone.from && u <= a.zone.to ? 0 : 1
+      const bStrict = u >= b.zone.from && u <= b.zone.to ? 0 : 1
+      if (aStrict !== bStrict) return aStrict - bStrict
+    }
+    return a.offsetM - b.offsetM
+  })
   const [best, next] = hits
   if (next && next.zone.limitKmh !== best.zone.limitKmh && next.offsetM - best.offsetM < AMBIGUOUS_DELTA_M) {
-    return null
+    const bestStrict = u != null && u >= best.zone.from && u <= best.zone.to
+    const nextStrict = u != null && u >= next.zone.from && u <= next.zone.to
+    if (!bestStrict || nextStrict) return null
   }
   if (!hasU && revisitAmbiguous(position, road, best.zone, best.offsetM, zones)) {
     return null

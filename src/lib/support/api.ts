@@ -275,6 +275,101 @@ export async function adminSetStatus(conversationId: string, status: SupportStat
   }
 }
 
+export type AdminDeviceLimitOverride = {
+  override_id: number
+  session_limit: number
+  granted_at: string
+  grant_reason: string
+}
+
+export async function adminGetDeviceLimitOverride(
+  profileId: string,
+): Promise<AdminDeviceLimitOverride | null> {
+  try {
+    const res = await db().rpc('get_device_session_limit_override', {
+      p_profile_id: profileId,
+    })
+    const rows = must<AdminDeviceLimitOverride[]>(res) ?? []
+    if (rows.length > 1) throw new Error('More than one active device limit override was returned')
+    return rows[0] ?? null
+  } catch (e) {
+    throw toSupportError(e)
+  }
+}
+
+export async function adminGrantDeviceLimitOverride(
+  profileId: string,
+  sessionLimit: number,
+  reason: string,
+): Promise<void> {
+  try {
+    const res = await db().rpc('grant_device_session_limit_override', {
+      p_profile_id: profileId,
+      p_reason: reason,
+      p_session_limit: sessionLimit,
+    })
+    if (res.error) throw toSupportError(res.error)
+  } catch (e) {
+    throw toSupportError(e)
+  }
+}
+
+export async function adminRevokeDeviceLimitOverride(
+  overrideId: number,
+  reason: string,
+): Promise<void> {
+  try {
+    const res = await db().rpc('revoke_device_session_limit_override', {
+      p_override_id: overrideId,
+      p_reason: reason,
+    })
+    if (res.error) throw toSupportError(res.error)
+  } catch (e) {
+    throw toSupportError(e)
+  }
+}
+
+export type AdminDeviceSession = {
+  session_id: string
+  session_created_at: string
+  activated_at: string
+  last_activity_at: string
+  last_seen_at: string
+  status: 'active' | 'stale' | 'invalid' | 'revoked'
+  revoked_at: string | null
+}
+
+export async function adminListDeviceSessions(profileId: string): Promise<AdminDeviceSession[]> {
+  try {
+    const res = await db().rpc('admin_list_device_sessions', {
+      p_profile_id: profileId,
+    })
+    return must<AdminDeviceSession[]>(res)
+  } catch (e) {
+    throw toSupportError(e)
+  }
+}
+
+export async function adminRevokeDeviceSession(
+  profileId: string,
+  sessionId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const res = await db().rpc('admin_revoke_device_session', {
+      p_profile_id: profileId,
+      p_session_id: sessionId,
+      p_reason: reason,
+    })
+    const result = must<{ status?: unknown; deactivated_sessions?: unknown }>(res)
+    if (result.status !== 'revoked' || result.deactivated_sessions !== 1) {
+      throw new Error('The server did not confirm device-session revocation')
+    }
+  } catch (e) {
+    throw toSupportError(e)
+  }
+}
+
 // ---------------------------------------------------------------------
 // Realtime (postgres_changes obeys the SELECT policies in 009)
 // ---------------------------------------------------------------------

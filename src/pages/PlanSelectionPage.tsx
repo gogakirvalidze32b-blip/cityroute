@@ -2,16 +2,17 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { PaymentButton } from '@/components/PaymentButton'
 import { useAuth } from '@/context/AuthContext'
-import { calculatePrice } from '@/data/subscription-plans'
+import { loadDeviceSlotPackages, type DeviceSlotPackage } from '@/lib/device-slot-packages'
 import { accessLabel, isAccessActive } from '@/types/database'
 import { useEffect, useState } from 'react'
 import './subscription-page.css'
 
-const VEHICLE_OPTIONS = [1, 2] as const
-
 export function PlanSelectionPage() {
   const { user, loading, hasAccess, needsPlanSelection, profile, entitlement, entitlementStatusUnavailable, deviceBlocked, refreshProfile, selectPlan, signOut } = useAuth()
-  const [deviceSlots, setDeviceSlots] = useState<1 | 2>(profile?.device_slots === 2 ? 2 : 1)
+  const [devicePackages, setDevicePackages] = useState<DeviceSlotPackage[]>([])
+  const [packageCatalogLoading, setPackageCatalogLoading] = useState(true)
+  const [packageCatalogError, setPackageCatalogError] = useState<string | null>(null)
+  const [deviceSlots, setDeviceSlots] = useState(profile?.device_slots === 2 ? 2 : 1)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [checkingSession, setCheckingSession] = useState(false)
@@ -20,10 +21,39 @@ export function PlanSelectionPage() {
   const location = useLocation()
 
   useEffect(() => {
-    if (profile?.device_slots === 1 || profile?.device_slots === 2) {
+    let cancelled = false
+    void loadDeviceSlotPackages()
+      .then((packages) => {
+        if (cancelled) return
+        setDevicePackages(packages)
+        setPackageCatalogError(null)
+        setDeviceSlots((current) =>
+          packages.some((item) => item.device_slots === current)
+            ? current
+            : packages[0]?.device_slots ?? 1,
+        )
+      })
+      .catch((catalogError: unknown) => {
+        if (cancelled) return
+        console.error('Device package catalog failed to load:', catalogError)
+        setPackageCatalogError('მოწყობილობის პაკეტების ჩატვირთვა ვერ მოხერხდა. სცადე თავიდან.')
+      })
+      .finally(() => {
+        if (!cancelled) setPackageCatalogLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (
+      (profile?.device_slots === 1 || profile?.device_slots === 2) &&
+      devicePackages.some((item) => item.device_slots === profile.device_slots)
+    ) {
       setDeviceSlots(profile.device_slots)
     }
-  }, [profile?.device_slots])
+  }, [profile?.device_slots, devicePackages])
 
   if (!loading && !user) return <Navigate to="/login" replace />
 
@@ -44,7 +74,9 @@ export function PlanSelectionPage() {
     entitlement.paymentStatus !== null
   const activeTrial = trialActive && hasAccess
   const earlyPayment = new URLSearchParams(location.search).get('earlyPayment') === '1'
-  const totalPrice = calculatePrice(chosen, deviceSlots)
+  const selectedPackage = devicePackages.find((item) => item.device_slots === deviceSlots)
+  const totalPrice = selectedPackage?.price_amount ?? 0
+  const trialDeviceSlots: 1 | 2 = deviceSlots === 2 ? 2 : 1
 
   if (
     hasAccess &&
@@ -59,7 +91,7 @@ export function PlanSelectionPage() {
     setSubmitting(true)
     setError(null)
     try {
-      const selectError = await selectPlan('premium')
+      const selectError = await selectPlan('premium', trialDeviceSlots)
       if (selectError) {
         setError(selectError)
         return
@@ -220,8 +252,8 @@ export function PlanSelectionPage() {
           <div className="subscription-checkout__body">
             <h2 id="subscription-checkout-title">რამდენი ავტომობილისთვის?</h2>
             <div className="subscription-options" role="radiogroup" aria-label="მანქანების რაოდენობა">
-              {VEHICLE_OPTIONS.map((slots) => {
-                const optionPrice = calculatePrice('premium', slots)
+              {devicePackages.map((devicePackage) => {
+                const slots = devicePackage.device_slots
                 return (
                   <button
                     key={slots}
@@ -231,14 +263,12 @@ export function PlanSelectionPage() {
                     className={`subscription-option${deviceSlots === slots ? ' is-selected' : ''}`}
                     onClick={() => setDeviceSlots(slots)}
                   >
-                    <span className="subscription-option__icon" aria-hidden="true">
-                      {slots === 1 ? '🚗' : '🚗🚗'}
-                    </span>
+                    <span className="subscription-option__icon" aria-hidden="true">🚗 × {slots}</span>
                     <span className="subscription-option__copy">
                       <strong>{slots} მანქანა</strong>
                       <small>30 დღე · {slots} მოწყობილობა</small>
                     </span>
-                    <span className="subscription-option__price">{optionPrice} ₾</span>
+                    <span className="subscription-option__price">{devicePackage.price_amount} ₾</span>
                   </button>
                 )
               })}
@@ -250,8 +280,17 @@ export function PlanSelectionPage() {
               <span>არჩეული პაკეტი</span>
               <strong>{totalPrice} ₾ <small>/ 30 დღე</small></strong>
             </div>
+            {packageCatalogLoading && <p className="session-hint" role="status">პაკეტები იტვირთება...</p>}
+            {packageCatalogError && <p className="subscription-error" role="alert">{packageCatalogError}</p>}
+            {!packageCatalogLoading && !packageCatalogError && devicePackages.length === 0 && (
+              <p className="subscription-error" role="alert">აქტიური მოწყობილობების პაკეტი ვერ მოიძებნა.</p>
+            )}
             {error && <p className="subscription-error" role="alert">{error}</p>}
-            <PaymentButton deviceSlots={deviceSlots} onError={setError} />
+            <PaymentButton
+              deviceSlots={deviceSlots}
+              onError={setError}
+              disabled={packageCatalogLoading || Boolean(packageCatalogError) || !selectedPackage}
+            />
             {!entitlementStatusUnavailable && (
               <>
                 <p className="subscription-trial-copy">ან გააგრძელე 12-საათიანი უფასო საცდელი პერიოდით:</p>

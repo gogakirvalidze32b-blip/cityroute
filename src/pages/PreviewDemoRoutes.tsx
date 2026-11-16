@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { ExamDriveSession } from '@/components/ExamDriveSession'
 import { selectableRoutes } from '@/data/selectable-routes'
@@ -63,7 +63,6 @@ function PreviewDemoHomePage() {
 
 function PreviewDemoRoutePage() {
   const { slug } = useParams<{ slug: string }>()
-  const location = useLocation()
   const navigate = useNavigate()
   const route = useMemo(
     () => selectableRoutes(TELAVI_ROUTES_FALLBACK).find((item) => item.slug === slug),
@@ -72,7 +71,6 @@ function PreviewDemoRoutePage() {
   const [navPhase, setNavPhase] = useState<'preview' | 'active' | 'summary'>(() =>
     slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE) ? 'active' : 'preview',
   )
-  const [navigationBlocked, setNavigationBlocked] = useState(false)
   const [demoControls, setDemoControls] = useState<PreviewDemoControls | null>(null)
   const demoGpsSource = useMemo(() => createPreviewGpsSource(), [slug])
   const receiveDemoControls = useCallback(
@@ -82,7 +80,8 @@ function PreviewDemoRoutePage() {
   const resumeDriving = Boolean(
     slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE) && navPhase !== 'summary',
   )
-  const driving = navPhase === 'active' || resumeDriving
+  // Keep the route/map shell mounted through Summary so finish does not kick the user off the map.
+  const driving = navPhase === 'active' || navPhase === 'summary' || resumeDriving
 
   useEffect(() => {
     if (!slug || navPhase === 'summary') return
@@ -94,17 +93,9 @@ function PreviewDemoRoutePage() {
   if (!route) return <Navigate to="/preview-demo" replace />
 
   return (
-    <div className={`route-page route-page--exam${driving ? ' route-page--driving' : ''}`}>
-      {(location.state as { activeExamNavigationBlocked?: boolean } | null)?.activeExamNavigationBlocked && (
-        <p role="alert" className="exam-navigation-blocked">
-          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
-        </p>
-      )}
-      {navigationBlocked && (
-        <p role="alert" className="exam-navigation-blocked">
-          გთხოვთ, დაასრულოთ მარშრუტი და შემდეგ გამოხვიდეთ.
-        </p>
-      )}
+    <div
+      className={`route-page route-page--exam${driving ? ' route-page--driving' : ''}${navPhase === 'summary' ? ' route-page--summary' : ''}`}
+    >
       <PreviewGpsDemoPanel
         route={route}
         routes={selectableRoutes(TELAVI_ROUTES_FALLBACK)}
@@ -113,16 +104,7 @@ function PreviewDemoRoutePage() {
       />
       {navPhase === 'preview' && !resumeDriving && (
         <div className="route-toolbar">
-          <Link
-            to="/preview-demo"
-            className="ghost"
-            onClick={(event) => {
-              if (slug && hasSavedExamForSlug(slug, route?.name_ka, DEMO_SCOPE)) {
-                event.preventDefault()
-                setNavigationBlocked(true)
-              }
-            }}
-          >
+          <Link to="/preview-demo" className="ghost">
             ← მარშრუტები
           </Link>
           <div className="toolbar-title">

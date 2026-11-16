@@ -1,9 +1,9 @@
 import { EXAM_FAIL_MINOR_THRESHOLD } from '@/data/exam-errors'
 import { isExamFailed } from '@/lib/exam-session'
-import { formatExamDuration } from '@/lib/exam-session'
 
 type Props = {
-  elapsedMs: number
+  /** Kept optional for call-site compatibility; time is shown only in the bottom dock. */
+  elapsedMs?: number
   speedKmh: number
   minorTotal: number
   severeTotal: number
@@ -23,16 +23,6 @@ type Props = {
   rpm?: number | null
 }
 
-function hudTime(ms: number) {
-  const totalSec = Math.max(0, Math.floor(ms / 1000))
-  const h = Math.floor(totalSec / 3600)
-  const m = Math.floor((totalSec % 3600) / 60)
-  const s = totalSec % 60
-  const mm = m.toString().padStart(2, '0')
-  const ss = s.toString().padStart(2, '0')
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
-}
-
 function isRealNumber(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
@@ -41,9 +31,9 @@ function isRealNumber(value: number | null | undefined): value is number {
  * Top bar of the exam screen. The <header> uses `display: contents` (see index.css),
  * so its parts are laid out together with the other items of `.exam-topbar`
  * (voice hint, view switch, finish button) in one compact horizontal bar.
+ * Elapsed time lives only in the bottom navigation dock next to distance.
  */
 export function ExamScoreboard({
-  elapsedMs,
   speedKmh,
   minorTotal,
   severeTotal,
@@ -67,11 +57,7 @@ export function ExamScoreboard({
         <span className="exam-hud__limit-value">{hasLimit ? Math.round(speedLimitKmh) : '—'}</span>
       </div>
 
-      <div className="exam-hud__readout" role="group" aria-label={`დრო ${formatExamDuration(elapsedMs)}`}>
-        <div className="exam-hud__time">{hudTime(elapsedMs)}</div>
-      </div>
-
-      <div className="exam-hud__meta">
+      <div className="exam-hud__meta" role="group" aria-label="სიჩქარე">
         {hasRpm && (
           <span className="exam-hud__rpm" aria-label={`ბრუნვა ${Math.round(rpm)} წუთში`}>
             <strong>{Math.round(rpm)}</strong> rpm

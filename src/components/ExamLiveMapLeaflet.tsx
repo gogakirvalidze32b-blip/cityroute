@@ -12,6 +12,7 @@ import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { mapRotationCssDeg } from '@/lib/map-rotation'
 import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type CameraMode } from '@/lib/navigation-state'
+import { formatPinInstructionLabel } from '@/lib/pin-instruction-label'
 
 // ============================================================================
 // GOOGLE MAPS-STYLE NAVIGATION SYSTEM - CAMERA FIX + COMPASS ARROW
@@ -658,8 +659,12 @@ export function ExamLiveMapLeaflet({
             </svg>
           )}
           <div className="exam-live-map__maneuver-copy">
-            <small>შემდეგ წერტილამდე · {nextPinDist === null ? '—' : `${nextPinDist} მ`}</small>
-            <strong>{nextPin.instruction_ka}</strong>
+            <small>
+              შემდეგი · PIN {nextPin.sort_order} · {nextPinDist === null ? '—' : `${nextPinDist} მ`}
+            </small>
+            <strong>
+              {formatPinInstructionLabel(nextPin.sort_order, nextPin.instruction_ka)}
+            </strong>
           </div>
         </div>
       )}

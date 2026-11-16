@@ -33,6 +33,16 @@ export function routeLengthMeters(route: LatLng[]): number {
   return length(line, { units: 'meters' })
 }
 
+/**
+ * Along-track metres from route start to `position` (snapped to the line).
+ * Used to seed the live odometer when starting/continuing mid-route.
+ */
+export function seedAlongRouteMeters(routeLine: LatLng[], position: LatLng | null | undefined): number {
+  if (!position || routeLine.length < 2) return 0
+  if (!Number.isFinite(position[0]) || !Number.isFinite(position[1])) return 0
+  return Math.max(0, routeProgressInfo(position, routeLine).traversedM)
+}
+
 export function routeProgressInfo(position: LatLng, route: LatLng[]): RouteProgressInfo {
   if (route.length < 2) {
     return { traversedM: 0, totalM: 0, remainingM: 0, pct: 0, snapIndex: 0, snapPoint: position }
@@ -147,7 +157,7 @@ export function formatDuration(ms: number): string {
     return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }
 
-  return `${m}:${s.toString().padStart(2, '0')}`
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
 export function formatDistance(m: number): string {

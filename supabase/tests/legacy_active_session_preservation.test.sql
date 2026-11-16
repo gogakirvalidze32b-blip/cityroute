@@ -23,21 +23,6 @@ values
   )
 on conflict (id) do nothing;
 
-insert into public.profiles (
-  id, subscription_status, subscription_plan, subscription_expires_at,
-  device_slots, subscription_payment_id
-)
-values (
-  '00000000-0000-0000-0000-000000000951',
-  'active', 'premium', pg_catalog.now() + interval '30 days', 1, null
-)
-on conflict (id) do update
-set subscription_status = excluded.subscription_status,
-    subscription_plan = excluded.subscription_plan,
-    subscription_expires_at = excluded.subscription_expires_at,
-    device_slots = excluded.device_slots,
-    subscription_payment_id = excluded.subscription_payment_id;
-
 insert into public.device_session_limit_overrides (
   profile_id, session_limit, granted_by, grant_reason
 )

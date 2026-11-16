@@ -3,6 +3,35 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(35);
 
+create function pg_temp.confirm_bog(p_user uuid, p_payment text, p_merchant text, p_amount numeric, p_slots integer)
+returns void language plpgsql as $confirm$
+declare
+  v_result jsonb;
+  v_amount text := case p_amount when 99 then '99.00' when 179 then '179.00' else p_amount::text end;
+begin
+  insert into public.payment_transactions (
+    user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata
+  ) values (
+    p_user, 'bog', p_payment, p_merchant, p_amount, 'GEL', 'pending',
+    pg_catalog.jsonb_build_object('provider', 'bog', 'device_slots', p_slots, 'package_price', p_amount)
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', 'cityroute_bog_confirmer', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
+  v_result := public.update_bog_payment_status(
+    p_payment, 'success', p_payment || '-bank',
+    pg_catalog.jsonb_build_object(
+      'bank_status', 'completed', 'bank_amount', v_amount,
+      'bank_currency', 'GEL', 'bank_external_order_id', p_merchant
+    )
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', '', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{}', true);
+  if v_result->>'status' is distinct from 'success' or v_result->>'success' is distinct from 'true' then
+    raise exception 'BOG activation failed for %: %', p_payment, v_result;
+  end if;
+end
+$confirm$;
+
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -40,43 +69,19 @@ values
   ('00000000-0000-0000-0000-000000000263', '00000000-0000-0000-0000-000000000206', now() - interval '1 minute', now(), null)
 on conflict (id) do nothing;
 
-insert into public.profiles (
-  id, subscription_status, subscription_plan, subscription_expires_at,
-  device_slots, subscription_payment_id, device_fingerprint, device_bound_at
-)
-values
-  ('00000000-0000-0000-0000-000000000201', 'active', 'full', '2027-01-01T00:00:00Z', 2, 'test-paid-179', null, null),
-  ('00000000-0000-0000-0000-000000000202', 'active', 'premium', '2027-01-01T00:00:00Z', 1, 'test-paid-99', null, null),
-  ('00000000-0000-0000-0000-000000000203', 'active', 'premium', '2027-01-01T00:00:00Z', 2, 'test-unverified-179', null, null),
-  ('00000000-0000-0000-0000-000000000204', 'active', 'premium', '2027-01-01T00:00:00Z', 2, 'test-wrong-owner-179', null, null),
-  ('00000000-0000-0000-0000-000000000205', 'active', 'premium', '2027-01-01T00:00:00Z', 2, 'test-pending-179', null, null),
-  ('00000000-0000-0000-0000-000000000206', 'active', 'full', '2027-01-01T00:00:00Z', 2, 'test-paid-179-legacy-plan', null, null)
-on conflict (id) do update
-set subscription_status = excluded.subscription_status,
-    subscription_plan = excluded.subscription_plan,
-    subscription_expires_at = excluded.subscription_expires_at,
-    device_slots = excluded.device_slots,
-    subscription_payment_id = excluded.subscription_payment_id,
-    device_fingerprint = null,
-    device_bound_at = null;
-
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000201', 'test-paid-179', 'test-merchant-179', 179, 2);
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000202', 'test-paid-99', 'test-merchant-99', 99, 1);
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000206', 'test-paid-179-legacy-plan', 'test-merchant-179-legacy-plan', 179, 2);
+select set_config('cityroute.bog_payment_write', 'on', true);
 insert into public.payment_transactions (
   user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata, paid_at
-)
-values
-  ('00000000-0000-0000-0000-000000000201', 'bog', 'test-paid-179', 'test-merchant-179', 179, 'GEL', 'success', '{"provider":"bog","device_slots":2,"bank_status":"completed","bank_amount":"179","bank_currency":"GEL","bank_external_order_id":"test-merchant-179"}', now()),
-  ('00000000-0000-0000-0000-000000000202', 'bog', 'test-paid-99', 'test-merchant-99', 99, 'GEL', 'success', '{"provider":"bog","device_slots":1}', now()),
+) values
   ('00000000-0000-0000-0000-000000000203', 'bog', 'test-unverified-179', 'test-merchant-unverified', 179, 'GEL', 'success', '{"provider":"bog","device_slots":2}', now()),
   ('00000000-0000-0000-0000-000000000206', 'bog', 'test-wrong-owner-179', 'test-merchant-wrong-owner', 179, 'GEL', 'success', '{"provider":"bog","device_slots":2,"bank_status":"completed","bank_amount":"179","bank_currency":"GEL","bank_external_order_id":"test-merchant-wrong-owner"}', now()),
-  ('00000000-0000-0000-0000-000000000205', 'bog', 'test-pending-179', 'test-merchant-pending', 179, 'GEL', 'pending', '{"provider":"bog","device_slots":2}', null),
-  ('00000000-0000-0000-0000-000000000206', 'bog', 'test-paid-179-legacy-plan', 'test-merchant-179-legacy-plan', 179, 'GEL', 'success', '{"provider":"bog","device_slots":2,"bank_status":"completed","bank_amount":"179","bank_currency":"GEL","bank_external_order_id":"test-merchant-179-legacy-plan"}', now())
-on conflict (provider, payment_id) do update
-set user_id = excluded.user_id,
-    amount = excluded.amount,
-    currency = excluded.currency,
-    status = excluded.status,
-    metadata = excluded.metadata,
-    paid_at = excluded.paid_at;
+  ('00000000-0000-0000-0000-000000000205', 'bog', 'test-pending-179', 'test-merchant-pending', 179, 'GEL', 'pending', '{"provider":"bog","device_slots":2}', null);
+select set_config('cityroute.bog_payment_write', 'off', true);
+select set_config('m014.u201', (select subscription_status || ':' || subscription_expires_at::text from public.profiles where id = '00000000-0000-0000-0000-000000000201'), true);
+select set_config('m014.u203', (select subscription_status || ':' || subscription_expires_at::text from public.profiles where id = '00000000-0000-0000-0000-000000000203'), true);
 
 select is(public.current_device_session_limit('00000000-0000-0000-0000-000000000201'), 2, 'verified 179 GEL full plan grants two active-session slots');
 set local role authenticated;
@@ -206,13 +211,13 @@ select ok(
 select is(
   (select subscription_status || ':' || subscription_expires_at::text
    from public.profiles where id = '00000000-0000-0000-0000-000000000201'),
-  'active:2027-01-01 00:00:00+00',
+  current_setting('m014.u201', true),
   'device binding leaves confirmed subscription status and expiry unchanged'
 );
 select is(
   (select subscription_status || ':' || subscription_expires_at::text
    from public.profiles where id = '00000000-0000-0000-0000-000000000203'),
-  'active:2027-01-01 00:00:00+00',
+  current_setting('m014.u203', true),
   'unverified package fallback leaves subscription status and expiry unchanged'
 );
 select is(

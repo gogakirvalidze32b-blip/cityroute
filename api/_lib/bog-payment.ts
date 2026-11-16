@@ -107,8 +107,8 @@ export async function createBogOrder(input: {
   credentials: BogCredentials
   idempotencyKey: string
   merchantPaymentId: string
-  deviceSlots: 1 | 2
-  amount: 99 | 179
+  deviceSlots: number
+  amount: number
   callbackUrl: string
   successUrl: string
   failUrl: string

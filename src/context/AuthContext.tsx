@@ -23,6 +23,8 @@ import type { Session, User } from '@supabase/supabase-js'
 import type { SubscriptionPlan } from '@/data/subscription-plans'
 
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
+import { getDeviceFingerprint, getExamTabId } from '@/lib/device'
+import { revokeExamTab } from '@/lib/exam-session-edge'
 
 import {
 
@@ -64,7 +66,7 @@ type AuthState = {
 
   refreshProfile: () => Promise<void>
 
-  selectPlan: (plan: SubscriptionPlan) => Promise<string | null>
+  selectPlan: (plan: SubscriptionPlan, deviceSlots?: 1 | 2) => Promise<string | null>
 
   signUp: (email: string, password: string, fullName: string) => Promise<string | null>
 
@@ -86,6 +88,7 @@ export type CurrentAccountEntitlement = {
 
 
 const AuthContext = createContext<AuthState | null>(null)
+const EXAM_TAB_REVOCATION_TIMEOUT_MS = 2000
 
 function isEntitlementSource(
   value: unknown,
@@ -369,12 +372,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // flipping the app back to "loading" and unmounting the active exam.
   const loadedProfileUserIdRef = useRef<string | null>(null)
   const activatedUserIdRef = useRef<string | null>(null)
+  const authLifecycleVersionRef = useRef(0)
+  const signedOutLocallyRef = useRef(false)
+  const signOutInProgressRef = useRef(false)
 
   const loadProfile = useCallback(async (userId: string) => {
+    const lifecycleVersion = authLifecycleVersionRef.current
+    const isCurrent = () =>
+      lifecycleVersion === authLifecycleVersionRef.current && !signedOutLocallyRef.current
+    if (!isCurrent()) return
+
     setDeviceBinding(true)
     try {
       setDeviceBlocked(null)
       const activation = await activateSession(userId)
+      if (!isCurrent()) return
       if (activation.error) {
         loadedProfileUserIdRef.current = null
         activatedUserIdRef.current = null
@@ -389,8 +401,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let currentProfile: Profile | null
       try {
         currentProfile = await fetchProfile(userId)
+        if (!isCurrent()) return
         if (!currentProfile) throw new Error('Profile not found')
       } catch (error) {
+        if (!isCurrent()) return
         console.error('Profile loading failed:', error)
         loadedProfileUserIdRef.current = null
         activatedUserIdRef.current = null
@@ -408,9 +422,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let currentEntitlement: CurrentAccountEntitlement | null
       try {
         currentEntitlement = await fetchCurrentAccountEntitlement()
+        if (!isCurrent()) return
         setEntitlement(currentEntitlement)
         setEntitlementStatusUnavailable(currentEntitlement === null)
       } catch (error) {
+        if (!isCurrent()) return
         console.error('Account entitlement loading failed:', error)
         activatedUserIdRef.current = null
         setServerAccess(false)
@@ -427,8 +443,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         (currentEntitlement === null || currentEntitlement.accessActive),
       )
     } finally {
-      setDeviceBinding(false)
-      setProfileReady(true)
+      if (isCurrent()) {
+        setDeviceBinding(false)
+        setProfileReady(true)
+      }
     }
   }, [])
 
@@ -492,8 +510,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
     const safety = window.setTimeout(finish, 5000)
-
-
+    const initializationVersion = authLifecycleVersionRef.current
 
     void (async () => {
 
@@ -509,9 +526,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         console.log('✅ AuthContext: Got session:', initialSession ? 'logged in' : 'not logged in')
 
-        if (!mounted) return
-
-
+        if (
+          !mounted ||
+          initializationVersion !== authLifecycleVersionRef.current ||
+          signedOutLocallyRef.current
+        ) return
 
         setSession(initialSession)
 
@@ -547,22 +566,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
 
-    const { data: sub } = supabase.auth.onAuthStateChange((event, nextSession) => {
-
-      if (event === 'INITIAL_SESSION') return
-
-
-
+    const applyAuthSession = (nextSession: Session | null) => {
+      authLifecycleVersionRef.current += 1
+      const eventVersion = authLifecycleVersionRef.current
       setSession(nextSession)
-
       if (nextSession?.user) {
-
         const nextUserId = nextSession.user.id
-
         window.setTimeout(() => {
-
-          if (!mounted) return
-
+          if (
+            !mounted ||
+            signedOutLocallyRef.current ||
+            authLifecycleVersionRef.current !== eventVersion
+          ) return
           if (loadedProfileUserIdRef.current === nextUserId) {
 
             // Same user, profile already loaded (token refresh / tab refocus): keep the UI mounted.
@@ -594,9 +609,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDeviceBinding(false)
 
         setProfileReady(true)
-
       }
+    }
 
+    const { data: sub } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'INITIAL_SESSION') return
+      if (event === 'SIGNED_OUT') {
+        signedOutLocallyRef.current = true
+        applyAuthSession(null)
+        return
+      }
+      if (signOutInProgressRef.current) return
+      if (signedOutLocallyRef.current) {
+        const signedOutVersion = authLifecycleVersionRef.current
+        void supabase.auth.getSession().then(({ data }) => {
+          if (
+            !mounted ||
+            !data.session ||
+            signedOutVersion !== authLifecycleVersionRef.current
+          ) return
+          signedOutLocallyRef.current = false
+          applyAuthSession(data.session)
+        }).catch((error: unknown) => {
+          console.error('Auth session revalidation after sign-out failed:', error)
+        })
+        return
+      }
+      applyAuthSession(nextSession)
     })
 
 
@@ -648,8 +687,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sessionRevoked = true
       activatedUserIdRef.current = null
       setServerAccess(false)
-      setDeviceBlocked('ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.')
-      setSignOutWarning('ეს სესია გაუქმებულია. ხელახლა შედით ანგარიშში.')
+      setDeviceBlocked('თქვენი სესია დასრულებულია. გთხოვთ, ხელახლა შეხვიდეთ.')
+      setSignOutWarning('თქვენი სესია დასრულებულია. გთხოვთ, ხელახლა შეხვიდეთ.')
 
       const { error } = await supabase.auth.signOut({ scope: 'local' })
       if (error) {
@@ -760,6 +799,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    let revocationChannel: ReturnType<typeof supabase.channel> | null = null
+    if (typeof supabase.channel === 'function') {
+      revocationChannel = supabase
+        .channel(`device-session-revocation-${userId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'profile_revoked_sessions',
+            filter: `profile_id=eq.${userId}`,
+          },
+          () => {
+            if (!mounted || sessionRevoked || signOutInProgressRef.current) return
+            void isSessionRevokedByAnotherDevice()
+              .then((revoked) => revoked && signOutRevokedSession())
+              .catch((error) => {
+                console.warn('Realtime session revocation confirmation failed:', error)
+              })
+          },
+        )
+        .subscribe((status) => {
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            console.warn('Session revocation realtime channel unavailable; polling remains active.')
+          }
+        })
+    }
+
     const validateServerState = async () => {
       if (!mounted || checking || sessionRevoked || document.visibilityState === 'hidden') return
       checking = true
@@ -865,6 +932,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', recordCurrentActivity)
       window.removeEventListener('focus', validateServerState)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      if (revocationChannel) void supabase.removeChannel(revocationChannel)
     }
   }, [session?.user.id, profileReady, deviceBinding])
 
@@ -872,7 +940,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     const supabase = getSupabase()
-    let serverSessionsDeactivated = false
+    signOutInProgressRef.current = true
+    signedOutLocallyRef.current = true
+    authLifecycleVersionRef.current += 1
+    let examTabRevocationFailed = false
     let activeSessionMatch: boolean | null = null
     let activeSessionCheckError: ReturnType<typeof getSessionDiagnosticError> | null = null
     setSignOutWarning(null)
@@ -886,6 +957,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfileReady(true)
     loadedProfileUserIdRef.current = null
     activatedUserIdRef.current = null
+
+    if (session?.user.id) {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          revokeExamTab({
+            userId: session.user.id,
+            deviceId: getDeviceFingerprint(),
+            tabId: getExamTabId(),
+          }),
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new Error('Exam tab revocation timed out')),
+              EXAM_TAB_REVOCATION_TIMEOUT_MS,
+            )
+          }),
+        ])
+      } catch {
+        examTabRevocationFailed = true
+        console.warn('Exam tab revocation could not be confirmed.')
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId)
+      }
+    }
+    let serverSessionsDeactivated = false
 
     let activeSessionCheckTimeout: ReturnType<typeof setTimeout> | undefined
     try {
@@ -915,7 +1011,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let revocationTimeout: ReturnType<typeof setTimeout> | undefined
     let revocationTimedOut = false
-    let revocationFailure: 'rpc_error' | 'malformed_response' | null = null
+    let revocationFailure: 'rpc_error' | 'malformed_response' | 'not_deactivated' | null = null
     let responseShape: ReturnType<typeof getJsonShape> | null = null
     let httpStatus: number | null = null
     const revocationStartedAt = performance.now()
@@ -938,25 +1034,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         revocationFailure = 'rpc_error'
         throw response.error
       }
-      if (
-        typeof response.data !== 'object' ||
-        response.data === null ||
-        Array.isArray(response.data) ||
-        !('status' in response.data) ||
-        !('deactivated_sessions' in response.data) ||
-        typeof response.data.deactivated_sessions !== 'number' ||
-        !Number.isInteger(response.data.deactivated_sessions) ||
-        response.data.deactivated_sessions < 0 ||
-        (response.data.status !== 'deactivated' && response.data.status !== 'inactive') ||
-        (response.data.status === 'inactive' && response.data.deactivated_sessions !== 0) ||
-        (response.data.status === 'deactivated' && response.data.deactivated_sessions === 0)
-      ) {
+      const verifyRevocation = async () => {
+        const verification = await supabase.rpc('presence_current_session')
+        return !verification.error &&
+          isRecord(verification.data) &&
+          verification.data.status === 'revoked'
+      }
+      if (response.status === 204 && response.data === null) {
+        if (await verifyRevocation()) {
+          serverSessionsDeactivated = true
+        } else {
+          revocationFailure = 'not_deactivated'
+          throw Object.assign(new Error('The server did not confirm revocation of this device session'), {
+            code: 'SESSION_NOT_DEACTIVATED',
+          })
+        }
+      } else if (!isRecord(response.data)) {
         revocationFailure = 'malformed_response'
         throw Object.assign(new Error('Unexpected deactivate_current_session response'), {
           code: 'MALFORMED_RESPONSE',
         })
+      } else {
+        const payload = response.data
+        if (
+          typeof payload.status !== 'string' ||
+          typeof payload.deactivated_sessions !== 'number' ||
+          !Number.isInteger(payload.deactivated_sessions) ||
+          payload.deactivated_sessions < 0
+        ) {
+          revocationFailure = 'malformed_response'
+          throw Object.assign(new Error('Unexpected deactivate_current_session response'), {
+            code: 'MALFORMED_RESPONSE',
+          })
+        }
+        if (
+          payload.status === 'deactivated' &&
+          payload.deactivated_sessions === 1
+        ) {
+          serverSessionsDeactivated = true
+        } else if (
+          payload.status === 'inactive' &&
+          payload.deactivated_sessions === 0
+        ) {
+          if (await verifyRevocation()) {
+            serverSessionsDeactivated = true
+          } else {
+            revocationFailure = 'not_deactivated'
+            throw Object.assign(new Error('The server did not confirm revocation of this device session'), {
+              code: 'SESSION_NOT_DEACTIVATED',
+            })
+          }
+        } else {
+          revocationFailure = 'malformed_response'
+          throw Object.assign(new Error('Unexpected deactivate_current_session response'), {
+            code: 'MALFORMED_RESPONSE',
+          })
+        }
       }
-      serverSessionsDeactivated = true
       console.info('Device session logout diagnostic', {
         outcome: 'success',
         httpStatus,
@@ -998,10 +1132,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (revocationTimeout !== undefined) clearTimeout(revocationTimeout)
     }
 
-    const { error: signOutError } = await supabase.auth.signOut({ scope: 'local' })
+    let signOutError: { message: string } | null
+    try {
+      const result = await supabase.auth.signOut({ scope: 'local' })
+      signOutError = result.error
+    } finally {
+      signOutInProgressRef.current = false
+    }
     if (signOutError) throw signOutError
-    if (serverSessionsDeactivated) setSignOutWarning(null)
-  }, [])
+    if (serverSessionsDeactivated && !examTabRevocationFailed) setSignOutWarning(null)
+    if (examTabRevocationFailed) {
+      setSignOutWarning(
+        'ანგარიშიდან გახვედით, მაგრამ Exam tab-ის გაუქმება ვერ დადასტურდა. მისი წვდომა სერვერზე ვადის გასვლის შემდეგ დაიბლოკება.',
+      )
+    }
+  }, [session?.user.id])
 
 
 
@@ -1028,6 +1173,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (email: string, password: string) => {
 
     setSignOutWarning(null)
+    signedOutLocallyRef.current = false
+    authLifecycleVersionRef.current += 1
 
     console.log('🔑 signIn: Starting login for:', email)
 
@@ -1043,7 +1190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     } else {
 
-      console.log('✅ signIn: Login successful', data)
+      console.log('✅ signIn: Login successful')
 
     }
 
@@ -1055,7 +1202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const selectPlan = useCallback(
 
-    async (plan: SubscriptionPlan) => {
+    async (plan: SubscriptionPlan, deviceSlots?: 1 | 2) => {
 
       if (!session?.user) return 'ჯერ შედი ანგარიშში'
 
@@ -1064,7 +1211,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (err) return err
 
       setProfile((prev) => (prev
-        ? { ...prev, subscription_plan: plan }
+        ? {
+            ...prev,
+            subscription_plan: plan,
+            ...(deviceSlots === 1 || deviceSlots === 2 ? { device_slots: deviceSlots } : {}),
+          }
         : prev))
 
       await refreshProfile()

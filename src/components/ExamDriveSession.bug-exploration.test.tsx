@@ -46,6 +46,7 @@ vi.mock('@/lib/audio', () => ({
     unlock: vi.fn(),
     isBusy: vi.fn(() => false),
     stopAll: vi.fn(),
+    preload: vi.fn(),
     preloadAll: vi.fn(),
   },
 }))
@@ -83,6 +84,8 @@ vi.mock('@/lib/route-nav', () => ({
   resolveExamSpeedKmh: vi.fn(() => 0),
   resolveHeading: vi.fn(() => 0),
   formatDuration: vi.fn((ms) => `${Math.floor(ms / 1000)}s`),
+  routeLengthMeters: vi.fn(() => 5000),
+  seedAlongRouteMeters: vi.fn(() => 0),
 }))
 
 vi.mock('@/lib/gps-filter', () => ({

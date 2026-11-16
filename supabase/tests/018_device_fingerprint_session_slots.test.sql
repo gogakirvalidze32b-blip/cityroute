@@ -4,6 +4,35 @@ create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 select plan(47);
 
+create function pg_temp.confirm_bog(p_user uuid, p_payment text, p_merchant text, p_amount numeric, p_slots integer)
+returns void language plpgsql as $confirm$
+declare
+  v_result jsonb;
+  v_amount text := case p_amount when 99 then '99.00' when 179 then '179.00' else p_amount::text end;
+begin
+  insert into public.payment_transactions (
+    user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata
+  ) values (
+    p_user, 'bog', p_payment, p_merchant, p_amount, 'GEL', 'pending',
+    pg_catalog.jsonb_build_object('provider', 'bog', 'device_slots', p_slots, 'package_price', p_amount)
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', 'cityroute_bog_confirmer', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
+  v_result := public.update_bog_payment_status(
+    p_payment, 'success', p_payment || '-bank',
+    pg_catalog.jsonb_build_object(
+      'bank_status', 'completed', 'bank_amount', v_amount,
+      'bank_currency', 'GEL', 'bank_external_order_id', p_merchant
+    )
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', '', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{}', true);
+  if v_result->>'status' is distinct from 'success' or v_result->>'success' is distinct from 'true' then
+    raise exception 'BOG activation failed for %: %', p_payment, v_result;
+  end if;
+end
+$confirm$;
+
 select ok(
   not has_table_privilege('authenticated', 'public.profile_active_sessions', 'select'),
   'authenticated clients cannot bypass the session registry RLS boundary'
@@ -28,41 +57,8 @@ values
   )
 on conflict (id) do nothing;
 
-insert into public.profiles (
-  id, subscription_status, subscription_plan, subscription_expires_at,
-  device_slots, subscription_payment_id
-)
-values
-  (
-    '00000000-0000-0000-0000-000000000801',
-    'active', 'full', pg_catalog.now() + interval '30 days', 2, 'fingerprint-179-test'
-  ),
-  (
-    '00000000-0000-0000-0000-000000000802',
-    'active', 'premium', pg_catalog.now() + interval '30 days', 1, null
-  )
-on conflict (id) do update
-set subscription_status = excluded.subscription_status,
-    subscription_plan = excluded.subscription_plan,
-    subscription_expires_at = excluded.subscription_expires_at,
-    device_slots = excluded.device_slots,
-    subscription_payment_id = excluded.subscription_payment_id;
-
-insert into public.payment_transactions (
-  user_id, provider, payment_id, merchant_payment_id, amount, currency,
-  status, metadata, paid_at
-)
-values (
-  '00000000-0000-0000-0000-000000000801',
-  'bog',
-  'fingerprint-179-test',
-  'merchant-fingerprint-179-test',
-  179,
-  'GEL',
-  'success',
-  '{"provider":"bog","device_slots":2,"bank_status":"completed","bank_amount":"179","bank_currency":"GEL","bank_external_order_id":"merchant-fingerprint-179-test"}',
-  pg_catalog.now()
-);
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000801', 'fingerprint-179-test', 'merchant-fingerprint-179-test', 179, 2);
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000802', 'fingerprint-99-test', 'merchant-fingerprint-99-test', 99, 1);
 
 insert into auth.sessions (id, user_id, created_at, updated_at, not_after)
 values

@@ -4,6 +4,13 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PlanSelectionPage } from './PlanSelectionPage'
 
+const packageState = vi.hoisted(() => ({
+  load: vi.fn(async () => [
+    { subscription_plan: 'premium', device_slots: 1, price_amount: 99, currency: 'GEL', sort_order: 1 },
+    { subscription_plan: 'premium', device_slots: 2, price_amount: 179, currency: 'GEL', sort_order: 2 },
+  ]),
+}))
+
 const state = vi.hoisted(() => ({
   selectPlan: vi.fn(async () => null as string | null),
   signOut: vi.fn(async () => {}),
@@ -27,10 +34,14 @@ const state = vi.hoisted(() => ({
       subscription_status: string
       subscription_plan: string | null
       subscription_expires_at: string | null
-      device_slots: 1 | 2
+      device_slots: number
       subscription_payment_id?: string | null
     },
   },
+}))
+
+vi.mock('@/lib/device-slot-packages', () => ({
+  loadDeviceSlotPackages: packageState.load,
 }))
 
 vi.mock('@/context/AuthContext', () => ({
@@ -50,6 +61,11 @@ vi.mock('@/components/PaymentButton', () => ({
 
 describe('Premium package selection', () => {
   beforeEach(() => {
+    packageState.load.mockReset()
+    packageState.load.mockResolvedValue([
+      { subscription_plan: 'premium', device_slots: 1, price_amount: 99, currency: 'GEL', sort_order: 1 },
+      { subscription_plan: 'premium', device_slots: 2, price_amount: 179, currency: 'GEL', sort_order: 2 },
+    ])
     state.selectPlan.mockClear()
     state.signOut.mockClear()
     state.refreshProfile.mockClear()
@@ -75,12 +91,29 @@ describe('Premium package selection', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByRole('radio', { name: /2 მანქანა/ }))
+    fireEvent.click(await screen.findByRole('radio', { name: /2 მანქანა/ }))
     expect(screen.getAllByText(/179/).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Pay for 2' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /უფასო/ }))
-    await waitFor(() => expect(state.selectPlan).toHaveBeenCalledWith('premium'))
+    await waitFor(() => expect(state.selectPlan).toHaveBeenCalledWith('premium', 2))
     expect(await screen.findByRole('heading', { name: 'Home' })).toBeTruthy()
+  })
+
+  it('shows only the active 1- and 2-device catalog packages', async () => {
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+          <Route path="/" element={<h1>Home</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('radio', { name: /1 მანქანა/ })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: /2 მანქანა/ })).toBeTruthy()
+    expect(screen.queryByRole('radio', { name: /3 მანქანა|5 მანქანა/ })).toBeNull()
+    expect(screen.getAllByText('99 ₾')).toHaveLength(2)
+    expect(screen.getAllByText('179 ₾')).toHaveLength(1)
   })
 
   it('keeps the user on plan selection when the secure plan RPC rejects the trial choice', async () => {
@@ -100,7 +133,7 @@ describe('Premium package selection', () => {
       'This session is no longer active; sign in again',
     )
     expect(screen.queryByRole('heading', { name: 'Home' })).toBeNull()
-    expect(state.selectPlan).toHaveBeenCalledWith('premium')
+    expect(state.selectPlan).toHaveBeenCalledWith('premium', 1)
   })
 
   it('lets an active trial open early payment, return to routes, and sign out', async () => {

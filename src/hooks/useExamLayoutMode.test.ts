@@ -20,6 +20,13 @@ describe('detectExamLayoutMode', () => {
     [640, 360, 'mobile-landscape'],
     [800, 480, 'mobile-landscape'],
     [960, 540, 'mobile-landscape'],
+    // Portrait tablets / Android pads
+    [768, 1024, 'tablet'],
+    [800, 1280, 'tablet'],
+    [834, 1112, 'tablet'],
+    // Landscape Android exam monitors (below laptop breakpoint)
+    [1024, 600, 'tablet'],
+    [1024, 768, 'tablet'],
     [1280, 720, 'laptop'],
     [1920, 1080, 'laptop'],
   ] as const)('classifies %i×%i viewport', (width, height, expected) => {

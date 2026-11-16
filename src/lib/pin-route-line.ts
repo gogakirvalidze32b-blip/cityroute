@@ -70,10 +70,16 @@ export function maxPinOffsetFromLineM(pins: readonly LatLng[], line: readonly La
   return worst
 }
 
+/** Bundled street road for a Telavi exam slug, when present. */
+export function examStreetRoad(slug: string): LatLng[] | null {
+  const road = ROAD_BY_SLUG[slug]
+  return road && road.length >= 2 ? road : null
+}
+
 /** The street trace for this route when every loaded pin lies on it, otherwise null. */
 export function examRoadTrace(slug: string, pins: readonly PinRoutePoint[]): LatLng[] | null {
   const straight = pinRouteLine(pins)
-  const road = ROAD_BY_SLUG[slug]
+  const road = examStreetRoad(slug)
   if (!road || straight.length < 2) return null
   if (maxPinOffsetFromLineM(straight, road) > ROAD_MATCH_M) return null
   return road

@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { NavigationStateManager, CameraStateManager, type CameraMode, type RawGpsUpdate } from '@/lib/navigation-state'
+import { formatPinInstructionLabel } from '@/lib/pin-instruction-label'
 
 const MAPTILER_API_KEY = import.meta.env.VITE_MAPTILER_API_KEY || 'get_your_own_OpIi9ZULNHzrESv6T2vL'
 
@@ -271,8 +272,10 @@ export function ExamLiveMapLibre({ route, userPos, heading, nextPin, mapBadge }:
 
       {nextPin && (
         <div className="exam-live-map__hud">
-          <small>შემდეგი · {nextPinDist} მ</small>
-          <strong>{nextPin.instruction_ka}</strong>
+          <small>შემდეგი · PIN {nextPin.sort_order} · {nextPinDist} მ</small>
+          <strong>
+            {formatPinInstructionLabel(nextPin.sort_order, nextPin.instruction_ka)}
+          </strong>
         </div>
       )}
 

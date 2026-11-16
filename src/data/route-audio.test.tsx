@@ -23,14 +23,20 @@ describe('resolvePinAudioUrl (original WAV path for every route)', () => {
     for (const slug of ['route-1', 'route-2', 'route-3', 'route-4']) {
       const url = resolvePinAudioUrl(
         slug,
-        pin('გთხოვთ, მოუხვიოთ მარჯვნივ', '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav'),
+        pin('მალე, გთხოვთ მოუხვიოთ მარჯვნივ', '/audio/points/გთხოვთ, იმოძრაოთ პირდაპირ.wav'),
       )
-      // Plain right-turn text maps to the existing tracked მალე-named WAV.
+      // Filename stem is the source of truth — instruction must equal that stem.
       expect(decodeAudioPath(url!)).toBe('/audio/points/მალე, გთხოვთ მოუხვიოთ მარჯვნივ.wav')
       // Commas must stay literal so static hosts find the WAV (not SPA HTML fallback).
       expect(url!).not.toContain('%2C')
       expect(url!).toMatch(/%E1%83%9B%E1%83%90%E1%83%9A%E1%83%94,/)
     }
+  })
+
+  it('plain right-turn instruction resolves only its exact WAV stem (no მალე remap)', () => {
+    expect(decodeAudioPath(resolvePinAudioUrl('route-1', pin('გთხოვთ, მოუხვიოთ მარჯვნივ'))!)).toBe(
+      '/audio/points/გთხოვთ, მოუხვიოთ მარჯვნივ.wav',
+    )
   })
 
   it('pin.audio_url is used only when the instruction has no exact map entry', () => {

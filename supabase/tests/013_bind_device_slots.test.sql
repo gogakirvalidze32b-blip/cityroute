@@ -3,6 +3,35 @@ begin;
 create extension if not exists pgtap with schema extensions;
 select plan(33);
 
+create function pg_temp.confirm_bog(p_user uuid, p_payment text, p_merchant text, p_amount numeric, p_slots integer)
+returns void language plpgsql as $confirm$
+declare
+  v_result jsonb;
+  v_amount text := case p_amount when 99 then '99.00' when 179 then '179.00' else p_amount::text end;
+begin
+  insert into public.payment_transactions (
+    user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata
+  ) values (
+    p_user, 'bog', p_payment, p_merchant, p_amount, 'GEL', 'pending',
+    pg_catalog.jsonb_build_object('provider', 'bog', 'device_slots', p_slots, 'package_price', p_amount)
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', 'cityroute_bog_confirmer', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{"role":"cityroute_bog_confirmer"}', true);
+  v_result := public.update_bog_payment_status(
+    p_payment, 'success', p_payment || '-bank',
+    pg_catalog.jsonb_build_object(
+      'bank_status', 'completed', 'bank_amount', v_amount,
+      'bank_currency', 'GEL', 'bank_external_order_id', p_merchant
+    )
+  );
+  perform pg_catalog.set_config('request.jwt.claim.role', '', true);
+  perform pg_catalog.set_config('request.jwt.claims', '{}', true);
+  if v_result->>'status' is distinct from 'success' or v_result->>'success' is distinct from 'true' then
+    raise exception 'BOG activation failed for %: %', p_payment, v_result;
+  end if;
+end
+$confirm$;
+
 insert into auth.users (
   id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at
@@ -38,50 +67,16 @@ values
   ('00000000-0000-0000-0000-000000000162', '00000000-0000-0000-0000-000000000106', now(), now(), null)
 on conflict (id) do nothing;
 
-insert into public.profiles (id, subscription_status, subscription_plan, subscription_expires_at, device_slots)
-values
-  ('00000000-0000-0000-0000-000000000101', 'trial', 'premium', now() + interval '12 hours', 2),
-  ('00000000-0000-0000-0000-000000000102', 'active', 'premium', now() + interval '30 days', 1),
-  ('00000000-0000-0000-0000-000000000103', 'active', 'premium', now() + interval '30 days', 2),
-  ('00000000-0000-0000-0000-000000000104', 'active', 'premium', now() + interval '30 days', 1),
-  ('00000000-0000-0000-0000-000000000105', 'active', 'premium', now() + interval '30 days', 1),
-  ('00000000-0000-0000-0000-000000000106', 'active', 'premium', now() + interval '30 days', 1)
-on conflict (id) do update
-set subscription_status = excluded.subscription_status,
-    subscription_plan = excluded.subscription_plan,
-    subscription_expires_at = excluded.subscription_expires_at,
-    device_slots = excluded.device_slots,
-    device_fingerprint = null,
-    device_bound_at = null;
-
-update public.profiles
-set subscription_payment_id = case id
-  when '00000000-0000-0000-0000-000000000102'::uuid then 'device-test-99'
-  when '00000000-0000-0000-0000-000000000103'::uuid then 'device-test-179'
-  when '00000000-0000-0000-0000-000000000106'::uuid then 'device-test-179-pending'
-  else null
-end
-where id in (
-  '00000000-0000-0000-0000-000000000102',
-  '00000000-0000-0000-0000-000000000103',
-  '00000000-0000-0000-0000-000000000104',
-  '00000000-0000-0000-0000-000000000105',
-  '00000000-0000-0000-0000-000000000106'
-);
-
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000102', 'device-test-99', 'device-test-merchant-99', 99, 1);
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000103', 'device-test-179', 'device-test-merchant-179', 179, 2);
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000104', 'device-test-104', 'device-test-merchant-104', 99, 1);
+select pg_temp.confirm_bog('00000000-0000-0000-0000-000000000105', 'device-test-105', 'device-test-merchant-105', 99, 1);
 insert into public.payment_transactions (
   user_id, provider, payment_id, merchant_payment_id, amount, currency, status, metadata, paid_at
-)
-values
-  ('00000000-0000-0000-0000-000000000102', 'bog', 'device-test-99', 'device-test-merchant-99', 99, 'GEL', 'success', '{"provider":"bog","device_slots":1}', now()),
-  ('00000000-0000-0000-0000-000000000103', 'bog', 'device-test-179', 'device-test-merchant-179', 179, 'GEL', 'success', '{"provider":"bog","device_slots":2,"bank_status":"completed","bank_amount":"179","bank_currency":"GEL","bank_external_order_id":"device-test-merchant-179"}', now()),
-  ('00000000-0000-0000-0000-000000000106', 'bog', 'device-test-179-pending', 'device-test-merchant-179-pending', 179, 'GEL', 'pending', '{"provider":"bog","device_slots":2}', null)
-on conflict (provider, payment_id) do update
-set user_id = excluded.user_id,
-    amount = excluded.amount,
-    currency = excluded.currency,
-    status = excluded.status,
-    metadata = excluded.metadata;
+) values (
+  '00000000-0000-0000-0000-000000000106', 'bog', 'device-test-179-pending', 'device-test-merchant-179-pending',
+  179, 'GEL', 'pending', '{"provider":"bog","device_slots":2,"package_price":179}', null
+);
 
 update public.profiles
 set device_fingerprint = 'legacy-device-001',
