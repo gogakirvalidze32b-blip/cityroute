@@ -68,7 +68,11 @@ import {
   EXAM_SUCCESS_AUDIO,
   EXAM_SUCCESS_TEXT,
 } from '@/data/route-audio'
-import { isRouteFinishGpsReady, isStartAudioAllowed } from '@/data/route-finish'
+import {
+  isFinishAudioAllowed,
+  isRouteFinishGpsReady,
+  isStartAudioAllowed,
+} from '@/data/route-finish'
 import {
   createSpeedTracker,
   gpsToLatLng,
@@ -1906,6 +1910,15 @@ export function ExamDriveSession({
         audioAttemptInFlightRef.current = false
         return
       }
+      // ფინიში only within 50 m of PIN 1 — outside that radius advance silently.
+      if (currentTarget.instruction_ka === 'ფინიში') {
+        const pin1 = voicePinsRef.current.find((pin) => pin.sort_order === 1) ?? null
+        if (!isFinishAudioAllowed(route.slug, currentPositionRef.current, pin1)) {
+          console.warn('[AUDIO] Finish voice skipped — outside PIN 1 radius', route.slug)
+          completePin()
+          return
+        }
+      }
       if (currentTarget.audio_url) audioEngine.preload(currentTarget.audio_url)
       // Warm the next queued voices so catch-up does not hitch.
       for (const order of queuedAudioPinOrdersRef.current.slice(0, 3)) {
@@ -2143,9 +2156,10 @@ export function ExamDriveSession({
     setDriveView(features.mapNav ? 'map' : 'panel')
     setPhase('active')
     resumedSlugRef.current = route.slug
+    const pin1 = voicePins.find((pin) => pin.sort_order === 1) ?? null
     startAudioPendingRef.current = features.routeAudio &&
       !(progressRead?.status === 'valid' && progressRead.orders.length > 0) &&
-      isStartAudioAllowed(route.slug, startSortOrder)
+      isStartAudioAllowed(route.slug, currentPositionRef.current, pin1)
     if (startAudioPendingRef.current) playSessionStartAudio(sessionGeneration)
   }
 

@@ -3,9 +3,12 @@ import { TELAVI_ROUTES_FALLBACK } from './telavi-routes'
 import { resolvePinAudioUrl } from './route-audio'
 import {
   COMMON_FINISH_INSTRUCTIONS,
+  isFinishAudioAllowed,
+  isNearPin1ForSessionVoice,
   isRouteFinishGpsReady,
   isStartAudioAllowed,
   ROUTE_FINISH_PIN_RANGES,
+  SESSION_VOICE_PIN1_RADIUS_M,
   START_AUDIO_PIN_RANGES,
   finishSectionStartIndex,
 } from './route-finish'
@@ -139,14 +142,37 @@ describe('shared finish sequence', () => {
       'route-3': { start: 25, end: 30 },
       'route-4': { start: 26, end: 31 },
     })
+    expect(SESSION_VOICE_PIN1_RADIUS_M).toBe(50)
+  })
 
-    for (const [slug, range] of Object.entries(START_AUDIO_PIN_RANGES)) {
-      expect(isStartAudioAllowed(slug, range.start)).toBe(true)
-      expect(isStartAudioAllowed(slug, range.end)).toBe(true)
-      expect(isStartAudioAllowed(slug, range.start - 1)).toBe(false)
-      expect(isStartAudioAllowed(slug, range.end + 1)).toBe(false)
+  it('allows დაწყება / ფინიში only within 50 m of PIN 1 on all four routes', () => {
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4'] as const) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const pin1 = route.pins.find((pin) => pin.sort_order === 1)!
+      const near: [number, number] = [pin1.lat, pin1.lng]
+      // ~111 m north — outside the 50 m radius
+      const far: [number, number] = [pin1.lat + 0.001, pin1.lng]
+
+      expect(isNearPin1ForSessionVoice(near, pin1)).toBe(true)
+      expect(isNearPin1ForSessionVoice(far, pin1)).toBe(false)
+      expect(isStartAudioAllowed(slug, near, pin1)).toBe(true)
+      expect(isStartAudioAllowed(slug, far, pin1)).toBe(false)
+      expect(isFinishAudioAllowed(slug, near, pin1)).toBe(true)
+      expect(isFinishAudioAllowed(slug, far, pin1)).toBe(false)
+      expect(isStartAudioAllowed(slug, null, pin1)).toBe(false)
+      expect(isFinishAudioAllowed(slug, null, pin1)).toBe(false)
     }
-    expect(isStartAudioAllowed('route-5', 1)).toBe(false)
+    const pin1 = TELAVI_ROUTES_FALLBACK[0].pins.find((pin) => pin.sort_order === 1)!
+    expect(isStartAudioAllowed('route-5', [pin1.lat, pin1.lng], pin1)).toBe(false)
+    expect(isFinishAudioAllowed('route-5', [pin1.lat, pin1.lng], pin1)).toBe(false)
+  })
+
+  it('route-1 PIN 6 is straight-ahead with matching audio', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
+    const pin6 = route.pins.find((pin) => pin.sort_order === 6)!
+    expect(pin6.instruction_ka).toBe('გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ')
+    const audioUrl = decodeURIComponent(resolvePinAudioUrl('route-1', pin6) ?? '')
+    expect(audioUrl).toBe('/audio/points/გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav')
   })
 
   it.each(['route-1', 'route-2', 'route-4'] as const)(

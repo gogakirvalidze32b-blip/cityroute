@@ -23,6 +23,16 @@ export interface PinOrderRange {
   readonly end: number
 }
 
+/** Routes that play session დაწყება / ფინიში voices. */
+export const SESSION_VOICE_ROUTES = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
+
+/**
+ * Start (დაწყება) and finish (ფინიში) session voices only play within this
+ * radius of PIN 1. Outside that circle neither clip is spoken.
+ */
+export const SESSION_VOICE_PIN1_RADIUS_M = 50
+
+/** @deprecated Kept for finish-range docs/tests; start voice is PIN-1 radius gated. */
 export const START_AUDIO_PIN_RANGES: Readonly<Record<string, PinOrderRange>> = {
   'route-1': { start: 1, end: 5 },
   'route-2': { start: 1, end: 4 },
@@ -41,9 +51,52 @@ const GPS_AUTO_FINISH_ROUTES = new Set(['route-1', 'route-2', 'route-4'])
 const FINISH_PIN_APPROACH_METERS = 20
 const MAX_FINISH_CROSS_TRACK_METERS = 20
 
-export function isStartAudioAllowed(routeSlug: string, sortOrder: number): boolean {
-  const range = START_AUDIO_PIN_RANGES[routeSlug]
-  return range !== undefined && sortOrder >= range.start && sortOrder <= range.end
+type LatLngLike = { readonly lat: number; readonly lng: number } | readonly [number, number]
+
+function asLatLng(point: LatLngLike): [number, number] {
+  return Array.isArray(point) ? [point[0], point[1]] : [point.lat, point.lng]
+}
+
+function distanceMeters(a: LatLngLike, b: LatLngLike): number {
+  const [lat1, lng1] = asLatLng(a)
+  const [lat2, lng2] = asLatLng(b)
+  const earthRadiusMeters = 6371000
+  const latitudeDelta = ((lat2 - lat1) * Math.PI) / 180
+  const longitudeDelta = ((lng2 - lng1) * Math.PI) / 180
+  const latitude1 = (lat1 * Math.PI) / 180
+  const latitude2 = (lat2 * Math.PI) / 180
+  const value =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(latitude1) * Math.cos(latitude2) * Math.sin(longitudeDelta / 2) ** 2
+  return 2 * earthRadiusMeters * Math.asin(Math.sqrt(value))
+}
+
+/** True when GPS is within SESSION_VOICE_PIN1_RADIUS_M of PIN 1. */
+export function isNearPin1ForSessionVoice(
+  position: LatLngLike | null | undefined,
+  pin1: LatLngLike | null | undefined,
+  radiusM = SESSION_VOICE_PIN1_RADIUS_M,
+): boolean {
+  if (!position || !pin1) return false
+  return distanceMeters(position, pin1) <= radiusM
+}
+
+/** დაწყება — only on exam routes and only within 50 m of PIN 1. */
+export function isStartAudioAllowed(
+  routeSlug: string,
+  position: LatLngLike | null | undefined,
+  pin1: LatLngLike | null | undefined,
+): boolean {
+  return SESSION_VOICE_ROUTES.has(routeSlug) && isNearPin1ForSessionVoice(position, pin1)
+}
+
+/** ფინიში — same PIN-1 radius gate as start. */
+export function isFinishAudioAllowed(
+  routeSlug: string,
+  position: LatLngLike | null | undefined,
+  pin1: LatLngLike | null | undefined,
+): boolean {
+  return SESSION_VOICE_ROUTES.has(routeSlug) && isNearPin1ForSessionVoice(position, pin1)
 }
 
 export interface RouteFinishGpsInput {
