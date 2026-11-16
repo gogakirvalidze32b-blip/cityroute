@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { selectableRoutes } from '@/data/selectable-routes'
 import { examRouteLine } from '@/lib/pin-route-line'
+import type { ActiveRouteId } from '@/lib/pure-route-geometry'
 import { prepareDemoRouteGeometry, resolveDemoPinChainage } from '@/lib/preview-gps-demo-pin'
 
 describe('preview-gps-demo-pin chainage', () => {
@@ -10,9 +11,10 @@ describe('preview-gps-demo-pin chainage', () => {
     const failures: string[] = []
 
     for (const route of routes) {
+      const slug = route.slug as ActiveRouteId
       const geometry = prepareDemoRouteGeometry(
-        route.slug,
-        examRouteLine(route.slug, route.pins),
+        slug,
+        examRouteLine(slug, route.pins),
       )
       const sorted = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
       let cursor = 0
