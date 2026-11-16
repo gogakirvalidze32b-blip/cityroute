@@ -1,11 +1,18 @@
 import type { StartPinInput } from '@/lib/start-pin'
 import { resolvePinProgress } from '@/lib/route-resume'
 import {
-  prepareRouteGeometry,
+  prepareDemoRouteGeometry,
+  resolveDemoPinChainage,
+} from '@/lib/preview-gps-demo-pin'
+import {
   projectPointToRoute,
+  projectPointToRouteNearChainage,
   type ActiveRouteId,
   type LatLng,
 } from '@/lib/pure-route-geometry'
+
+/** Along-route slack: a PIN this far behind the live GPS fix is already passed. */
+export const PASSED_PIN_SKIP_M = 20
 
 function distanceMeters(a: LatLng, b: LatLng): number {
   const earthRadiusMeters = 6371000
@@ -22,12 +29,45 @@ function distanceMeters(a: LatLng, b: LatLng): number {
 export type AutoStartResult<T extends StartPinInput> = {
   /** PIN the Auto start will actually use. */
   pin: T | null
-  /** Retained as a stable result shape; GPS never changes the resolved PIN. */
+  /** Retained as a stable result shape. */
   aheadSuggestion: null
 }
 
+function savedNextPin<T extends StartPinInput & { id: string }>(
+  sortedPins: readonly T[],
+  completed: ReadonlySet<number>,
+): T | null {
+  const resolution = resolvePinProgress(sortedPins, completed)
+  if (resolution.status !== 'resume' || resolution.nextSortOrder === null) return null
+  return sortedPins.find((item) => item.sort_order === resolution.nextSortOrder) ?? null
+}
+
+function pinChainages<T extends StartPinInput & { id: string }>(
+  routeId: ActiveRouteId,
+  routePolyline: readonly LatLng[],
+  sortedPins: readonly T[],
+): Map<number, number> | null {
+  try {
+    const geometry = prepareDemoRouteGeometry(routeId, routePolyline)
+    const chainages = new Map<number, number>()
+    let cursor = 0
+    for (const pin of sortedPins) {
+      const chainage = resolveDemoPinChainage(geometry, sortedPins, pin.sort_order, cursor)
+      if (chainage == null) continue
+      chainages.set(pin.sort_order, chainage)
+      cursor = chainage
+    }
+    return chainages
+  } catch {
+    return null
+  }
+}
+
 /**
- * Auto start resolves only from persisted completed PIN orders. GPS is deliberately not an input.
+ * Auto start never rewinds.
+ * Live GPS on the exam line is authoritative: pins already behind by
+ * {@link PASSED_PIN_SKIP_M} are skipped. Saved progress only raises the floor
+ * (never forces a pin the car has already passed).
  */
 export function resolveAutoStart<T extends StartPinInput & { id: string }>(
   sortedPins: readonly T[],
@@ -36,56 +76,110 @@ export function resolveAutoStart<T extends StartPinInput & { id: string }>(
   routePolyline?: readonly LatLng[] | null,
   routeId?: ActiveRouteId,
 ): AutoStartResult<T> {
-  const resolution = resolvePinProgress(sortedPins, completed)
-  const pin = resolution.status === 'resume' && resolution.nextSortOrder !== null
-    ? sortedPins.find((item) => item.sort_order === resolution.nextSortOrder) ?? null
-    : null
-  if (completed.size === 0 && currentPosition && routePolyline && routeId && routePolyline.length >= 2) {
-    try {
-      const geometry = prepareRouteGeometry(routeId, routePolyline)
-      const gpsProjection = projectPointToRoute(geometry, currentPosition)
-      if (!gpsProjection || gpsProjection.crossTrackMeters > 250) {
-        return { pin, aheadSuggestion: null }
-      }
+  const ordered = [...sortedPins].sort((a, b) => a.sort_order - b.sort_order)
+  const savedPin = savedNextPin(ordered, completed)
 
-      const candidates = sortedPins
-        .map((item) => {
-          const pinProjection = projectPointToRoute(geometry, [item.lat, item.lng])
-          return pinProjection ? { item, chainage: pinProjection.chainageMeters } : null
-        })
-        .filter((candidate): candidate is { item: T; chainage: number } => candidate !== null)
-        .map((candidate) => ({
-          ...candidate,
-          distance: Math.abs(candidate.chainage - gpsProjection.chainageMeters),
-        }))
-        .sort((a, b) => a.distance - b.distance)
-      if (candidates[0]) {
-        const start = routePolyline[0]
-        if (start && distanceMeters(currentPosition, start) <= 250) {
-          const firstOrder = [...candidates].sort(
-            (a, b) => a.item.sort_order - b.item.sort_order,
-          )[0]
-          if (firstOrder) return { pin: firstOrder.item, aheadSuggestion: null }
-        }
-        const routeStartCandidates = candidates.filter(
-          (candidate) =>
-            candidate.chainage <= 250 &&
-            Math.abs(gpsProjection.chainageMeters - candidate.chainage) <= 250,
-        )
-        if (gpsProjection.chainageMeters <= 250 && routeStartCandidates.length > 0) {
-          routeStartCandidates.sort(
-            (a, b) =>
-              Math.abs(a.chainage - gpsProjection.chainageMeters) -
-              Math.abs(b.chainage - gpsProjection.chainageMeters),
-          )
-          return { pin: routeStartCandidates[0].item, aheadSuggestion: null }
-        }
-        return { pin: candidates[0].item, aheadSuggestion: null }
-      }
-    } catch {
-      return { pin, aheadSuggestion: null }
+  if (!currentPosition || !routePolyline || !routeId || routePolyline.length < 2) {
+    return { pin: savedPin, aheadSuggestion: null }
+  }
+
+  const chainages = pinChainages(routeId, routePolyline, ordered)
+  if (!chainages || chainages.size === 0) {
+    return { pin: savedPin, aheadSuggestion: null }
+  }
+
+  let floorChainage = 0
+  for (const order of completed) {
+    const chainage = chainages.get(order)
+    if (chainage != null && chainage > floorChainage) floorChainage = chainage
+  }
+
+  let gpsChainage: number
+  try {
+    const geometry = prepareDemoRouteGeometry(routeId, routePolyline)
+    const forwardSpan = Math.max(400, geometry.totalLengthMeters - floorChainage)
+    const forwardCenter = Math.min(
+      geometry.totalLengthMeters,
+      floorChainage + forwardSpan / 2,
+    )
+    const forward = projectPointToRouteNearChainage(
+      geometry,
+      currentPosition,
+      forwardCenter,
+      forwardSpan,
+    )
+    const gpsProjection =
+      forward && forward.chainageMeters >= floorChainage - 25
+        ? forward
+        : projectPointToRoute(geometry, currentPosition)
+    if (!gpsProjection || gpsProjection.crossTrackMeters > 250) {
+      return { pin: savedPin, aheadSuggestion: null }
+    }
+    gpsChainage = Math.max(floorChainage, gpsProjection.chainageMeters)
+  } catch {
+    return { pin: savedPin, aheadSuggestion: null }
+  }
+
+  const start = routePolyline[0]
+  const routeEnd = routePolyline[routePolyline.length - 1]
+  const nearStart = Boolean(start && distanceMeters(currentPosition, start) <= 250)
+  // Closed loops share agency coords with the finish: never treat an agency fix as the
+  // end-of-route occurrence while mid-route progress is still open.
+  try {
+    const geometry = prepareDemoRouteGeometry(routeId, routePolyline)
+    if (
+      nearStart &&
+      floorChainage < geometry.totalLengthMeters * 0.85 &&
+      completed.size > 0
+    ) {
+      return { pin: savedPin, aheadSuggestion: null }
+    }
+  } catch {
+    /* fall through */
+  }
+  if (nearStart && completed.size === 0) {
+    const first = ordered[0]
+    if (first) return { pin: first, aheadSuggestion: null }
+  }
+  if (
+    routeEnd &&
+    distanceMeters(currentPosition, routeEnd) <= 250 &&
+    floorChainage < (chainages.get(ordered.at(-1)?.sort_order ?? -1) ?? 0) * 0.85 &&
+    completed.size > 0
+  ) {
+    return { pin: savedPin, aheadSuggestion: null }
+  }
+
+  const unfinishedNotBehind = ordered.filter((pin) => {
+    if (completed.has(pin.sort_order)) return false
+    const chainage = chainages.get(pin.sort_order)
+    if (chainage == null) return true
+    return chainage > gpsChainage - PASSED_PIN_SKIP_M
+  })
+
+  if (unfinishedNotBehind.length === 0) {
+    return { pin: null, aheadSuggestion: null }
+  }
+
+  // Prefer PINs at/just ahead of the fix along the exam line (not Euclidean — loops revisit).
+  const atOrAhead = unfinishedNotBehind.filter((pin) => {
+    const chainage = chainages.get(pin.sort_order)
+    if (chainage == null) return true
+    return chainage >= gpsChainage - 5
+  })
+  const pool = atOrAhead.length > 0 ? atOrAhead : unfinishedNotBehind
+
+  let gpsPin = pool[0]!
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const pin of pool) {
+    const chainage = chainages.get(pin.sort_order)
+    if (chainage == null) continue
+    const distance = Math.abs(chainage - gpsChainage)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      gpsPin = pin
     }
   }
 
-  return { pin, aheadSuggestion: null }
+  return { pin: gpsPin, aheadSuggestion: null }
 }

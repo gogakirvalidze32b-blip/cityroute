@@ -756,21 +756,15 @@ export function ExamDriveSession({
       return null
     }
   }, [route.slug, speedLimitRoad])
-  // Automatic start: see resolveAutoStart. Read progress fresh from storage so a finished/restarted
-  // route never reuses progress from mount time. GPS only affects a brand-new route (no progress).
+  // Automatic start: see resolveAutoStart. Preview label uses saved progress only (cheap);
+  // live GPS snap (never rewind) runs on დაწყება / გაგრძელება.
   const previewProgress = initialProgressIsUnreadable
     ? { status: 'error' as const, message: RESUME_UNRESOLVED_MESSAGE }
     : resolvePinProgress(sortedPins, initialRoutePinProgress)
-  const positionForAutoStart = savedState?.phase === 'active' ? (savedState.userPos ?? userPos) : null
-  const autoStartPin = initialProgressIsUnreadable
-    ? null
-    : resolveAutoStart(
-        sortedPins,
-        new Set(initialRoutePinProgress),
-        positionForAutoStart,
-        autoStartPolyline,
-        route.slug as 'route-1' | 'route-2' | 'route-3' | 'route-4',
-      ).pin
+  const autoStartPin = useMemo(() => {
+    if (initialProgressIsUnreadable) return null
+    return resolveAutoStart(sortedPins, new Set(initialRoutePinProgress)).pin
+  }, [initialProgressIsUnreadable, sortedPins, initialRoutePinProgress])
   const previewPin =
     previewProgress.status === 'resume' &&
     previewProgress.nextSortOrder !== null &&
@@ -2242,8 +2236,44 @@ export function ExamDriveSession({
         }
       }
       if (phase !== 'active') setPhase('active')
-      if (!gpsStarted) {
-        await enableGps(true)
+      const resumeGps = !gpsStarted
+        ? await enableGps(true)
+        : rawPos
+          ? { position: userPos, fix: rawPos, denied: false }
+          : await enableGps(true)
+      // Auto გაგრძელება: if the car already passed saved next, snap forward — never stay behind.
+      if (
+        !resumeGps.denied &&
+        resumeGps.position &&
+        (savedState.startMode ?? sessionStartModeRef.current) === 'automatic' &&
+        FIELD_TEST_SLUGS.has(route.slug)
+      ) {
+        const floorOrders = handledOrdersRef.current ?? new Set<number>()
+        const gpsPin = resolveAutoStart(
+          voicePins,
+          floorOrders,
+          resumeGps.position,
+          autoStartPolyline,
+          route.slug as 'route-1' | 'route-2' | 'route-3' | 'route-4',
+        ).pin
+        if (gpsPin) {
+          const currentNext = nextSortOrder(voicePins, floorOrders).nextSortOrder
+          if (currentNext == null || gpsPin.sort_order > currentNext) {
+            const advanced = new Set(
+              voicePins
+                .filter((pin) => pin.sort_order < gpsPin.sort_order)
+                .map((pin) => pin.sort_order),
+            )
+            const orders = persistMostAdvancedPinProgress(advanced)
+            handledOrdersRef.current = orders
+            triggeredRef.current = pinIdsForOrders(voicePins, orders)
+            setNextPin(gpsPin)
+            setRouteComplete(false)
+            resumePendingRef.current = false
+            resumeBlockedRef.current = false
+            setResumeError(null)
+          }
+        }
       }
       return
     }
@@ -2255,17 +2285,16 @@ export function ExamDriveSession({
         ? { position: userPos, fix: rawPos, denied: false }
         : await enableGps(false)
     if (gpsResult.denied) return
-    const gpsAutoStartPin = !gpsAutoStartBlockedRef.current &&
-      gpsResult.position &&
-      previewSelectionMode === 'automatic'
-      ? resolveAutoStart(
-          voicePins,
-          new Set(initialRoutePinProgress),
-          gpsResult.position,
-          autoStartPolyline,
-          route.slug as 'route-1' | 'route-2' | 'route-3' | 'route-4',
-        ).pin
-      : null
+    const gpsAutoStartPin =
+      gpsResult.position && previewSelectionMode === 'automatic'
+        ? resolveAutoStart(
+            voicePins,
+            new Set(initialRoutePinProgress),
+            gpsResult.position,
+            autoStartPolyline,
+            route.slug as 'route-1' | 'route-2' | 'route-3' | 'route-4',
+          ).pin
+        : null
     const selectedSortOrder = startAtSortOrder ?? (
       previewSelectionMode === 'manual'
         ? previewPin?.sort_order
@@ -2809,7 +2838,34 @@ export function ExamDriveSession({
           : seedLiveDistanceMeters(nextOrder, saved.userPos)
       applySeededDistance(restoredDistance)
     }
-    setNextPin(sortedPins.find((pin) => !restoredIds.has(pin.id)) ?? null)
+    let next =
+      sortedPins.find((pin) => !restoredIds.has(pin.id)) ?? null
+    if (
+      (saved.startMode ?? 'manual') === 'automatic' &&
+      saved.userPos &&
+      FIELD_TEST_SLUGS.has(route.slug)
+    ) {
+      const floor = orders ?? new Set<number>()
+      const gpsPin = resolveAutoStart(
+        sortedPins,
+        floor,
+        saved.userPos,
+        autoStartPolyline,
+        route.slug as 'route-1' | 'route-2' | 'route-3' | 'route-4',
+      ).pin
+      if (gpsPin && (!next || gpsPin.sort_order > next.sort_order)) {
+        const advanced = new Set(
+          sortedPins
+            .filter((pin) => pin.sort_order < gpsPin.sort_order)
+            .map((pin) => pin.sort_order),
+        )
+        const snapped = persistMostAdvancedPinProgress(advanced)
+        handledOrdersRef.current = snapped
+        triggeredRef.current = pinIdsForOrders(sortedPins, snapped)
+        next = gpsPin
+      }
+    }
+    setNextPin(next)
     setRouteComplete(false)
     setLastSpoken(null)
     resumedSlugRef.current = route.slug
@@ -2837,8 +2893,8 @@ export function ExamDriveSession({
     setRemoteSavedState(null)
     setRemotePersistenceError(null)
     const handled = new Set<number>()
-    // After explicit restart, keep Auto on saved sequential progress until a fresh no-progress GPS pick is valid.
-    gpsAutoStartBlockedRef.current = true
+    // თავიდან დაწყება clears progress; next Auto start uses live GPS (never stuck behind).
+    gpsAutoStartBlockedRef.current = false
     automaticFinishStartedRef.current = false
     startAudioPendingRef.current = false
     setAudioPlaybackError(null)
