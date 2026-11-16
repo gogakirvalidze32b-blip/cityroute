@@ -85,8 +85,8 @@ const SECTION_A = {
   end: [41.923391, 45.461265] as LatLng,
 }
 const SECTION_B = {
-  start: [41.919246, 45.497309] as LatLng,
-  end: [41.918732, 45.492608] as LatLng,
+  start: [41.918722, 45.493076] as LatLng,
+  end: [41.918678, 45.491885] as LatLng,
 }
 
 describe('speed limit zones are bound to the real road lines', () => {
@@ -179,9 +179,9 @@ describe('each requested section gets its own limit along its whole length', () 
 
   it('the limit changes at the right place between consecutive sections', () => {
     const expected: Record<Slug, number[]> = {
-      'route-1': [50],
-      'route-2': [50, 40, 60, 50, 30, 50, 40, 60],
-      'route-3': [50, 50, 30, 50, 40, 40, 50],
+      'route-1': [50, 40, 50, 40, 50],
+      'route-2': [50, 40, 60, 50, 30, 50, 40, 50],
+      'route-3': [50, 30, 50, 40, 50, 40, 50],
       'route-4': [50, 40, 50, 30, 50, 30, 50, 40, 50],
     }
     for (const slug of SLUGS) {
@@ -202,7 +202,7 @@ describe('each requested section gets its own limit along its whole length', () 
     }
   })
 
-  it.each(['route-2', 'route-3', 'route-4'] as const)(
+  it.each(['route-1', 'route-2', 'route-3', 'route-4'] as const)(
     '%s keeps a posted limit along the whole exam road (no long unposted gaps)',
     (slug) => {
       const { road } = DATA[slug]
@@ -224,16 +224,16 @@ describe('each requested section gets its own limit along its whole length', () 
 describe('route progress disambiguates revisited streets', () => {
   it('continuous Route 4 posts 50 on the outbound bridge between 40 and 30', () => {
     const road = DATA['route-4'].road
-    const bridgeU = (69.51 + 85.29) / 2
+    const bridgeU = (68.71 + 83.47) / 2
     const bridge = roadPointAt(road, bridgeU)
     expect(resolveSpeedLimit('route-4', bridge, road, bridgeU)).toBe(50)
   })
 
   it('with outbound roadU the bridge is 50; with return roadU the shared stretch is 50', () => {
     const road = DATA['route-4'].road
-    const returnMid = (131.39 + 150.5) / 2
+    const returnMid = (133.53 + 150.5) / 2
     const point = roadPointAt(road, returnMid)
-    expect(resolveSpeedLimit('route-4', point, road, 77.72)).toBe(50)
+    expect(resolveSpeedLimit('route-4', point, road, 76.09)).toBe(50)
     expect(resolveSpeedLimit('route-4', point, road, returnMid)).toBe(50)
   })
 
@@ -304,8 +304,8 @@ describe('30 km/h applies in both directions', () => {
 
   it('ordinary (50/40/60) sections do not reach 25 m to the side', () => {
     for (const { slug, zone } of ALL_ZONES.filter(({ zone }) => zone.limitKmh !== 30)) {
-      // R3 yellow east leg folds on itself inside the same zone (roundabout / dual trace).
-      if (zone.id === 'r3-yellow') continue
+      // Folded dual traces (out-and-back) stay inside the same zone at 25 m sideways.
+      if (zone.id === 'r3-6' || zone.id === 'r1-4' || zone.id === 'r4-3') continue
       const mid = (zone.from + zone.to) / 2
       const side = sideOfRoad(slug, mid, 25)
       expect(resolveSpeedZone(slug, side, DATA[slug].road, mid)?.zone.id).not.toBe(zone.id)
@@ -316,12 +316,64 @@ describe('30 km/h applies in both directions', () => {
 describe('no limit is invented where it cannot be determined', () => {
   it('requested sections that could not be placed on the road line stay empty', () => {
     expect(SPEED_LIMIT_UNRESOLVED.length).toBeGreaterThan(0)
-    // R4 circle points 2 and 3, R1 start of #2, the 3 m "#1" section
+    // R4 circle points 2 and 3 stay unposted; R2 off-route probe stays empty.
     expect(resolveSpeedLimit('route-4', [41.917026, 45.47657], DATA['route-4'].road)).toBeNull()
     expect(resolveSpeedLimit('route-4', [41.919848, 45.470403], DATA['route-4'].road)).toBeNull()
-    expect(resolveSpeedLimit('route-1', [41.924913, 45.471554], DATA['route-1'].road)).toBeNull()
-    expect(resolveSpeedLimit('route-1', [41.925042, 45.472083], DATA['route-1'].road)).toBeNull()
     expect(resolveSpeedLimit('route-2', [41.925042, 45.472083], DATA['route-2'].road)).toBeNull()
+  })
+
+  it('R1 map zones post 50 on Vaziani approach and 40 on the west vertical', () => {
+    const { road } = DATA['route-1']
+    expect(resolveSpeedLimit('route-1', [41.924913, 45.471554], road, 25)).toBe(50)
+    expect(resolveSpeedLimit('route-1', [41.925042, 45.472083], road, 24)).toBe(50)
+    expect(resolveSpeedLimit('route-1', [41.924683, 45.460432], road, 57)).toBe(40)
+    expect(resolveSpeedLimit('route-1', [41.923445, 45.465893], road, 75)).toBe(50)
+    expect(resolveSpeedLimit('route-1', [41.917981, 45.481066], road, 142)).toBe(40)
+    expect(resolveSpeedLimit('route-1', [41.930563, 45.476051], road, 252)).toBe(50)
+  })
+
+  it('R3 map zones follow arrowed 30 / short 40 / Rustaveli 40 / return 50', () => {
+    const { road } = DATA['route-3']
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 50), road, 50)).toBe(50)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 106), road, 106)).toBe(30)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 120), road, 120)).toBe(50)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 130), road, 130)).toBe(40)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 160), road, 160)).toBe(50)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 210), road, 210)).toBe(40)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 330), road, 330)).toBe(50)
+  })
+
+  it('R4 map keeps Agmashenebeli return at 40 and N–S return at 50 with no gaps', () => {
+    const { road } = DATA['route-4']
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 12), road, 12)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 40), road, 40)).toBe(40)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 75), road, 75)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 84.61), road, 84.61)).toBe(30)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 90), road, 90)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 110), road, 110)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 127), road, 127)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 132.015), road, 132.015)).toBe(30)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 140), road, 140)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 170), road, 170)).toBe(40)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 200), road, 200)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 230), road, 230)).toBe(50)
+  })
+
+  it('R2 shows 50 before 5.0, 30 at 5.0, and 50 at 5.1', () => {
+    const r2 = DATA['route-2'].road
+    // 4.6 ≈ u 118.09 (still 50); 5.0 ≈ u 125.51 (30); 5.1 ≈ u 128.55 (50)
+    expect(resolveSpeedLimit('route-2', roadPointAt(r2, 118.09), r2, 118.09)).toBe(50)
+    expect(resolveSpeedLimit('route-2', roadPointAt(r2, 126.65), r2, 126.65)).toBe(30)
+    expect(resolveSpeedLimit('route-2', roadPointAt(r2, 129.35), r2, 129.35)).toBe(50)
+  })
+
+  it('R4 outbound and return post 30 on the same street stretch as R2 r2-5', () => {
+    const r2 = DATA['route-2'].road
+    const r4 = DATA['route-4'].road
+    const mid = roadPointAt(r2, (125.51 + 128.52) / 2)
+    expect(resolveSpeedLimit('route-2', mid, r2, 127)).toBe(30)
+    expect(resolveSpeedLimit('route-4', mid, r4, 84.61)).toBe(30)
+    expect(resolveSpeedLimit('route-4', mid, r4, 132.015)).toBe(30)
   })
 
   it('returns null for positions off the road, missing data and unknown routes', () => {
@@ -400,7 +452,7 @@ describe('driver-verified pin limits after GPS → roadU', () => {
     expect(resolveSpeedLimit('route-2', pos, road, u)).toBe(60)
   })
 
-  it('R2 bottom Kurdghelauri is entire 40; entire Mshvidobis after the turn is 60', () => {
+  it('R2 bottom+upper is 40 to the red bar; pink finish is 50', () => {
     const { road, pins } = DATA['route-2']
     const expectLimit = (n: number, limit: number) => {
       const pin = pins.find((p) => p.sort_order === n)!
@@ -412,8 +464,8 @@ describe('driver-verified pin limits after GPS → roadU', () => {
     expectLimit(14, 30)
     expectLimit(15, 50)
     expectLimit(16, 50)
-    for (const n of [17, 18, 19, 20]) expectLimit(n, 40)
-    for (const n of [21, 22, 23, 24, 26, 27, 28]) expectLimit(n, 60)
+    for (const n of [17, 18, 19, 20, 21, 22]) expectLimit(n, 40)
+    for (const n of [23, 24, 26, 27, 28]) expectLimit(n, 50)
   })
 
   it('R2 entire right pins #9-12 = 60 km/h', () => {
