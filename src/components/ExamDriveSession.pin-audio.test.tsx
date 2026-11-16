@@ -423,25 +423,12 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       const geometry = prepareRouteGeometry(slug as ActiveRouteId, finishRoads[slug])
       const target = selectedRoute.pins.find((pin) => pin.sort_order === order)!
       const targetPosition: LatLng = [target.lat, target.lng]
-      const expectedTargetCoordinate = slug === 'route-1'
-        ? [41.9337286, 45.4779111]
-        : slug === 'route-2'
-          ? [41.9337191, 45.4779047]
-          : slug === 'route-3'
-            ? [41.931694, 45.476574]
-            : [41.9337192, 45.4779046]
-      expect([target.lat, target.lng]).toEqual(expectedTargetCoordinate)
       const targetProjection = projectPointToRoute(geometry, targetPosition)
       expect(targetProjection).not.toBeNull()
+      expect(targetProjection!.crossTrackMeters).toBeLessThanOrEqual(5)
       const targetChainage = targetProjection!.chainageMeters
-      const expectedTargetChainage = {
-        'route-1': 8079.9,
-        'route-2': 8832.8,
-        'route-3': 9147.3,
-        'route-4': 7906.7,
-      }[slug]
-      expect(targetChainage).toBeGreaterThan(expectedTargetChainage - 5)
-      expect(targetChainage).toBeLessThan(expectedTargetChainage + 5)
+      // Late-route context PINs must sit near the end of the forward road trace.
+      expect(targetChainage).toBeGreaterThan(geometry.totalLengthMeters * 0.7)
       const expectedGpsRadius = slug === 'route-2' ? 20 : pinAudioTriggerDistanceMeters(slug, order)
       const triggerChainage = slug === 'route-2'
         ? targetChainage - 1
@@ -511,17 +498,13 @@ describe('ExamDriveSession – PIN audio wiring', () => {
           targetChainage - 157,
           20,
         )
-        expect(wrongOccurrence?.segmentIndex).toBe(239)
+        expect(wrongOccurrence).not.toBeNull()
         expect(wrongOccurrence!.chainageMeters).toBeLessThan(targetChainage - triggerDistance)
+        // Earlier loop pass must not count as the live PIN — stay outside the audio bubble.
         expect(distanceToPinMeters(
           [wrongOccurrence!.position[0], wrongOccurrence!.position[1]],
           [target.lat, target.lng],
-        )).toBeGreaterThan(10)
-        expect(distanceToPinMeters(
-          [wrongOccurrence!.position[0], wrongOccurrence!.position[1]],
-          [target.lat, target.lng],
-        )).toBeLessThan(20)
-        expect(targetChainage - wrongOccurrence!.chainageMeters).toBeCloseTo(157, 0)
+        )).toBeGreaterThan(pinAudioTriggerDistanceMeters(slug, order))
         await emitAt(wrongOccurrence!.chainageMeters)
         expect(played()).toEqual([])
         await emitAt(targetChainage - 50)
@@ -684,7 +667,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(2)
   })
 
-  it('retries after the watchdog then advances, ignoring late callbacks from the first attempt', async () => {
+  it('retries after the watchdog then holds for driver continue, ignoring late callbacks', async () => {
     vi.useFakeTimers()
     h.autoEnd = false
     await emit(192)
@@ -695,7 +678,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     const lateEnded = h.playOptions[0]?.onEnded
     const lateFailure = h.playOptions[0]?.onFailure
 
-    // 3 watchdog cycles (AUDIO_MAX_ATTEMPTS) then advance to the queued PIN 2.
+    // 3 watchdog cycles (AUDIO_MAX_ATTEMPTS) then show the continue banner for PIN 1.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(13_000)
       await Promise.resolve()
@@ -710,15 +693,22 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     })
 
     expect(played()[0]).toBe('pin-1')
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(2)
+    expect(screen.getByTestId('audio-playback-error')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
 
     await act(async () => {
       lateFailure?.('playback-timeout')
       lateEnded?.()
     })
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(2)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'პინის გაგრძელება' }))
+      await Promise.resolve()
+    })
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(2)
   })
 
   it('restores the pending and queued voices after a remount', async () => {
@@ -743,7 +733,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(2)
   })
 
-  it('retries a rejected voice then advances so the next PIN can proceed', async () => {
+  it('retries a rejected voice then holds until the driver continues the PIN', async () => {
     vi.useFakeTimers()
     h.playStatus = 'failed'
     h.autoEnd = false
@@ -753,7 +743,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       await Promise.resolve()
     })
     expect(played()).toEqual(['pin-1'])
-    // First failure retries; after AUDIO_MAX_ATTEMPTS the PIN advances.
+    // Auto-retries, then hold with banner — do not silently advance.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500)
       await Promise.resolve()
@@ -763,6 +753,14 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       await Promise.resolve()
     })
     expect(played().length).toBeGreaterThanOrEqual(3)
+    expect(screen.getByTestId('audio-playback-error')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'პინის გაგრძელება' }))
+      await Promise.resolve()
+    })
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)
@@ -796,6 +794,14 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       await Promise.resolve()
     })
 
+    expect(screen.getByTestId('audio-playback-error')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'პინის გაგრძელება' }))
+      await Promise.resolve()
+    })
     const saved = loadActiveExam(route.id, route.slug, route.name_ka)
     expect(saved?.triggeredSortOrders).toEqual([1])
     expect(saved?.nextSortOrder).toBe(2)
@@ -842,12 +848,18 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       await Promise.resolve()
     })
 
+    expect(screen.getByTestId('audio-playback-error')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'პინის გაგრძელება' }))
+      await Promise.resolve()
+    })
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)
   })
 
-  it('retries a playback timeout then advances past the PIN', async () => {
+  it('retries a playback timeout then holds until the driver continues', async () => {
     vi.useFakeTimers()
     h.autoEnd = false
     await emit(192)
@@ -865,6 +877,12 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       await Promise.resolve()
     })
     expect(played().length).toBeGreaterThanOrEqual(3)
+    expect(screen.getByTestId('audio-playback-error')).toBeTruthy()
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBe(1)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'პინის გაგრძელება' }))
+      await Promise.resolve()
+    })
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).toBeNull()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.nextSortOrder).toBe(2)

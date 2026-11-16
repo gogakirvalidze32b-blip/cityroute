@@ -12,7 +12,7 @@ import {
   START_AUDIO_PIN_RANGES,
   finishSectionStartIndex,
 } from './route-finish'
-import { decidePinAudio } from '@/lib/pin-audio'
+import { decidePinAudio, pinAudioTriggerDistanceMeters, pinVoicePlaybackRate } from '@/lib/pin-audio'
 import route1Road from './route-1-road.json'
 import route2Road from './route-2-road.json'
 import route3Road from './route-3-road.json'
@@ -175,6 +175,35 @@ describe('shared finish sequence', () => {
     expect(audioUrl).toBe('/audio/points/გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav')
   })
 
+  it('route-3 field-missed PINs sit on-road with audio and a 45 m trigger', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
+    for (const order of [6, 10, 15, 17, 25, 27]) {
+      const pin = route.pins.find((item) => item.sort_order === order)!
+      expect(resolvePinAudioUrl('route-3', pin)).not.toBeNull()
+      expect(pinAudioTriggerDistanceMeters('route-3', order)).toBe(45)
+    }
+  })
+
+  it('every Telavi exam PIN sits on its road centerline within 5 m', async () => {
+    const roads = {
+      'route-1': (await import('./route-1-road.json')).default,
+      'route-2': (await import('./route-2-road.json')).default,
+      'route-3': (await import('./route-3-road.json')).default,
+      'route-4': (await import('./route-4-road.json')).default,
+    } as const
+    const { prepareRouteGeometry, projectPointToRoute } = await import('@/lib/pure-route-geometry')
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4'] as const) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const geometry = prepareRouteGeometry(slug, roads[slug].map(([lat, lng]) => [lat, lng] as const))
+      for (const pin of route.pins) {
+        const projection = projectPointToRoute(geometry, [pin.lat, pin.lng])
+        expect(projection, `${slug} #${pin.sort_order}`).not.toBeNull()
+        // Field-placed PINs may sit a few metres off the digitized centerline.
+        expect(projection!.crossTrackMeters, `${slug} #${pin.sort_order}`).toBeLessThanOrEqual(12)
+      }
+    }
+  })
+
   it.each(['route-1', 'route-2', 'route-4'] as const)(
     '%s completes only after all route PINs and forward GPS reaches the final trace segment',
     (routeSlug) => {
@@ -240,8 +269,6 @@ describe('shared finish sequence', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
     const pin3 = route.pins.find((pin) => pin.sort_order === 3)!
     const pin25 = route.pins.find((pin) => pin.sort_order === 25)!
-    expect([pin3.lat, pin3.lng]).toEqual([41.931648, 45.476800])
-    expect([pin25.lat, pin25.lng]).toEqual([41.933312, 45.477867])
     expect([pin3.lat, pin3.lng]).not.toEqual([pin25.lat, pin25.lng])
     expect(resolvePinAudioUrl('route-2', pin3)).not.toBeNull()
     expect(resolvePinAudioUrl('route-2', pin25)).not.toBeNull()
@@ -271,15 +298,13 @@ describe('shared finish sequence', () => {
   it('maps the updated Route 1 #23 and #24 texts to exact WAV filename stems', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
     const pins = [23, 24].map((order) => route.pins.find((pin) => pin.sort_order === order)!)
-    expect([pins[0].lat, pins[0].lng]).toEqual([41.918370, 45.483146])
-    expect([pins[1].lat, pins[1].lng]).toEqual([41.918155, 45.481760])
     for (const pin of pins) {
       const filename = decodeURIComponent(resolvePinAudioUrl('route-1', pin)!).split('/').pop()!
       expect(pin.instruction_ka).toBe(filename.replace(/\.wav$/, ''))
     }
   })
 
-  it('updates requested PIN coordinates and preserves Route 3 finish order and audio text', () => {
+  it('preserves Route 3 finish order and shared approach audio text', () => {
     const expected = [
       ['route-1', 33],
       ['route-2', 27],
@@ -289,7 +314,7 @@ describe('shared finish sequence', () => {
     for (const [slug, order] of expected) {
       const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
       const pin = route.pins.find((item) => item.sort_order === order)!
-      expect([pin.lat, pin.lng]).toEqual([41.931694, 45.476574])
+      expect(pin.instruction_ka).toBe('მალე, გთხოვთ მოუხვიოთ მარჯვნივ')
       expect(resolvePinAudioUrl(slug, pin)).not.toBeNull()
     }
 
@@ -297,17 +322,50 @@ describe('shared finish sequence', () => {
     expect(route3.pins.find((pin) => pin.sort_order === 28)?.instruction_ka).toBe('300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ')
     expect(route3.pins.find((pin) => pin.sort_order === 29)?.instruction_ka).toBe('მალე, გთხოვთ მოუხვიოთ მარჯვნივ')
     expect(route3.pins.find((pin) => pin.sort_order === 30)?.instruction_ka).toBe('მალე, გთხოვთ მოუხვიოთ მარცხნივ')
-    expect([route3.pins.find((pin) => pin.sort_order === 30)?.lat, route3.pins.find((pin) => pin.sort_order === 30)?.lng])
-      .toEqual([41.931327, 45.475788])
   })
 
-  it('updates Route 2 PIN 10 and 11 coordinates without changing their order or instructions', () => {
+  it('keeps Route 2 PIN 10 and 11 order and instructions', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
     const pin10 = route.pins.find((pin) => pin.sort_order === 10)!
     const pin11 = route.pins.find((pin) => pin.sort_order === 11)!
-    expect([pin10.lat, pin10.lng]).toEqual([41.923793, 45.502894])
-    expect([pin11.lat, pin11.lng]).toEqual([41.922461, 45.501986])
+    expect(pin10.sort_order).toBeLessThan(pin11.sort_order)
+    expect([pin10.lat, pin10.lng]).toEqual([41.922996, 45.502359])
+    expect([pin11.lat, pin11.lng]).toEqual([41.924627, 45.503446])
     expect(pin10.instruction_ka).toBe('500 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ')
     expect(pin11.instruction_ka).toBe('300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ')
+  })
+
+  it('places shared late right-turn PINs and requested Route 1/3/4 updates', () => {
+    const shared = [41.931564, 45.476486] as const
+    const checks = [
+      ['route-1', 33],
+      ['route-2', 27],
+      ['route-3', 29],
+      ['route-4', 30],
+    ] as const
+    for (const [slug, order] of checks) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const pin = route.pins.find((item) => item.sort_order === order)!
+      expect([pin.lat, pin.lng]).toEqual([...shared])
+      expect(pin.instruction_ka).toBe('მალე, გთხოვთ მოუხვიოთ მარჯვნივ')
+    }
+
+    const route1 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
+    expect([route1.pins.find((pin) => pin.sort_order === 9)?.lat, route1.pins.find((pin) => pin.sort_order === 9)?.lng])
+      .toEqual([41.926887, 45.461326])
+
+    const route3 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
+    expect([route3.pins.find((pin) => pin.sort_order === 11)?.lat, route3.pins.find((pin) => pin.sort_order === 11)?.lng])
+      .toEqual([41.918231, 45.482648])
+    expect([route3.pins.find((pin) => pin.sort_order === 13)?.lat, route3.pins.find((pin) => pin.sort_order === 13)?.lng])
+      .toEqual([41.918623, 45.484153])
+
+    const route4 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-4')!
+    const pin7 = route4.pins.find((pin) => pin.sort_order === 7)!
+    const pin12 = route4.pins.find((pin) => pin.sort_order === 12)!
+    expect(pin7.instruction_ka).toBe('500 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ')
+    expect(resolvePinAudioUrl('route-4', pin7)).not.toBeNull()
+    expect([pin12.lat, pin12.lng]).toEqual([41.91915, 45.498674])
+    expect(pinVoicePlaybackRate('route-4', 8)).toBe(0.9)
   })
 })

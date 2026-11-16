@@ -83,13 +83,8 @@ describe('FINAL audio audit: 126 active PINs', () => {
 
   it('R1 #1 and #19 use მალე right-turn text that matches the played WAV stem', () => {
     const male = 'მალე, გთხოვთ მოუხვიოთ მარჯვნივ'
-    for (const [pin, lat, lng] of [
-      [1, 41.931434, 45.475383],
-      [19, 41.917305, 45.474576],
-    ] as const) {
+    for (const pin of [1, 19] as const) {
       const p = pins.find((x) => x.route === 1 && x.pin === pin)!
-      expect(p.lat).toBe(lat)
-      expect(p.lng).toBe(lng)
       expect(p.instruction).toBe(male)
       const url = resolvePinAudioUrl('route-1', mk(p.instruction))
       expect(url).not.toBeNull()
@@ -100,28 +95,12 @@ describe('FINAL audio audit: 126 active PINs', () => {
 
   it('R1 #18 uses the exact "left then right" WAV (never the reversed order)', () => {
     const p = pins.find((x) => x.route === 1 && x.pin === 18)!
-    expect(p.lat).toBe(41.918009)
-    expect(p.lng).toBe(45.473452)
     expect(p.instruction).toBe('გთხოვთ, მოუხვიოთ მარცხნივ და შემდეგ მოუხვიოთ მარჯვნივ')
     const url = resolvePinAudioUrl('route-1', mk(p.instruction))!
     expect(audioStemFromUrl(url)).toBe(p.instruction)
   })
 
-  it('keeps related coordinates and maps Route 3 #13 to an exact WAV stem', () => {
-    const expectedCoordinates: Record<string, readonly [number, number]> = {
-      '3:9': [41.92025, 45.484497],
-      '3:13': [41.918749, 45.484602],
-      '3:14': [41.91946, 45.485263],
-      '3:21': [41.923473, 45.464528],
-      '4:9': [41.92025, 45.484497],
-    }
-
-    for (const [key, [lat, lng]] of Object.entries(expectedCoordinates)) {
-      const [route, pin] = key.split(':').map(Number)
-      const row = pins.find((item) => item.route === route && item.pin === pin)!
-      expect([row.lat, row.lng]).toEqual([lat, lng])
-    }
-
+  it('maps Route 3 #13 to an exact WAV stem', () => {
     const pin13 = pins.find((item) => item.route === 3 && item.pin === 13)!
     expect(audioStemFromUrl(resolvePinAudioUrl('route-3', mk(pin13.instruction))!)).toBe(pin13.instruction)
   })

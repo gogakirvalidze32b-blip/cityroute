@@ -1293,8 +1293,82 @@ button:disabled {
   min-width: 0;
 }
 
+/* Audio failure: sticky top banner so the driver can retry/continue without restarting. */
+.exam-audio-hold-banner {
+  position: relative;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  background: #fff3cd;
+  border-bottom: 2px solid #e0a800;
+  color: #5c4500;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.exam-session--active > .exam-audio-hold-banner {
+  grid-row: 1;
+  order: -1;
+}
+
+.exam-audio-hold-banner__text {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1 1 12rem;
+  font-size: 0.92rem;
+  line-height: 1.25;
+}
+
+.exam-audio-hold-banner__text strong {
+  font-size: 1rem;
+}
+
+.exam-audio-hold-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+.exam-audio-hold-banner__retry,
+.exam-audio-hold-banner__continue {
+  min-height: 2.4rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.exam-audio-hold-banner__continue {
+  background: #1a7f37;
+  border-color: #1a7f37;
+  color: #fff;
+}
+
 .exam-session--active > .exam-topbar {
   grid-row: 1;
+}
+
+.exam-session--active:has(> .exam-audio-hold-banner) {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.exam-session--active:has(> .exam-audio-hold-banner) > .exam-topbar {
+  grid-row: 2;
+}
+
+.exam-session--active:has(> .exam-audio-hold-banner) > [data-testid='route-complete'] {
+  grid-row: 3;
+}
+
+.exam-session--active:has(> .exam-audio-hold-banner) > .exam-drive-main {
+  grid-row: 4;
 }
 
 .exam-session--active > [data-testid='route-complete'] {

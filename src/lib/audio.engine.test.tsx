@@ -227,6 +227,13 @@ describe('AudioEngine', () => {
     expect(f.created[0].playbackRate).toBe(1)
   })
 
+  it('playDetailed accepts an optional per-clip playbackRate override', async () => {
+    const f = installFakes()
+    const engine = await freshEngine()
+    expect(await engine.playDetailed('/audio/a.wav', 'p1', 't', { playbackRate: 0.9 })).toBe('played')
+    expect(f.created[0].playbackRate).toBe(0.9)
+  })
+
   it('duplicate prevention: the same PIN cannot play twice while its voice is active', async () => {
     const f = installFakes()
     const engine = await freshEngine()

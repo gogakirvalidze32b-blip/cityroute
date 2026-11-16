@@ -52,6 +52,11 @@ export type PlayOptions = {
   onEnded?: () => void
   /** Called once if a started playback later fails. */
   onFailure?: (reason: PlaybackFailureReason) => void
+  /**
+   * Optional tempo for this clip only. Default 1.0 (recorded speed).
+   * Used for a few re-exported WAVs that sound too fast at 1.0x.
+   */
+  playbackRate?: number
 }
 
 export type AudioDiagnostic = {
@@ -118,10 +123,10 @@ export class AudioEngine {
     this.cache.forEach((a) => this.applyRate(a))
   }
 
-  private applyRate(audio: HTMLAudioElement) {
+  private applyRate(audio: HTMLAudioElement, rate = 1) {
     audio.volume = this.volume
-    // Exam voices must always play at the original recorded tempo (1.0x).
-    audio.playbackRate = 1
+    // Default exam voices stay at recorded tempo (1.0x); rare clips may pass a slower rate.
+    audio.playbackRate = rate
 
     switch (this.pitch) {
       case 'low':
@@ -455,7 +460,13 @@ export class AudioEngine {
 
     try {
       audio.currentTime = 0
-      this.applyRate(audio)
+      const rate =
+        typeof options.playbackRate === 'number' &&
+        Number.isFinite(options.playbackRate) &&
+        options.playbackRate > 0
+          ? options.playbackRate
+          : 1
+      this.applyRate(audio, rate)
       const gainApplied =
         this.pitch === 'mid' ? await this.ensureWarmChain(audio) : await this.ensureLoudChain(audio)
       if (!isCurrent()) return 'cancelled'
@@ -487,8 +498,8 @@ export class AudioEngine {
         return 'failed'
       }
       playback.rejectStart = null
-      if (audio.playbackRate !== 1) {
-        audio.playbackRate = 1
+      if (audio.playbackRate !== rate) {
+        audio.playbackRate = rate
       }
       playback.started = true
       return 'played'

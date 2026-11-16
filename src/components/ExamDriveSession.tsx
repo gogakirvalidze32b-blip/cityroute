@@ -90,6 +90,7 @@ import {
   prepareRouteGeometry,
   projectOrderedPointsToRoute,
   projectPointToRoute,
+  projectPointToRouteNearChainage,
   type ActiveRouteId,
   type RouteMatchState,
 } from '@/lib/pure-route-geometry'
@@ -108,6 +109,7 @@ import {
   identifyRoundaboutGateTarget,
   pinAudioApproachWindowMeters,
   pinAudioTriggerDistanceMeters,
+  pinVoicePlaybackRate,
   updateRoundaboutReturnGate,
   isRoundaboutReturnGateOpened,
   type RoundaboutReturnGateState,
@@ -444,6 +446,9 @@ export function ExamDriveSession({
     message: string
   } | null>(null)
   const [audioRetryToken, setAudioRetryToken] = useState(0)
+  /** True while the top banner waits for retry / continue after audio failure. */
+  const audioWaitingForUserRef = useRef(false)
+  const continueFailedAudioPinRef = useRef<(() => void) | null>(null)
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [pendingPinSortOrder, setPendingPinSortOrderState] = useState<number | null>(initialAudioQueue.pending)
   /** After mid-route დასრულება, summary offers გაგრძელება using kept localStorage progress. */
@@ -715,7 +720,29 @@ export function ExamDriveSession({
     const pin = voicePins.find((row) => row.sort_order === startSortOrder)
     const pinPos: LatLng | null =
       pin && Number.isFinite(pin.lat) && Number.isFinite(pin.lng) ? [pin.lat, pin.lng] : null
-    const position = gpsPos ?? currentPositionRef.current ?? pinPos
+    // Prefer the caller's GPS (live start) over a stale pin fallback.
+    const position =
+      (gpsPos !== undefined ? gpsPos : currentPositionRef.current) ?? pinPos
+    if (!position) return 0
+    // Loop routes share start/end at the agency: nearest-on-line alone can seed ~full
+    // route length. Anchor to the start PIN's chainage so a new session begins correctly.
+    if (routeGeometry) {
+      const pinProjection = pinPos ? projectPointToRoute(routeGeometry, pinPos) : null
+      const expectedChainage = pinProjection?.chainageMeters ?? 0
+      const anchored = projectPointToRouteNearChainage(
+        routeGeometry,
+        position,
+        expectedChainage,
+        150,
+      )
+      if (anchored && Number.isFinite(anchored.chainageMeters)) {
+        return Math.max(0, anchored.chainageMeters)
+      }
+      const nearest = projectPointToRoute(routeGeometry, position)
+      if (nearest && Number.isFinite(nearest.chainageMeters)) {
+        return Math.max(0, nearest.chainageMeters)
+      }
+    }
     return seedAlongRouteMeters(progressLengthLine, position)
   }
 
@@ -1652,10 +1679,15 @@ export function ExamDriveSession({
         }
 
         const movementMeters = prevRaw ? distanceToPinMeters(prevRaw, raw) : 0
-        // Ignore pure jitter. Do NOT also require speed>0.5 — Android Chrome / tablet /
-        // car monitors often report speed=0 on otherwise valid small jumps, which used to
-        // freeze PIN confirmation near the arrow.
-        if (movementMeters < 1) return
+        const pendingTriggerM = pending
+          ? pinAudioTriggerDistanceMeters(route.slug, pending.sort_order)
+          : 18
+        const nearPendingPin = pending
+          ? distanceToPinMeters(raw, [pending.lat, pending.lng]) <= pendingTriggerM
+          : false
+        // Ignore pure jitter — but never freeze on PIN 1 / a close pending PIN when the
+        // car is almost stationary (tablet GPS often reports <1 m steps at the agency).
+        if (movementMeters < 1 && !nearPendingPin) return
 
         if (!target) {
           const handledOrders = handledOrdersRef.current
@@ -1700,6 +1732,8 @@ export function ExamDriveSession({
           return
         }
 
+        const targetTriggerM = pinAudioTriggerDistanceMeters(route.slug, target.sort_order)
+        const gpsToTargetM = distanceToPinMeters(raw, [target.lat, target.lng])
         const completion = evaluatePinRouteCompletion(
           routeGeometry,
           [target.lat, target.lng],
@@ -1714,22 +1748,38 @@ export function ExamDriveSession({
             expectedPinChainageMeters,
             requireExpectedPinChainage: usesTargetOccurrenceContext,
             gpsPosition: raw,
-            maxGpsToPinMeters: Math.max(
-              25,
-              pinAudioTriggerDistanceMeters(route.slug, target.sort_order),
-            ),
+            maxGpsToPinMeters: Math.max(25, targetTriggerM),
           },
         )
+
+        // When route-geometry matching fails (loop ambiguity / off-center pin), still
+        // fire if the live GPS is inside the PIN's audio bubble. Sequential pending
+        // order is unchanged — only the next PIN can use this fallback.
+        const proximityReady =
+          gpsToTargetM <= targetTriggerM &&
+          audioHeadingOk(
+            headingMatches(
+              raw,
+              [target.lat, target.lng],
+              pos.heading,
+              usesRoute2Pin26Context || usesRouteContextTarget
+                ? 45
+                : AUDIO_HEADING_TOLERANCE_DEG,
+            ),
+            pos.speed,
+          )
 
         devLog('[PIN GEOMETRY]',
           route.slug.toUpperCase(),
           '| Expected:', `#${nextPinIndex + 1} (PIN ${target.sort_order})`,
           '| Status:', completion.status,
           '| Pin cross-track:', completion.pinProjection ? Math.round(completion.pinProjection.crossTrackMeters) + 'm' : '—',
+          proximityReady && !completion.ready ? '| Proximity fallback' : '',
         )
 
-        if (!completion.ready) return
+        if (!completion.ready && !proximityReady) return
         if (
+          completion.ready &&
           completion.pinProjection &&
           completion.fixProjection &&
           completion.pinProjection.chainageMeters >= completion.fixProjection.chainageMeters &&
@@ -1822,6 +1872,8 @@ export function ExamDriveSession({
         audioQueueWatchdogRef.current = null
       }
       audioAttemptInFlightRef.current = false
+      audioWaitingForUserRef.current = false
+      continueFailedAudioPinRef.current = null
       const currentPin = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order) ?? target
       markPinHandled(currentPin)
       pinApproachRef.current.delete(currentPin.id)
@@ -1832,16 +1884,36 @@ export function ExamDriveSession({
       if (pendingSave) void pendingSave.catch(() => undefined)
     }
 
+    /** After auto-retries fail: keep this PIN pending and ask the driver to retry or continue. */
+    const holdForUserContinue = (message: string) => {
+      if (!isCurrent()) return
+      if (audioQueueWatchdogRef.current !== null) {
+        clearTimeout(audioQueueWatchdogRef.current)
+        audioQueueWatchdogRef.current = null
+      }
+      if (audioRetryTimerRef.current !== null) {
+        clearTimeout(audioRetryTimerRef.current)
+        audioRetryTimerRef.current = null
+      }
+      audioAttemptInFlightRef.current = false
+      audioWaitingForUserRef.current = true
+      continueFailedAudioPinRef.current = () => {
+        if (!isCurrent()) return
+        completePin()
+      }
+      setAudioPlaybackError({ sortOrder: target.sort_order, message })
+    }
+
     const attemptPlayback = async () => {
-      if (!isCurrent() || audioAttemptInFlightRef.current) return
+      if (!isCurrent() || audioAttemptInFlightRef.current || audioWaitingForUserRef.current) return
       if (startAudioPendingRef.current || audioEngine.isBusy()) {
         busyRetries += 1
         if (busyRetries > AUDIO_BUSY_MAX_RETRIES) {
           console.warn(
-            '[AUDIO] PIN voice blocked by busy engine; advancing past PIN',
+            '[AUDIO] PIN voice blocked by busy engine; waiting for driver continue',
             target.sort_order,
           )
-          completePin()
+          holdForUserContinue('ხმა ვერ გაეშვა (დაკავებულია). სცადეთ ხელახლა ან გააგრძელეთ.')
           return
         }
         scheduleRetry()
@@ -1853,8 +1925,7 @@ export function ExamDriveSession({
       const attemptId = ++audioPlaybackAttemptRef.current
       const isAttemptCurrent = () =>
         attemptId === audioPlaybackAttemptRef.current && isCurrent()
-      // Prefer replaying a failed voice a few times. Only after AUDIO_MAX_ATTEMPTS
-      // do we advance so the arrow never stays stuck on a dead file.
+      // Auto-retry a few times; then hold for the driver so progress is not lost silently.
       const failed = (reason: PlaybackFailureReason | null = null) => {
         if (settled || !isAttemptCurrent()) return
         settled = true
@@ -1880,20 +1951,20 @@ export function ExamDriveSession({
             return
           }
           console.warn(
-            '[AUDIO] PIN voice failed after retries; advancing past PIN',
+            '[AUDIO] PIN voice failed after retries; waiting for driver continue',
             target.sort_order,
             reason,
           )
-          completePin()
+          holdForUserContinue('ხმა ვერ გაეშვა. სცადეთ ხელახლა ან გააგრძელეთ შემდეგ პინზე.')
           return
         }
         busyRetries += 1
         if (busyRetries > AUDIO_BUSY_MAX_RETRIES) {
           console.warn(
-            '[AUDIO] PIN voice busy/cancelled too long; advancing past PIN',
+            '[AUDIO] PIN voice busy/cancelled too long; waiting for driver continue',
             target.sort_order,
           )
-          completePin()
+          holdForUserContinue('ხმა ვერ გაეშვა (დაკავებულია). სცადეთ ხელახლა ან გააგრძელეთ.')
           return
         }
         audioPlaybackAttemptRef.current += 1
@@ -1948,13 +2019,17 @@ export function ExamDriveSession({
             scheduleRetry(Math.min(AUDIO_RETRY_BASE_MS * playFailures, AUDIO_RETRY_MAX_MS))
             return
           }
-          completePin()
+          holdForUserContinue('ხმა ვერ გაეშვა (timeout). სცადეთ ხელახლა ან გააგრძელეთ.')
         }, AUDIO_QUEUE_WATCHDOG_MS)
         const status = await audioEngine.playDetailed(
           currentTarget.audio_url,
           currentTarget.id,
           currentTarget.instruction_ka,
-          { onEnded: completed, onFailure: failed },
+          {
+            onEnded: completed,
+            onFailure: failed,
+            playbackRate: pinVoicePlaybackRate(route.slug, currentTarget.sort_order),
+          },
         )
         if (status === 'failed') failed('play-rejected')
         else if (status === 'busy' || status === 'cancelled') failed(null)
@@ -1968,16 +2043,16 @@ export function ExamDriveSession({
           busyRetries += 1
           if (busyRetries > AUDIO_BUSY_MAX_RETRIES) {
             console.warn(
-              '[AUDIO] PIN voice duplicate too long; advancing past PIN',
+              '[AUDIO] PIN voice duplicate too long; waiting for driver continue',
               target.sort_order,
             )
-            completePin()
+            holdForUserContinue('ხმა ვერ გაეშვა (დაკავებულია). სცადეთ ხელახლა ან გააგრძელეთ.')
             return
           }
           scheduleRetry()
         }
       } catch (error) {
-        console.warn('[AUDIO] PIN playback threw; retrying/advancing', target.sort_order, error)
+        console.warn('[AUDIO] PIN playback threw; retrying/holding', target.sort_order, error)
         failed('play-rejected')
       }
     }
@@ -1986,8 +2061,14 @@ export function ExamDriveSession({
       clearTimeout(audioRetryTimerRef.current)
       audioRetryTimerRef.current = null
     }
+    // Fresh effect run (including explicit retry tap) clears a previous hold.
+    audioWaitingForUserRef.current = false
     const resumePendingAudio = () => {
-      if (document.visibilityState !== 'visible' || audioAttemptInFlightRef.current) return
+      if (
+        document.visibilityState !== 'visible' ||
+        audioAttemptInFlightRef.current ||
+        audioWaitingForUserRef.current
+      ) return
       if (audioRetryTimerRef.current !== null) {
         clearTimeout(audioRetryTimerRef.current)
         audioRetryTimerRef.current = null
@@ -2081,6 +2162,8 @@ export function ExamDriveSession({
 
     audioSessionGenerationRef.current++
     setAudioPlaybackError(null)
+    audioWaitingForUserRef.current = false
+    continueFailedAudioPinRef.current = null
     const sessionGeneration = audioSessionGenerationRef.current
     audioEngine.stopAll()
     if (startAudioRetryTimerRef.current !== null) {
@@ -2141,7 +2224,7 @@ export function ExamDriveSession({
     resumePendingRef.current = false
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
-    applySeededDistance(seedLiveDistanceMeters(startSortOrder))
+    applySeededDistance(seedLiveDistanceMeters(startSortOrder, currentPositionRef.current))
     setLastSpoken(null)
     
     const nextOrder = resolution?.status === 'resume'
@@ -2688,7 +2771,8 @@ export function ExamDriveSession({
       heading,
       speedKmh,
       elapsedMs: pausedElapsedMs,
-      distanceMeters: distanceMetersRef.current,
+      // Session KM resets on finish; continue/start reseed from the live place.
+      distanceMeters: 0,
       triggeredPins: Array.from(triggeredRef.current),
       startMode: sessionStartModeRef.current,
       pendingPinSortOrder: pendingPinSortOrderRef.current,
@@ -2726,6 +2810,9 @@ export function ExamDriveSession({
     setSummaryFinalized(false)
     setExamSummary(summary)
     setPhase('summary')
+    routeOdometerRef.current.reset()
+    distanceMetersRef.current = 0
+    setDistanceMeters(0)
     releaseWake.current?.()
     audioEngine.stopAll()
     sessionStartRef.current = 0
@@ -3033,6 +3120,43 @@ export function ExamDriveSession({
     <div
       className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}${summaryOpen ? ' exam-session--summary' : ''}${active && debugPanelEnabled ? ' exam-session--sl-debug' : ''}`}
     >
+      {active && audioPlaybackError && (
+        <div className="exam-audio-hold-banner" role="alert" data-testid="audio-playback-error">
+          <p className="exam-audio-hold-banner__text">
+            <strong>PIN {audioPlaybackError.sortOrder}</strong>
+            <span>{audioPlaybackError.message}</span>
+          </p>
+          <div className="exam-audio-hold-banner__actions">
+            <button
+              type="button"
+              className="nav-start-btn exam-audio-hold-banner__retry"
+              onClick={() => {
+                audioEngine.unlock()
+                audioAttemptInFlightRef.current = false
+                audioWaitingForUserRef.current = false
+                setAudioPlaybackError(null)
+                setAudioRetryToken((token) => token + 1)
+              }}
+            >
+              აუდიოს ხელახლა ცდა
+            </button>
+            <button
+              type="button"
+              className="nav-start-btn exam-audio-hold-banner__continue"
+              onClick={() => {
+                audioEngine.unlock()
+                const continuePin = continueFailedAudioPinRef.current
+                continueFailedAudioPinRef.current = null
+                audioWaitingForUserRef.current = false
+                setAudioPlaybackError(null)
+                continuePin?.()
+              }}
+            >
+              პინის გაგრძელება
+            </button>
+          </div>
+        </div>
+      )}
       {onRouteMapScreen && (
         <>
           {active && (
@@ -3066,25 +3190,6 @@ export function ExamDriveSession({
                       </p>
                     )}
                     {!pinsActive && <p className="exam-voice-muted">ამ მარშრუტზე GPS წერტილები არ არის</p>}
-                  </div>
-                )}
-
-                {audioPlaybackError && (
-                  <div role="alert" data-testid="audio-playback-error">
-                    <p className="error-text">
-                      PIN {audioPlaybackError.sortOrder}: {audioPlaybackError.message}
-                    </p>
-                    <button
-                      type="button"
-                      className="nav-start-btn"
-                      onClick={() => {
-                        audioAttemptInFlightRef.current = false
-                        setAudioPlaybackError(null)
-                        setAudioRetryToken((token) => token + 1)
-                      }}
-                    >
-                      აუდიოს ხელახლა ცდა
-                    </button>
                   </div>
                 )}
 

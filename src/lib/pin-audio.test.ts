@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import {
   AUDIO_HEADING_TOLERANCE_DEG,
+  AUDIO_RELIABLE_TRIGGER_DISTANCE_M,
   AUDIO_SPECIAL_TRIGGER_DISTANCE_M,
   AUDIO_TRIGGER_DISTANCE_M,
   audioHeadingOk,
   decidePinAudio,
   pinAudioApproachWindowMeters,
   pinAudioTriggerDistanceMeters,
+  pinVoicePlaybackRate,
+  ROUTE_3_RELIABLE_SPEAK_ORDERS,
   recordSegmentApproach,
   segmentApproachMeters,
   AUDIO_SEGMENT_MAX_GAP_MS,
@@ -189,7 +192,9 @@ describe('final 300 m right-turn PIN audio', () => {
         contextTarget ? AUDIO_SPECIAL_TRIGGER_DISTANCE_M : AUDIO_TRIGGER_DISTANCE_M,
       )
       expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder - 1)).toBe(
-        AUDIO_TRIGGER_DISTANCE_M,
+        scenario.route === 'route-3'
+          ? AUDIO_RELIABLE_TRIGGER_DISTANCE_M
+          : AUDIO_TRIGGER_DISTANCE_M,
       )
       expect(ROUNDABOUT_TARGETS.some(
         (target) => target.route === scenario.route && target.sortOrder === scenario.sortOrder,
@@ -203,6 +208,22 @@ describe('final 300 m right-turn PIN audio', () => {
     expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 25)).toBe(AUDIO_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 27)).toBe(AUDIO_TRIGGER_DISTANCE_M)
+  })
+
+  it('slows Route 4 PIN 8 voice to 0.9x and keeps other voices at 1.0x', () => {
+    expect(pinVoicePlaybackRate('route-4', 8)).toBe(0.9)
+    expect(pinVoicePlaybackRate('route-4', 7)).toBe(1)
+    expect(pinVoicePlaybackRate('route-1', 8)).toBe(1)
+  })
+
+  it('widens Route 3 field-missed PIN triggers so voices still fire', () => {
+    expect([...ROUTE_3_RELIABLE_SPEAK_ORDERS].sort((a, b) => a - b)).toEqual([
+      6, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27,
+    ])
+    for (const order of ROUTE_3_RELIABLE_SPEAK_ORDERS) {
+      expect(pinAudioTriggerDistanceMeters('route-3', order)).toBe(AUDIO_RELIABLE_TRIGGER_DISTANCE_M)
+      expect(pinAudioApproachWindowMeters('route-3', order)).toBe(AUDIO_RELIABLE_TRIGGER_DISTANCE_M)
+    }
   })
 
   it('preserves the configured start/finish PIN radius on every route', () => {

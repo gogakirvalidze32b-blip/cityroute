@@ -17,6 +17,11 @@ export const AUDIO_TRIGGER_DISTANCE_M = 18
 /** Start / finish / loop-context PINs get a wider bubble. */
 export const AUDIO_SPECIAL_TRIGGER_DISTANCE_M = 25
 /**
+ * Route 3 field-missed PINs: wider GPS bubble so voices still fire when the
+ * phone fix is noisy or the pin sits slightly off the road centerline.
+ */
+export const AUDIO_RELIABLE_TRIGGER_DISTANCE_M = 45
+/**
  * GPS accuracy / cross-track ceilings used when deciding PIN audio.
  * Phone GPS in Telavi often reports 15–25 m; the old 12 m gate dropped voices.
  */
@@ -34,7 +39,18 @@ const ROUTE_CONTEXT_TRIGGER_ORDERS: Readonly<Record<string, number>> = {
   'route-4': 29,
 }
 
+/**
+ * Route 3 PINs that need a wider proximity trigger: field-missed voices plus the
+ * west-loop PINs whose road polyline order does not follow sort_order after #15.
+ */
+export const ROUTE_3_RELIABLE_SPEAK_ORDERS = new Set([
+  6, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27,
+])
+
 export function pinAudioTriggerDistanceMeters(route: string, sortOrder: number): number {
+  if (route === 'route-3' && ROUTE_3_RELIABLE_SPEAK_ORDERS.has(sortOrder)) {
+    return AUDIO_RELIABLE_TRIGGER_DISTANCE_M
+  }
   if (
     sortOrder === 1 ||
     ROUTE_FINISH_PIN_ORDERS[route] === sortOrder ||
@@ -48,6 +64,15 @@ export function pinAudioTriggerDistanceMeters(route: string, sortOrder: number):
 
 export function pinAudioApproachWindowMeters(route: string, sortOrder: number): number {
   return pinAudioTriggerDistanceMeters(route, sortOrder)
+}
+
+/**
+ * Rare per-PIN tempo overrides. Most voices stay at 1.0x (recorded speed).
+ * Route 4 #8 was exported too fast relative to neighbouring clips.
+ */
+export function pinVoicePlaybackRate(route: string, sortOrder: number): number {
+  if (route === 'route-4' && sortOrder === 8) return 0.9
+  return 1
 }
 
 /** Heading tolerance (°) used ONLY for audio. (was 55°) Map/nav keep gps.ts default. */
