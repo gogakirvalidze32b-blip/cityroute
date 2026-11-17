@@ -6,12 +6,13 @@ import { SUPPORT_EMAIL } from '@/lib/support/constants'
 import './login-v2.css'
 
 export function LoginPage() {
-  const { signIn, user, loading, signOutWarning } = useAuth()
+  const { signIn, signInWithGoogle, user, loading, signOutWarning } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(true) // Default: checked
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [googleSubmitting, setGoogleSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
   // Load saved credentials if "remember me" was checked
@@ -157,10 +158,33 @@ export function LoginPage() {
               <span>დამახსოვრება</span>
             </label>
             {error && <p className="error-text">{error}</p>}
-            <button type="submit" className="login-v2__submit" disabled={submitting}>
+            <button type="submit" className="login-v2__submit" disabled={submitting || googleSubmitting}>
               {submitting ? '...' : 'შესვლა →'}
             </button>
           </form>
+          <div className="login-v2__divider" role="separator">
+            <span>ან</span>
+          </div>
+          <button
+            type="button"
+            className="login-v2__google"
+            disabled={submitting || googleSubmitting}
+            onClick={async () => {
+              setGoogleSubmitting(true)
+              setError(null)
+              try {
+                const err = await signInWithGoogle()
+                if (err) setError(err)
+              } catch {
+                setError('Google-ით შესვლა ვერ მოხერხდა. სცადეთ თავიდან.')
+              } finally {
+                setGoogleSubmitting(false)
+              }
+            }}
+          >
+            <GoogleMark />
+            {googleSubmitting ? '...' : 'Google-ით შესვლა'}
+          </button>
           <p className="login-v2__links">
             <Link to="/forgot-password">დაგავიწყდა პაროლი?</Link>
           </p>
@@ -184,6 +208,17 @@ const FEATURES = [
   { icon: '🚗', label: 'საგამოცდო რეჟიმი' },
   { icon: '📊', label: 'პროგრესის მონიტორინგი' },
 ]
+
+function GoogleMark() {
+  return (
+    <svg className="login-v2__google-icon" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.2 6.1 29.4 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.9z" />
+      <path fill="#FF3D00" d="M6.3 14.7 12.9 19.5C14.7 15.1 19 12 24 12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.2 6.1 29.4 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.6-5.2l-6.3-5.3C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.4-11.3-8.1l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.5l.1.1 6.3 5.3C39.2 37.3 44 32 44 24c0-1.3-.1-2.7-.4-3.9z" />
+    </svg>
+  )
+}
 
 function LoginBackground() {
   return (

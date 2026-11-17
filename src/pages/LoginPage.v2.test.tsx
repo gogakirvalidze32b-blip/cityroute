@@ -5,9 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { LoginPage } from './LoginPage'
 
 const signIn = vi.fn()
+const signInWithGoogle = vi.fn()
 
 vi.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ signIn, user: null, loading: false, signOutWarning: null }),
+  useAuth: () => ({ signIn, signInWithGoogle, user: null, loading: false, signOutWarning: null }),
 }))
 
 function renderPage() {
@@ -23,17 +24,25 @@ describe('LoginPage v2', () => {
     localStorage.clear()
     signIn.mockReset()
     signIn.mockResolvedValue(null)
+    signInWithGoogle.mockReset()
+    signInWithGoogle.mockResolvedValue(null)
   })
 
-  it('renders empty fields, no Google button, and support contact', () => {
+  it('renders empty fields, Google button, and support contact', () => {
     renderPage()
     expect(screen.getByPlaceholderText('ელფოსტა')).toHaveValue('')
     expect(screen.getByPlaceholderText('პაროლი')).toHaveValue('')
-    expect(screen.queryByText(/Google/i)).toBeNull()
+    expect(screen.getByRole('button', { name: /Google-ით შესვლა/i })).toBeTruthy()
     expect(screen.getByRole('link', { name: 'support@cityroute.ge' })).toHaveAttribute(
       'href',
       'mailto:support@cityroute.ge',
     )
+  })
+
+  it('starts Google OAuth from the Google button', async () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /Google-ით შესვლა/i }))
+    await waitFor(() => expect(signInWithGoogle).toHaveBeenCalledTimes(1))
   })
 
   it('toggles password visibility without changing the value', () => {

@@ -72,6 +72,8 @@ type AuthState = {
 
   signIn: (email: string, password: string) => Promise<string | null>
 
+  signInWithGoogle: () => Promise<string | null>
+
   signOut: () => Promise<void>
 
 }
@@ -1200,6 +1202,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
 
+  const signInWithGoogle = useCallback(async () => {
+
+    setSignOutWarning(null)
+    signedOutLocallyRef.current = false
+    authLifecycleVersionRef.current += 1
+
+    const supabase = getSupabase()
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/`,
+        queryParams: { prompt: 'select_account' },
+      },
+    })
+
+    if (error) {
+      console.error('❌ signInWithGoogle failed:', error)
+      return error.message
+    }
+
+    return null
+
+  }, [])
+
+
+
   const selectPlan = useCallback(
 
     async (plan: SubscriptionPlan, deviceSlots?: 1 | 2) => {
@@ -1274,6 +1302,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       signIn,
 
+      signInWithGoogle,
+
       signOut,
 
     }),
@@ -1306,6 +1336,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signUp,
 
       signIn,
+
+      signInWithGoogle,
 
       signOut,
 
