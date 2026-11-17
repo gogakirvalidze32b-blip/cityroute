@@ -329,8 +329,8 @@ describe('shared finish sequence', () => {
     const pin10 = route.pins.find((pin) => pin.sort_order === 10)!
     const pin11 = route.pins.find((pin) => pin.sort_order === 11)!
     expect(pin10.sort_order).toBeLessThan(pin11.sort_order)
-    expect([pin10.lat, pin10.lng]).toEqual([41.922996, 45.502359])
-    expect([pin11.lat, pin11.lng]).toEqual([41.924627, 45.503446])
+    expect([pin10.lat, pin10.lng]).toEqual([41.924627, 45.503446])
+    expect([pin11.lat, pin11.lng]).toEqual([41.922996, 45.502359])
     expect(pin10.instruction_ka).toBe('500 მეტრში, გთხოვთ მოუხვიოთ მარჯვნივ')
     expect(pin11.instruction_ka).toBe('300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ')
   })
