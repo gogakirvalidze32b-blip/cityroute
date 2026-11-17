@@ -104,7 +104,6 @@ import {
   AUDIO_GPS_MAX_ACCURACY_M,
   AUDIO_GPS_MAX_CROSS_TRACK_M,
   AUDIO_HEADING_TOLERANCE_DEG,
-  AUDIO_MAX_ATTEMPTS,
   audioHeadingOk,
   identifyRoundaboutGateTarget,
   pinAudioApproachWindowMeters,
@@ -145,11 +144,8 @@ const REMOTE_EXAM_SESSION_LOAD_TIMEOUT_MS = 25_000
 
 /** Sort-order resume for Telavi exam routes and the local Tbilisi GPS test city. */
 const FIELD_TEST_SLUGS = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
-const AUDIO_RETRY_BASE_MS = 500
-const AUDIO_RETRY_MAX_MS = 4000
-const AUDIO_QUEUE_WATCHDOG_MS = 13_000
-/** Temporary engine busy/cancel retries before the PIN advances anyway. */
-const AUDIO_BUSY_MAX_RETRIES = 8
+/** Hard cap so a stuck clip never blocks later PIN voices. */
+const AUDIO_QUEUE_WATCHDOG_MS = 8_000
 const SPEED_LIMIT_FIX_STALE_MS = 20_000
 
 function initialHandledOrders(
@@ -441,14 +437,6 @@ export function ExamDriveSession({
   nextPinRef.current = nextPin
   const [lastSpoken, setLastSpoken] = useState<string | null>(null)
   const [routeComplete, setRouteComplete] = useState(false)
-  const [audioPlaybackError, setAudioPlaybackError] = useState<{
-    sortOrder: number
-    message: string
-  } | null>(null)
-  const [audioRetryToken, setAudioRetryToken] = useState(0)
-  /** True while the top banner waits for retry / continue after audio failure. */
-  const audioWaitingForUserRef = useRef(false)
-  const continueFailedAudioPinRef = useRef<(() => void) | null>(null)
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [pendingPinSortOrder, setPendingPinSortOrderState] = useState<number | null>(initialAudioQueue.pending)
   /** After mid-route დასრულება, summary offers გაგრძელება using kept localStorage progress. */
@@ -1820,7 +1808,31 @@ export function ExamDriveSession({
           '| Progress:', (triggeredRef.current.size + 1) + '/' + totalPins,
         )
         markPinTriggered(target)
-        if (pendingPinSortOrderRef.current === null) {
+        const previousPending = pendingPinSortOrderRef.current
+        if (previousPending === null) {
+          setPendingPinSortOrder(target.sort_order)
+        } else if (previousPending === target.sort_order) {
+          // Same PIN already speaking / queued as pending — keep it.
+        } else if (previousPending < target.sort_order) {
+          // Do not wait on the previous voice: cut it, mark it handled, speak this PIN now.
+          audioEngine.stopAll()
+          audioEngine.unlock()
+          audioAttemptInFlightRef.current = false
+          audioPlaybackAttemptRef.current += 1
+          if (audioQueueWatchdogRef.current !== null) {
+            clearTimeout(audioQueueWatchdogRef.current)
+            audioQueueWatchdogRef.current = null
+          }
+          const previousPin = voicePinsRef.current.find((pin) => pin.sort_order === previousPending)
+          if (previousPin) markPinHandled(previousPin)
+          for (const order of queuedAudioPinOrdersRef.current) {
+            if (order >= target.sort_order) continue
+            const skipped = voicePinsRef.current.find((pin) => pin.sort_order === order)
+            if (skipped) markPinHandled(skipped)
+          }
+          queuedAudioPinOrdersRef.current = queuedAudioPinOrdersRef.current.filter(
+            (order) => order > target.sort_order,
+          )
           setPendingPinSortOrder(target.sort_order)
         } else if (!queuedAudioPinOrdersRef.current.includes(target.sort_order)) {
           queuedAudioPinOrdersRef.current.push(target.sort_order)
@@ -1845,25 +1857,18 @@ export function ExamDriveSession({
       finishInProgressRef.current
     ) return
 
-    const target = voicePins.find((pin) => pin.sort_order === pendingPinSortOrder)
+    const target =
+      voicePinsRef.current.find((pin) => pin.sort_order === pendingPinSortOrder) ?? null
     if (!target) return
     const generation = audioSessionGenerationRef.current
-    let busyRetries = 0
-    let playFailures = 0
+    // Fresh attempt for this pending PIN — never stay blocked by a prior in-flight flag.
+    audioAttemptInFlightRef.current = false
 
     const isCurrent = () =>
       generation === audioSessionGenerationRef.current &&
       phaseRef.current === 'active' &&
       !finishInProgressRef.current &&
       pendingPinSortOrderRef.current === target.sort_order
-
-    const scheduleRetry = (delayMs = AUDIO_RETRY_BASE_MS) => {
-      if (!isCurrent() || audioRetryTimerRef.current !== null) return
-      audioRetryTimerRef.current = window.setTimeout(() => {
-        audioRetryTimerRef.current = null
-        void attemptPlayback()
-      }, delayMs)
-    }
 
     const completePin = () => {
       if (!isCurrent()) return
@@ -1872,52 +1877,27 @@ export function ExamDriveSession({
         audioQueueWatchdogRef.current = null
       }
       audioAttemptInFlightRef.current = false
-      audioWaitingForUserRef.current = false
-      continueFailedAudioPinRef.current = null
       const currentPin = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order) ?? target
       markPinHandled(currentPin)
       pinApproachRef.current.delete(currentPin.id)
-      setAudioPlaybackError(null)
       setLastSpoken(formatPinInstructionLabel(currentPin.sort_order, currentPin.instruction_ka))
       setPendingPinSortOrder(queuedAudioPinOrdersRef.current.shift() ?? null)
       const pendingSave = saveNowRef.current?.()
       if (pendingSave) void pendingSave.catch(() => undefined)
     }
 
-    /** After auto-retries fail: keep this PIN pending and ask the driver to retry or continue. */
-    const holdForUserContinue = (message: string) => {
-      if (!isCurrent()) return
-      if (audioQueueWatchdogRef.current !== null) {
-        clearTimeout(audioQueueWatchdogRef.current)
-        audioQueueWatchdogRef.current = null
-      }
-      if (audioRetryTimerRef.current !== null) {
-        clearTimeout(audioRetryTimerRef.current)
-        audioRetryTimerRef.current = null
-      }
-      audioAttemptInFlightRef.current = false
-      audioWaitingForUserRef.current = true
-      continueFailedAudioPinRef.current = () => {
-        if (!isCurrent()) return
-        completePin()
-      }
-      setAudioPlaybackError({ sortOrder: target.sort_order, message })
-    }
-
     const attemptPlayback = async () => {
-      if (!isCurrent() || audioAttemptInFlightRef.current || audioWaitingForUserRef.current) return
-      if (startAudioPendingRef.current || audioEngine.isBusy()) {
-        busyRetries += 1
-        if (busyRetries > AUDIO_BUSY_MAX_RETRIES) {
-          console.warn(
-            '[AUDIO] PIN voice blocked by busy engine; waiting for driver continue',
-            target.sort_order,
-          )
-          holdForUserContinue('ხმა ვერ გაეშვა (დაკავებულია). სცადეთ ხელახლა ან გააგრძელეთ.')
-          return
+      if (!isCurrent() || audioAttemptInFlightRef.current) return
+
+      // Clear session-start gate so PIN voices are never blocked behind it.
+      if (startAudioPendingRef.current) {
+        startAudioPendingRef.current = false
+        if (startAudioRetryTimerRef.current !== null) {
+          clearTimeout(startAudioRetryTimerRef.current)
+          startAudioRetryTimerRef.current = null
         }
-        scheduleRetry()
-        return
+        audioEngine.stopAll()
+        audioEngine.unlock()
       }
 
       audioAttemptInFlightRef.current = true
@@ -1925,7 +1905,7 @@ export function ExamDriveSession({
       const attemptId = ++audioPlaybackAttemptRef.current
       const isAttemptCurrent = () =>
         attemptId === audioPlaybackAttemptRef.current && isCurrent()
-      // Auto-retry a few times; then hold for the driver so progress is not lost silently.
+      // No manual retry banner: unlock/stop once, then advance so the next PIN still speaks.
       const failed = (reason: PlaybackFailureReason | null = null) => {
         if (settled || !isAttemptCurrent()) return
         settled = true
@@ -1934,41 +1914,9 @@ export function ExamDriveSession({
           clearTimeout(audioQueueWatchdogRef.current)
           audioQueueWatchdogRef.current = null
         }
-        if (reason !== null) {
-          playFailures += 1
-          if (playFailures < AUDIO_MAX_ATTEMPTS) {
-            console.warn(
-              '[AUDIO] PIN voice failed; retrying',
-              target.sort_order,
-              reason,
-              `${playFailures}/${AUDIO_MAX_ATTEMPTS}`,
-            )
-            audioEngine.unlock()
-            const url = voicePinsRef.current.find((pin) => pin.sort_order === target.sort_order)?.audio_url
-            if (url) audioEngine.preload(url)
-            audioPlaybackAttemptRef.current += 1
-            scheduleRetry(Math.min(AUDIO_RETRY_BASE_MS * playFailures, AUDIO_RETRY_MAX_MS))
-            return
-          }
-          console.warn(
-            '[AUDIO] PIN voice failed after retries; waiting for driver continue',
-            target.sort_order,
-            reason,
-          )
-          holdForUserContinue('ხმა ვერ გაეშვა. სცადეთ ხელახლა ან გააგრძელეთ შემდეგ პინზე.')
-          return
-        }
-        busyRetries += 1
-        if (busyRetries > AUDIO_BUSY_MAX_RETRIES) {
-          console.warn(
-            '[AUDIO] PIN voice busy/cancelled too long; waiting for driver continue',
-            target.sort_order,
-          )
-          holdForUserContinue('ხმა ვერ გაეშვა (დაკავებულია). სცადეთ ხელახლა ან გააგრძელეთ.')
-          return
-        }
-        audioPlaybackAttemptRef.current += 1
-        scheduleRetry()
+        console.warn('[AUDIO] PIN voice failed; advancing to next PIN', target.sort_order, reason)
+        audioEngine.unlock()
+        completePin()
       }
       const completed = () => {
         if (settled || !isAttemptCurrent()) return
@@ -1991,7 +1939,6 @@ export function ExamDriveSession({
         }
       }
       if (currentTarget.audio_url) audioEngine.preload(currentTarget.audio_url)
-      // Warm the next queued voices so catch-up does not hitch.
       for (const order of queuedAudioPinOrdersRef.current.slice(0, 3)) {
         const queued = voicePinsRef.current.find((pin) => pin.sort_order === order)
         if (queued?.audio_url) audioEngine.preload(queued.audio_url)
@@ -2005,21 +1952,10 @@ export function ExamDriveSession({
             clearTimeout(audioQueueWatchdogRef.current)
             audioQueueWatchdogRef.current = null
           }
-          playFailures += 1
-          console.warn(
-            '[AUDIO] PIN playback watchdog expired',
-            target.sort_order,
-            `${playFailures}/${AUDIO_MAX_ATTEMPTS}`,
-          )
+          console.warn('[AUDIO] PIN playback watchdog expired; advancing', target.sort_order)
           audioEngine.stopAll()
-          if (playFailures < AUDIO_MAX_ATTEMPTS) {
-            audioEngine.unlock()
-            if (currentTarget.audio_url) audioEngine.preload(currentTarget.audio_url)
-            audioPlaybackAttemptRef.current += 1
-            scheduleRetry(Math.min(AUDIO_RETRY_BASE_MS * playFailures, AUDIO_RETRY_MAX_MS))
-            return
-          }
-          holdForUserContinue('ხმა ვერ გაეშვა (timeout). სცადეთ ხელახლა ან გააგრძელეთ.')
+          audioEngine.unlock()
+          completePin()
         }, AUDIO_QUEUE_WATCHDOG_MS)
         const status = await audioEngine.playDetailed(
           currentTarget.audio_url,
@@ -2032,27 +1968,49 @@ export function ExamDriveSession({
           },
         )
         if (status === 'failed') failed('play-rejected')
-        else if (status === 'busy' || status === 'cancelled') failed(null)
-        else if (status === 'duplicate') {
-          audioPlaybackAttemptRef.current += 1
-          audioAttemptInFlightRef.current = false
+        else if (status === 'busy' || status === 'cancelled') {
+          // Interrupt whatever held the engine and speak this PIN immediately.
+          audioEngine.stopAll()
+          audioEngine.unlock()
           if (audioQueueWatchdogRef.current !== null) {
             clearTimeout(audioQueueWatchdogRef.current)
             audioQueueWatchdogRef.current = null
           }
-          busyRetries += 1
-          if (busyRetries > AUDIO_BUSY_MAX_RETRIES) {
-            console.warn(
-              '[AUDIO] PIN voice duplicate too long; waiting for driver continue',
-              target.sort_order,
-            )
-            holdForUserContinue('ხმა ვერ გაეშვა (დაკავებულია). სცადეთ ხელახლა ან გააგრძელეთ.')
-            return
+          audioQueueWatchdogRef.current = window.setTimeout(() => {
+            if (!isAttemptCurrent() || settled) return
+            settled = true
+            audioAttemptInFlightRef.current = false
+            if (audioQueueWatchdogRef.current !== null) {
+              clearTimeout(audioQueueWatchdogRef.current)
+              audioQueueWatchdogRef.current = null
+            }
+            console.warn('[AUDIO] PIN playback watchdog expired; advancing', target.sort_order)
+            audioEngine.stopAll()
+            audioEngine.unlock()
+            completePin()
+          }, AUDIO_QUEUE_WATCHDOG_MS)
+          const retryStatus = await audioEngine.playDetailed(
+            currentTarget.audio_url,
+            currentTarget.id,
+            currentTarget.instruction_ka,
+            {
+              onEnded: completed,
+              onFailure: failed,
+              playbackRate: pinVoicePlaybackRate(route.slug, currentTarget.sort_order),
+            },
+          )
+          if (retryStatus === 'failed' || retryStatus === 'busy' || retryStatus === 'cancelled') {
+            failed(retryStatus === 'failed' ? 'play-rejected' : null)
+          } else if (retryStatus === 'duplicate') {
+            audioAttemptInFlightRef.current = true
+          } else {
+            audioAttemptInFlightRef.current = true
           }
-          scheduleRetry()
+        } else if (status === 'duplicate') {
+          audioAttemptInFlightRef.current = true
         }
       } catch (error) {
-        console.warn('[AUDIO] PIN playback threw; retrying/holding', target.sort_order, error)
+        console.warn('[AUDIO] PIN playback threw; advancing', target.sort_order, error)
         failed('play-rejected')
       }
     }
@@ -2061,14 +2019,8 @@ export function ExamDriveSession({
       clearTimeout(audioRetryTimerRef.current)
       audioRetryTimerRef.current = null
     }
-    // Fresh effect run (including explicit retry tap) clears a previous hold.
-    audioWaitingForUserRef.current = false
     const resumePendingAudio = () => {
-      if (
-        document.visibilityState !== 'visible' ||
-        audioAttemptInFlightRef.current ||
-        audioWaitingForUserRef.current
-      ) return
+      if (document.visibilityState !== 'visible' || audioAttemptInFlightRef.current) return
       if (audioRetryTimerRef.current !== null) {
         clearTimeout(audioRetryTimerRef.current)
         audioRetryTimerRef.current = null
@@ -2088,8 +2040,11 @@ export function ExamDriveSession({
         clearTimeout(audioQueueWatchdogRef.current)
         audioQueueWatchdogRef.current = null
       }
+      // Invalidate in-flight callbacks when this pending PIN effect is replaced.
+      audioPlaybackAttemptRef.current += 1
+      audioAttemptInFlightRef.current = false
     }
-  }, [pendingPinSortOrder, phase, features.routeAudio, route.slug, voicePins, setPendingPinSortOrder, audioRetryToken])
+  }, [pendingPinSortOrder, phase, features.routeAudio, route.slug, setPendingPinSortOrder])
 
   const handleError = useCallback((errorId: string) => {
     setExam((prev) => recordExamError(prev, errorId, false))
@@ -2100,17 +2055,6 @@ export function ExamDriveSession({
   }, [])
 
   function playSessionStartAudio(generation: number) {
-    const retry = () => {
-      if (
-        generation !== audioSessionGenerationRef.current ||
-        !startAudioPendingRef.current ||
-        startAudioRetryTimerRef.current !== null
-      ) return
-      startAudioRetryTimerRef.current = window.setTimeout(() => {
-        startAudioRetryTimerRef.current = null
-        playSessionStartAudio(generation)
-      }, AUDIO_RETRY_BASE_MS)
-    }
     const failed = (reason: PlaybackFailureReason) => {
       if (generation !== audioSessionGenerationRef.current) return
       startAudioPendingRef.current = false
@@ -2127,8 +2071,9 @@ export function ExamDriveSession({
       !startAudioPendingRef.current ||
       finishInProgressRef.current
     ) return
+    // Do not block PIN voices: if the engine is busy, skip start audio and continue.
     if (audioEngine.isBusy()) {
-      retry()
+      startAudioPendingRef.current = false
       return
     }
 
@@ -2139,9 +2084,9 @@ export function ExamDriveSession({
       { onEnded: completed, onFailure: failed },
     ).then((status) => {
       if (generation !== audioSessionGenerationRef.current || !startAudioPendingRef.current) return
-      if (status === 'failed') failed('play-rejected')
-      else if (status === 'busy' || status === 'cancelled') retry()
-      else if (status === 'duplicate') startAudioPendingRef.current = false
+      if (status === 'failed' || status === 'busy' || status === 'cancelled') {
+        failed(status === 'failed' ? 'play-rejected' : 'play-rejected')
+      } else if (status === 'duplicate') startAudioPendingRef.current = false
     }).catch((error) => {
       if (generation !== audioSessionGenerationRef.current) return
       startAudioPendingRef.current = false
@@ -2161,9 +2106,6 @@ export function ExamDriveSession({
     }
 
     audioSessionGenerationRef.current++
-    setAudioPlaybackError(null)
-    audioWaitingForUserRef.current = false
-    continueFailedAudioPinRef.current = null
     const sessionGeneration = audioSessionGenerationRef.current
     audioEngine.stopAll()
     if (startAudioRetryTimerRef.current !== null) {
@@ -2907,7 +2849,6 @@ export function ExamDriveSession({
     finishRouteSlugRef.current = null
     audioSessionGenerationRef.current++
     audioEngine.stopAll()
-    setAudioPlaybackError(null)
     queuedAudioPinOrdersRef.current = restoredAudio.queued
     setPendingPinSortOrder(restoredAudio.pending)
     setSummaryCanContinue(false)
@@ -2998,7 +2939,6 @@ export function ExamDriveSession({
     gpsAutoStartBlockedRef.current = false
     automaticFinishStartedRef.current = false
     startAudioPendingRef.current = false
-    setAudioPlaybackError(null)
     if (startAudioRetryTimerRef.current !== null) {
       clearTimeout(startAudioRetryTimerRef.current)
       startAudioRetryTimerRef.current = null
@@ -3120,43 +3060,6 @@ export function ExamDriveSession({
     <div
       className={`exam-session exam-session--${layoutMode} exam-session--${sessionLayout}${active ? ' exam-session--active' : ''}${summaryOpen ? ' exam-session--summary' : ''}${active && debugPanelEnabled ? ' exam-session--sl-debug' : ''}`}
     >
-      {active && audioPlaybackError && (
-        <div className="exam-audio-hold-banner" role="alert" data-testid="audio-playback-error">
-          <p className="exam-audio-hold-banner__text">
-            <strong>PIN {audioPlaybackError.sortOrder}</strong>
-            <span>{audioPlaybackError.message}</span>
-          </p>
-          <div className="exam-audio-hold-banner__actions">
-            <button
-              type="button"
-              className="nav-start-btn exam-audio-hold-banner__retry"
-              onClick={() => {
-                audioEngine.unlock()
-                audioAttemptInFlightRef.current = false
-                audioWaitingForUserRef.current = false
-                setAudioPlaybackError(null)
-                setAudioRetryToken((token) => token + 1)
-              }}
-            >
-              აუდიოს ხელახლა ცდა
-            </button>
-            <button
-              type="button"
-              className="nav-start-btn exam-audio-hold-banner__continue"
-              onClick={() => {
-                audioEngine.unlock()
-                const continuePin = continueFailedAudioPinRef.current
-                continueFailedAudioPinRef.current = null
-                audioWaitingForUserRef.current = false
-                setAudioPlaybackError(null)
-                continuePin?.()
-              }}
-            >
-              პინის გაგრძელება
-            </button>
-          </div>
-        </div>
-      )}
       {onRouteMapScreen && (
         <>
           {active && (
