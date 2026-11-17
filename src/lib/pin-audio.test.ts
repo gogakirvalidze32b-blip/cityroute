@@ -53,15 +53,15 @@ function makeRunner(ids: string[]) {
 }
 
 describe('PinAudio', () => {
-  it('audio constants: 18 m trigger, 90 heading tolerance', () => {
-    expect(AUDIO_TRIGGER_DISTANCE_M).toBe(18)
-    expect(AUDIO_HEADING_TOLERANCE_DEG).toBe(90)
+  it('audio constants: 25 m trigger, 120 heading tolerance', () => {
+    expect(AUDIO_TRIGGER_DISTANCE_M).toBe(25)
+    expect(AUDIO_HEADING_TOLERANCE_DEG).toBe(120)
   })
 
-  it('plays the next PIN at 18 m, not at 19 m', () => {
+  it('plays the next PIN at 25 m, not at 26 m', () => {
     const r = makeRunner(['a', 'b'])
-    expect(r.step({ dists: [19, 300] })).toBe(null)
-    expect(r.step({ dists: [18, 300] })?.reason).toBe('in-range')
+    expect(r.step({ dists: [26, 300] })).toBe(null)
+    expect(r.step({ dists: [25, 300] })?.reason).toBe('in-range')
     expect(r.played).toEqual(['a'])
   })
 
@@ -69,14 +69,15 @@ describe('PinAudio', () => {
     expect(audioHeadingOk(false, 8)).toBe(false)
     expect(audioHeadingOk(true, 8)).toBe(true)
     expect(audioHeadingOk(false, 0.3)).toBe(true)
+    expect(audioHeadingOk(false, 1.2)).toBe(true)
     expect(audioHeadingOk(false, null)).toBe(false)
   })
 
   it('wrong heading alone does not lose the voice: it plays once the PIN is passed', () => {
     const r = makeRunner(['a', 'b'])
-    expect(r.step({ dists: [22, 300], ok: [false, true] })).toBe(null)
-    expect(r.step({ dists: [18, 300], ok: [false, true] })).toBe(null)
-    const d = r.step({ dists: [26, 300], ok: [false, true] })
+    expect(r.step({ dists: [30, 300], ok: [false, true] })).toBe(null)
+    expect(r.step({ dists: [20, 300], ok: [false, true] })).toBe(null)
+    const d = r.step({ dists: [28, 300], ok: [false, true] })
     expect(d?.reason).toBe('passed')
     expect(r.played).toEqual(['a'])
   })
@@ -91,8 +92,9 @@ describe('PinAudio', () => {
 
   it('lookahead: GPS jumped to the following PIN → it plays, the missed one is passed silently', () => {
     const r = makeRunner(['a', 'b', 'c'])
-    r.step({ dists: [50, 130, 400] })
-    const d = r.step({ dists: [70, 8, 300] })
+    // Approach expected PIN outside pass-by band but inside lookahead approach window.
+    r.step({ dists: [60, 130, 400] })
+    const d = r.step({ dists: [80, 8, 300] })
     expect(d?.reason).toBe('lookahead')
     expect(d?.index).toBe(1)
     expect(d?.skipped).toEqual([0])
@@ -109,7 +111,7 @@ describe('PinAudio', () => {
 
   it('lookahead is limited to the next 2 PINs', () => {
     const r = makeRunner(['a', 'b', 'c', 'd'])
-    r.step({ dists: [50, 400, 400, 400] })
+    r.step({ dists: [65, 400, 400, 400] })
     expect(r.step({ dists: [90, 400, 400, 5] })).toBe(null)
   })
 

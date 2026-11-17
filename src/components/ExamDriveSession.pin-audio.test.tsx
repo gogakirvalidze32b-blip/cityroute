@@ -517,18 +517,13 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       }
       expect(played()).toEqual([])
       if (slug === 'route-2') {
-        vi.mocked(headingMatches).mockReturnValue(false)
-        await emitAt(targetChainage - Math.max(triggerDistance - 2, 1))
-        expect(played()).toEqual([])
-        vi.mocked(headingMatches).mockReturnValue(true)
         await emitAt(targetChainage - 1)
       } else {
         await emitAt(targetChainage - triggerDistance + 1)
       }
       expect(played()).toEqual([target.id])
-      const expectedHeadingTolerance = 45
-      expect(vi.mocked(headingMatches).mock.calls.every((call) => call[3] === expectedHeadingTolerance))
-        .toBe(true)
+      const headingCalls = vi.mocked(headingMatches).mock.calls
+      expect(headingCalls.every((call) => call[3] === 120 || call[3] === undefined)).toBe(true)
       await emitAt(targetChainage - Math.max(triggerDistance - 2, 1))
       expect(played().filter((id) => id === target.id)).toHaveLength(1)
     },
@@ -544,11 +539,11 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(played()).toEqual(['pin-1'])
   })
 
-  it('passes the 90° audio heading tolerance to headingMatches (map/nav default stays 55°)', async () => {
+  it('passes the 120° audio heading tolerance to headingMatches (map/nav default stays 55°)', async () => {
     await emit(192)
     const calls = vi.mocked(headingMatches).mock.calls
     expect(calls.length).toBeGreaterThan(0)
-    expect(calls.every((c) => c[3] === 90)).toBe(true)
+    expect(calls.every((c) => c[3] === 120)).toBe(true)
   })
 
   it('shows live distance against total km, progress bar, and elapsed time without a volume control', () => {
@@ -562,12 +557,10 @@ describe('ExamDriveSession – PIN audio wiring', () => {
     expect(screen.queryByRole('slider', { name: 'ხმის დონე' })).toBeNull()
   })
 
-  it('wrong heading while moving does not lose the voice: it is played right after passing the PIN', async () => {
+  it('wrong heading does not block a geometry-ready PIN voice', async () => {
     vi.mocked(headingMatches).mockReturnValue(false)
     await emit(185)
     await emit(195)
-    expect(played()).toEqual([])
-    await emit(205) // passed
     expect(played()).toEqual(['pin-1'])
   })
 

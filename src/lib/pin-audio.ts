@@ -10,23 +10,22 @@
 
 /**
  * Maximum GPS-to-PIN trigger distance for ordinary PINs.
- * 18 m keeps margin for phone GPS noise and pins slightly off the centerline
- * (e.g. route-4 PIN 21 ~10 m offline) so voices are not skipped at driving speed.
+ * Wider bubble softens tablet GPS noise so voices fire without retry/hold.
  */
-export const AUDIO_TRIGGER_DISTANCE_M = 18
+export const AUDIO_TRIGGER_DISTANCE_M = 25
 /** Start / finish / loop-context PINs get a wider bubble. */
-export const AUDIO_SPECIAL_TRIGGER_DISTANCE_M = 25
+export const AUDIO_SPECIAL_TRIGGER_DISTANCE_M = 35
 /**
  * Route 3 field-missed PINs: wider GPS bubble so voices still fire when the
  * phone fix is noisy or the pin sits slightly off the road centerline.
  */
-export const AUDIO_RELIABLE_TRIGGER_DISTANCE_M = 45
+export const AUDIO_RELIABLE_TRIGGER_DISTANCE_M = 55
 /**
  * GPS accuracy / cross-track ceilings used when deciding PIN audio.
- * Phone GPS in Telavi often reports 15–25 m; the old 12 m gate dropped voices.
+ * Softened for Telavi tablet GPS (often 20–35 m reported accuracy).
  */
-export const AUDIO_GPS_MAX_ACCURACY_M = 25
-export const AUDIO_GPS_MAX_CROSS_TRACK_M = 28
+export const AUDIO_GPS_MAX_ACCURACY_M = 40
+export const AUDIO_GPS_MAX_CROSS_TRACK_M = 40
 const ROUTE_FINISH_PIN_ORDERS: Readonly<Record<string, number>> = {
   'route-1': 35,
   'route-2': 29,
@@ -75,11 +74,11 @@ export function pinVoicePlaybackRate(route: string, sortOrder: number): number {
   return 1
 }
 
-/** Heading tolerance (°) used ONLY for audio. (was 55°) Map/nav keep gps.ts default. */
-export const AUDIO_HEADING_TOLERANCE_DEG = 90
+/** Heading tolerance (°) used ONLY for audio. Map/nav keep gps.ts default. */
+export const AUDIO_HEADING_TOLERANCE_DEG = 120
 
 /** Closest approach (m) at which a PIN counts as "approached" for pass-by catch-up. */
-export const AUDIO_PASSED_NEAR_M = 40
+export const AUDIO_PASSED_NEAR_M = 50
 
 /** Driver is considered to have passed a PIN once this much farther than closest approach (m). */
 export const AUDIO_PASSED_MARGIN_M = 8
@@ -88,10 +87,10 @@ export const AUDIO_PASSED_MARGIN_M = 8
 export const AUDIO_LOOKAHEAD_PINS = 2
 
 /** Lookahead is only allowed if the driver really came this close (m) to the missed PIN. */
-export const AUDIO_LOOKAHEAD_MIN_APPROACH_M = 60
+export const AUDIO_LOOKAHEAD_MIN_APPROACH_M = 70
 
 /** GPS heading is unreliable below this speed (m/s) → heading check is skipped. */
-export const AUDIO_HEADING_MIN_SPEED_MS = 1
+export const AUDIO_HEADING_MIN_SPEED_MS = 1.5
 
 /** Max attempts to play one PIN voice when playback itself fails. */
 export const AUDIO_MAX_ATTEMPTS = 3

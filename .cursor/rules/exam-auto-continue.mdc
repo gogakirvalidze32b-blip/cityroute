@@ -1,0 +1,21 @@
+---
+description: Never change working automatic exam continue/resume logic
+alwaysApply: true
+---
+
+# Auto continue is locked
+
+Automatic გაგრძელება / resume / snap-forward start logic **works in production**. Do not modify it.
+
+## Do not touch
+- Auto-continue / resume session restore paths in `ExamDriveSession`
+- `resolveAutoStart`, live GPS snap-forward on დაწყება/გაგრძელება
+- Resume progress floor / never-rewind snap behavior tied to continue
+- Related persistence that only exists to support that continue flow
+
+## Allowed nearby work
+- Pin **audio** playback reliability (play/stop/preempt/watchdog)
+- Softening GPS gates that only affect **when audio fires**, without changing continue/resume
+- Unrelated features outside exam continue
+
+If a change seems to require editing auto-continue code, stop and ask first.

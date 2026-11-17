@@ -1671,11 +1671,11 @@ export function ExamDriveSession({
           ? pinAudioTriggerDistanceMeters(route.slug, pending.sort_order)
           : 18
         const nearPendingPin = pending
-          ? distanceToPinMeters(raw, [pending.lat, pending.lng]) <= pendingTriggerM
+          ? distanceToPinMeters(raw, [pending.lat, pending.lng]) <= pendingTriggerM * 1.5
           : false
-        // Ignore pure jitter — but never freeze on PIN 1 / a close pending PIN when the
-        // car is almost stationary (tablet GPS often reports <1 m steps at the agency).
-        if (movementMeters < 1 && !nearPendingPin) return
+        // Ignore pure jitter — but never freeze near a pending PIN (tablet GPS often
+        // reports sub-metre steps while the car is almost stationary).
+        if (movementMeters < 0.5 && !nearPendingPin) return
 
         if (!target) {
           const handledOrders = handledOrdersRef.current
@@ -1736,7 +1736,7 @@ export function ExamDriveSession({
             expectedPinChainageMeters,
             requireExpectedPinChainage: usesTargetOccurrenceContext,
             gpsPosition: raw,
-            maxGpsToPinMeters: Math.max(25, targetTriggerM),
+            maxGpsToPinMeters: Math.max(40, targetTriggerM),
           },
         )
 
@@ -1750,9 +1750,7 @@ export function ExamDriveSession({
               raw,
               [target.lat, target.lng],
               pos.heading,
-              usesRoute2Pin26Context || usesRouteContextTarget
-                ? 45
-                : AUDIO_HEADING_TOLERANCE_DEG,
+              AUDIO_HEADING_TOLERANCE_DEG,
             ),
             pos.speed,
           )
@@ -1765,24 +1763,8 @@ export function ExamDriveSession({
           proximityReady && !completion.ready ? '| Proximity fallback' : '',
         )
 
+        // Geometry OR proximity is enough — do not block a ready pin on heading noise.
         if (!completion.ready && !proximityReady) return
-        if (
-          completion.ready &&
-          completion.pinProjection &&
-          completion.fixProjection &&
-          completion.pinProjection.chainageMeters >= completion.fixProjection.chainageMeters &&
-          !audioHeadingOk(
-            headingMatches(
-              raw,
-              [target.lat, target.lng],
-              pos.heading,
-              usesRoute2Pin26Context || usesRouteContextTarget
-                ? 45
-                : AUDIO_HEADING_TOLERANCE_DEG,
-            ),
-            pos.speed,
-          )
-        ) return
         if (gateTarget) {
           if (!isRoundaboutReturnGateOpened(
             route.slug,
