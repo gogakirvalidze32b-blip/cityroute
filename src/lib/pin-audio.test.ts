@@ -53,15 +53,15 @@ function makeRunner(ids: string[]) {
 }
 
 describe('PinAudio', () => {
-  it('audio constants: 25 m trigger, 120 heading tolerance', () => {
-    expect(AUDIO_TRIGGER_DISTANCE_M).toBe(25)
+  it('audio constants: 10 m trigger, 120 heading tolerance', () => {
+    expect(AUDIO_TRIGGER_DISTANCE_M).toBe(10)
     expect(AUDIO_HEADING_TOLERANCE_DEG).toBe(120)
   })
 
-  it('plays the next PIN at 25 m, not at 26 m', () => {
+  it('plays the next PIN at 10 m, not at 11 m', () => {
     const r = makeRunner(['a', 'b'])
-    expect(r.step({ dists: [26, 300] })).toBe(null)
-    expect(r.step({ dists: [25, 300] })?.reason).toBe('in-range')
+    expect(r.step({ dists: [11, 300] })).toBe(null)
+    expect(r.step({ dists: [10, 300] })?.reason).toBe('in-range')
     expect(r.played).toEqual(['a'])
   })
 

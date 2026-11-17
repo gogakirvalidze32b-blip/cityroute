@@ -532,10 +532,13 @@ describe('ExamDriveSession – PIN audio wiring', () => {
   it('preserves the start PIN special radius and plays it only once', async () => {
     await emit(100)
     expect(played()).toEqual([])
-    await emit(182)
+    // PIN 1 special bubble is 15 m; stay outside it first.
+    await emit(180)
+    expect(played()).toEqual([])
+    await emit(192)
     expect(played()).toEqual(['pin-1'])
-    await emit(185)
-    await emit(190)
+    await emit(195)
+    await emit(198)
     expect(played()).toEqual(['pin-1'])
   })
 

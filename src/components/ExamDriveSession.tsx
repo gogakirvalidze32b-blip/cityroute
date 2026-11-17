@@ -1736,7 +1736,8 @@ export function ExamDriveSession({
             expectedPinChainageMeters,
             requireExpectedPinChainage: usesTargetOccurrenceContext,
             gpsPosition: raw,
-            maxGpsToPinMeters: Math.max(40, targetTriggerM),
+            // Keep geometry close to the PIN bubble so voices do not fire far early.
+            maxGpsToPinMeters: Math.max(targetTriggerM + 5, targetTriggerM),
           },
         )
 

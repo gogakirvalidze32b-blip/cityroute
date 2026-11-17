@@ -10,19 +10,19 @@
 
 /**
  * Maximum GPS-to-PIN trigger distance for ordinary PINs.
- * Wider bubble softens tablet GPS noise so voices fire without retry/hold.
+ * Tight bubble (~10 m) so voices wait until near the point; catch-up still
+ * speaks late if GPS skipped the bubble, and audio failure never blocks the PIN.
  */
-export const AUDIO_TRIGGER_DISTANCE_M = 25
-/** Start / finish / loop-context PINs get a wider bubble. */
-export const AUDIO_SPECIAL_TRIGGER_DISTANCE_M = 35
+export const AUDIO_TRIGGER_DISTANCE_M = 10
+/** Start / finish / loop-context PINs get a slightly wider bubble. */
+export const AUDIO_SPECIAL_TRIGGER_DISTANCE_M = 15
 /**
- * Route 3 field-missed PINs: wider GPS bubble so voices still fire when the
- * phone fix is noisy or the pin sits slightly off the road centerline.
+ * Route 3 field-missed PINs: a bit wider than ordinary, still close to the point.
  */
-export const AUDIO_RELIABLE_TRIGGER_DISTANCE_M = 55
+export const AUDIO_RELIABLE_TRIGGER_DISTANCE_M = 20
 /**
  * GPS accuracy / cross-track ceilings used when deciding PIN audio.
- * Softened for Telavi tablet GPS (often 20–35 m reported accuracy).
+ * Kept soft so noisy tablet GPS can still match the road near the PIN.
  */
 export const AUDIO_GPS_MAX_ACCURACY_M = 40
 export const AUDIO_GPS_MAX_CROSS_TRACK_M = 40
