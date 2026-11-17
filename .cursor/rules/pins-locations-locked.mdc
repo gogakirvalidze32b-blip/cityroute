@@ -12,4 +12,18 @@ Do **not** change pin lat/lng, pin order, or relocate pins on the map unless the
 - If a pin location was changed by mistake, restore it immediately
 - Never move unrelated pins while editing audio/GPS logic
 - Route 2 pins 10–11 stay as currently set (correct)
-- Final 300m-right pins stay on the restored side: R1#32, R2#26, R3#28, R4#29
+
+## HARD LOCK — final 300 m-right pins (never touch)
+
+These four pins are **permanently locked**. Do not change their lat/lng, sort_order, roadside, snap, or fixture rows for any reason — including “other side”, restore, gate experiments, or audio fixes — unless the user names **that exact pin** and explicitly asks to move it.
+
+| Route | sort_order / pin | lat | lng | instruction |
+|-------|------------------|-----|-----|-------------|
+| route-1 | 32 | 41.9337286 | 45.4779111 | 300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ |
+| route-2 | 26 | 41.9337191 | 45.4779047 | 300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ |
+| route-3 | 28 | 41.9337192 | 45.4779046 | 300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ |
+| route-4 | 29 | 41.9337192 | 45.4779046 | 300 მეტრში გთხოვთ მოუხვიოთ მარჯვნივ |
+
+Sources of truth: `src/data/audio-audit-pins.fixture.json` (and `route-1-official.json` for R1#32).
+
+If any tool/edit would alter these coords, **stop and leave them unchanged**.
