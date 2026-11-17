@@ -41,10 +41,7 @@ const BOTH_DIRECTIONS = 30
 
 export const SPEED_ZONES: Readonly<Record<string, readonly SpeedZone[]>> = {
   /**
-   * Route 1 continuous posted limits (user map):
-   * 50 (agency + east approach + Vaziani top) → 40 (west vertical) →
-   * 50 (Chavchavadze) → 40 (Rustaveli out+back) → 50 (east return to finish).
-   * from/to abut so the sign never drops to "—".
+   * Route 1: 50 → 40 → 50 → 40 through ~6.9 კმ → 50 from ~7.0 კმ (Alazani) to finish.
    */
   'route-1': [
     {
@@ -63,21 +60,19 @@ export const SPEED_ZONES: Readonly<Record<string, readonly SpeedZone[]>> = {
       source: 'R1 map Chavchavadze 50',
     },
     {
-      id: 'r1-4', limitKmh: 40, from: 97.51, to: 218.0, maxOffsetM: NEAR,
-      anchors: [[41.919551, 45.469897], [41.919938, 45.470166]], pins: [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27],
-      source: 'R1 map Rustaveli out+back 40',
+      id: 'r1-4', limitKmh: 40, from: 97.51, to: 238.44, maxOffsetM: NEAR,
+      anchors: [[41.919551, 45.469897], [41.925387, 45.472644]], pins: [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28],
+      source: 'R1 Rustaveli + return 40 until 6.9 კმ',
     },
     {
-      id: 'r1-5', limitKmh: 50, from: 218.01, to: 270, maxOffsetM: NEAR,
-      anchors: [[41.919938, 45.470166], [41.93154, 45.475194]], pins: [28, 29, 30, 31, 32, 33, 34, 35],
-      source: 'R1 map east return to finish 50',
+      id: 'r1-5', limitKmh: 50, from: 238.45, to: 270, maxOffsetM: NEAR,
+      anchors: [[41.925387, 45.472644], [41.93154, 45.475194]], pins: [29, 30, 31, 32, 33, 34, 35],
+      source: 'R1 Alazani ~7.0 კმ to finish 50',
     },
   ],
   /**
-   * Route 2 continuous posted limits (photo + user map):
-   * 50 → 40 (top) → 60 (entire right) → 50 → 30 → 50 →
-   * 40 (bottom + upper to red bar past #22) → 50 (pink finish to agency).
-   * from/to abut so the sign never drops to "—".
+   * Route 2: 50 → 40 (0.7–3.1 კმ) → 60 → 50 → 30 → 50 until PIN 17 →
+   * 40 (PIN 17 / ~5.6 კმ through Agmashenebeli to ~7.5 კმ) → 50 to finish.
    */
   'route-2': [
     {
@@ -85,12 +80,14 @@ export const SPEED_ZONES: Readonly<Record<string, readonly SpeedZone[]>> = {
       anchors: [[41.931477, 45.475406], [41.934655, 45.479115]], pins: [2, 3, 4], source: 'R2 #1 start',
     },
     {
-      id: 'r2-2', limitKmh: 40, from: 23.85, to: 67.64, maxOffsetM: NEAR,
-      anchors: [[41.9346285, 45.4791052], [41.93015, 45.506383]], pins: [5, 6, 7, 8], source: 'R2 #5–#8 entire 40',
+      id: 'r2-2', limitKmh: 40, from: 23.85, to: 72.279, maxOffsetM: NEAR,
+      anchors: [[41.9346285, 45.4791052], [41.929877, 45.506688]], pins: [5, 6, 7, 8],
+      source: 'R2 40 from 0.7 კმ to 3.1 კმ turn',
     },
     {
-      id: 'r2-3', limitKmh: 60, from: 67.65, to: 111.33, maxOffsetM: NEAR,
-      anchors: [[41.92992, 45.50671], [41.91984, 45.50022]], pins: [9, 10, 11, 12], source: 'R2 entire right 60',
+      id: 'r2-3', limitKmh: 60, from: 72.28, to: 111.33, maxOffsetM: NEAR,
+      anchors: [[41.929877, 45.506688], [41.91984, 45.50022]], pins: [9, 10, 11, 12],
+      source: 'R2 60 immediately after 3.1 კმ',
     },
     {
       id: 'r2-4', limitKmh: 50, from: 111.334, to: 125.5, maxOffsetM: NEAR,
@@ -103,26 +100,24 @@ export const SPEED_ZONES: Readonly<Record<string, readonly SpeedZone[]>> = {
       source: 'R2 30 from 5.0 კმ until before 5.1',
     },
     {
-      id: 'r2-6', limitKmh: 50, from: 128.55, to: 141.18, maxOffsetM: NEAR,
-      anchors: [[41.918678, 45.49187], [41.918924, 45.486064]], pins: [15, 16],
-      source: 'R2 50 from 5.1 კმ',
+      id: 'r2-6', limitKmh: 50, from: 128.55, to: 146.79, maxOffsetM: NEAR,
+      anchors: [[41.918678, 45.49187], [41.91891, 45.4854]], pins: [15, 16],
+      source: 'R2 50 from 5.1 კმ until PIN 17',
     },
     {
-      id: 'r2-7', limitKmh: 40, from: 141.19, to: 207.99, maxOffsetM: NEAR,
-      anchors: [[41.918942, 45.485366], [41.922261, 45.470464]], pins: [17, 18, 19, 20, 21, 22],
-      source: 'R2 map 40 through #19–#22 to red bar',
+      id: 'r2-7', limitKmh: 40, from: 146.791, to: 217.081, maxOffsetM: NEAR,
+      anchors: [[41.918924, 45.485194], [41.924161, 45.47184]], pins: [17, 18, 19, 20, 21, 22],
+      source: 'R2 40 from PIN 17 through Agmashenebeli to ~7.5 კმ',
     },
     {
-      id: 'r2-8', limitKmh: 50, from: 208.0, to: 252, maxOffsetM: NEAR,
-      anchors: [[41.922261, 45.470464], [41.93154, 45.475194]], pins: [23, 24, 25, 26, 27, 28, 29],
-      source: 'R2 map pink finish 50',
+      id: 'r2-8', limitKmh: 50, from: 217.09, to: 252, maxOffsetM: NEAR,
+      anchors: [[41.924161, 45.47184], [41.93154, 45.475194]], pins: [23, 24, 25, 26, 27, 28, 29],
+      source: 'R2 after Agmashenebeli ~7.5 კმ to finish 50',
     },
   ],
   /**
-   * Route 3 continuous posted limits (user map + arrows, no gaps):
-   * 50 (agency→Alazani→Agmashenebeli) → 30 (west connector, arrow up) →
-   * 50 (Chavchavadze west) → 40 (short north jog) → 50 (Chavchavadze east) →
-   * 40 (Rustaveli out+back) → 50 (return north to finish).
+   * Route 3: early map unchanged → 50 from PIN 6 / ~4.3 კმ through PIN 9 →
+   * 40 from PIN 10 → 50 again from PIN 14 to finish.
    */
   'route-3': [
     {
@@ -146,42 +141,30 @@ export const SPEED_ZONES: Readonly<Record<string, readonly SpeedZone[]>> = {
       source: 'R3 map short north jog 40',
     },
     {
-      id: 'r3-5', limitKmh: 50, from: 133.01, to: 185.99, maxOffsetM: NEAR,
-      anchors: [[41.9255, 45.467381], [41.92147, 45.48318]], pins: [6, 7, 15, 23, 24],
-      source: 'R3 map Chavchavadze east 50',
+      id: 'r3-5', limitKmh: 50, from: 133.01, to: 201.74, maxOffsetM: NEAR,
+      anchors: [[41.9255, 45.467381], [41.918984, 45.485302]], pins: [6, 7, 8, 9],
+      source: 'R3 50 from PIN 6 / ~4.3 კმ until PIN 10',
     },
     {
-      id: 'r3-6', limitKmh: 40, from: 186.0, to: 276.99, maxOffsetM: NEAR,
-      anchors: [[41.92147, 45.48318], [41.919246, 45.485402]], pins: [8, 9, 10, 11, 13, 14],
-      source: 'R3 map Rustaveli out+back 40',
+      id: 'r3-6', limitKmh: 40, from: 201.75, to: 277.34, maxOffsetM: NEAR,
+      anchors: [[41.918984, 45.485302], [41.919439, 45.485207]], pins: [10, 11, 13],
+      source: 'R3 40 from PIN 10 until PIN 14',
     },
     {
-      id: 'r3-7', limitKmh: 50, from: 277.0, to: 355, maxOffsetM: NEAR,
-      anchors: [[41.919246, 45.485402], [41.93154, 45.475194]], pins: [25, 26, 27, 28, 29, 30, 31],
-      source: 'R3 map return to agency 50',
+      id: 'r3-7', limitKmh: 50, from: 277.35, to: 355, maxOffsetM: NEAR,
+      anchors: [[41.919439, 45.485207], [41.93154, 45.475194]], pins: [14, 15, 25, 26, 27, 28, 29, 30, 31],
+      source: 'R3 50 from PIN 14 to agency',
     },
   ],
   /**
-   * Route 4 continuous posted limits (user map, no gaps):
-   * 50 (agency N–S) → 40 (Agmashenebeli out) → 50 → 30 → 50 (east loop) →
-   * 30 → 50 → 40 (Agmashenebeli return only) → 50 (N–S return to finish).
-   * Shared R2 stretches keep the same anchors; from/to abut so the sign never drops to "—".
+   * Route 4: 50 from start through Agmashenebeli outbound to ~2.7 კმ approach →
+   * 30 → 50 → 30 → 50 until ~4.6 კმ → 40 until ~6.7 კმ → 50 to finish.
    */
   'route-4': [
     {
-      id: 'r4-1', limitKmh: 50, from: 0, to: 24.2, maxOffsetM: NEAR,
-      anchors: [[41.931477, 45.475406], [41.924755, 45.472723]], pins: [1, 2, 3, 4, 5, 6],
-      source: 'R4 map agency N–S outbound 50',
-    },
-    {
-      id: 'r4-2', limitKmh: 40, from: 24.21, to: 68.7, maxOffsetM: NEAR,
-      anchors: [[41.924755, 45.472723], [41.919123, 45.485642]], pins: [7, 8, 9],
-      source: 'R4 map Agmashenebeli outbound 40',
-    },
-    {
-      id: 'r4-2b', limitKmh: 50, from: 68.71, to: 83.47, maxOffsetM: NEAR,
-      anchors: [[41.91896, 45.48556], [41.91868, 45.48969]], pins: [10],
-      source: 'R4 map east approach 50 before 30',
+      id: 'r4-1', limitKmh: 50, from: 0, to: 83.47, maxOffsetM: NEAR,
+      anchors: [[41.931477, 45.475406], [41.91868, 45.48969]], pins: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      source: 'R4 50 from PIN 2 / agency through Agmashenebeli out to ~2.7 კმ',
     },
     {
       id: 'r4-4b', limitKmh: 30, from: 83.48, to: 85.74, maxOffsetM: BOTH_DIRECTIONS,
@@ -199,19 +182,19 @@ export const SPEED_ZONES: Readonly<Record<string, readonly SpeedZone[]>> = {
       source: 'R4 return 30 = same street as R2 r2-5',
     },
     {
-      id: 'r4-5', limitKmh: 50, from: 133.53, to: 150.5, maxOffsetM: NEAR,
-      anchors: [[41.918678, 45.49187], [41.918924, 45.486064]], pins: [17, 18, 19],
-      source: 'R4 map after return 30 = 50',
+      id: 'r4-5', limitKmh: 50, from: 133.53, to: 137.62, maxOffsetM: NEAR,
+      anchors: [[41.918678, 45.49187], [41.918678, 45.489367]], pins: [17],
+      source: 'R4 50 after return 30 until 4.6 კმ',
     },
     {
-      id: 'r4-6', limitKmh: 40, from: 150.51, to: 193.5, maxOffsetM: NEAR,
-      anchors: [[41.91891, 45.48517], [41.922156, 45.470399]], pins: [20, 21, 22, 23, 24],
-      source: 'R4 map Agmashenebeli return 40 only',
+      id: 'r4-6', limitKmh: 40, from: 137.63, to: 205.864, maxOffsetM: NEAR,
+      anchors: [[41.918678, 45.489367], [41.925179, 45.472509]], pins: [18, 19, 20, 21, 22, 23, 24, 25],
+      source: 'R4 40 from 4.6 კმ through Agmashenebeli return to 6.7 კმ',
     },
     {
-      id: 'r4-7', limitKmh: 50, from: 193.51, to: 235, maxOffsetM: NEAR,
-      anchors: [[41.922261, 45.470464], [41.93154, 45.475194]], pins: [25, 26, 27, 28, 29, 30, 31, 32],
-      source: 'R4 map N–S return to agency 50',
+      id: 'r4-7', limitKmh: 50, from: 205.87, to: 235, maxOffsetM: NEAR,
+      anchors: [[41.925179, 45.472509], [41.93154, 45.475194]], pins: [26, 27, 28, 29, 30, 31, 32],
+      source: 'R4 after 6.7 კმ N–S return 50',
     },
   ],
 }
