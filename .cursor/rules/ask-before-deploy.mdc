@@ -1,0 +1,16 @@
+---
+description: Check first, change after review, always ask before deploy
+alwaysApply: true
+---
+
+# Check → change → ask before upload
+
+User rule for CityRoute work:
+
+1. **Do not change automatically** without inspecting the current code/behavior first.
+2. **Check before changing** — read and confirm what is wrong / what will change.
+3. **Then change** only the needed files.
+4. **Never push or deploy (ატვირთვა / vercel / prod) unless the user explicitly says yes** when asked.
+5. After a fix is ready, **ask**: ატვირთო თუ არა? — wait for the answer.
+
+Also remember: automatic გაგრძელება logic is locked — do not touch it.

@@ -1,0 +1,15 @@
+---
+description: Never move pin coordinates without explicit user approval
+alwaysApply: true
+---
+
+# PIN locations are locked
+
+Do **not** change pin lat/lng, pin order, or relocate pins on the map unless the user explicitly asks to move a specific pin.
+
+- Softening GPS/audio gates is OK
+- Swapping or snapping pin coordinates is **not** OK without asking
+- If a pin location was changed by mistake, restore it immediately
+- Never move unrelated pins while editing audio/GPS logic
+- Route 2 pins 10–11 stay as currently set (correct)
+- Final 300m-right pins stay on the restored side: R1#32, R2#26, R3#28, R4#29
