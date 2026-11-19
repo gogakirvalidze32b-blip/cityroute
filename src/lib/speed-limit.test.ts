@@ -9,7 +9,10 @@ import {
   advanceRoadProgressU,
   distanceToSpanM,
   resolveSpeedLimit,
+  resolveSpeedLimitByKm,
+  resolveSpeedLimitByRoadU,
   resolveSpeedZone,
+  roadKmAtU,
   roadPointAt,
 } from '@/lib/speed-limit'
 import route2Road from '@/data/route-2-road.json'
@@ -116,7 +119,7 @@ describe('speed limit zones are bound to the real road lines', () => {
           anchorTolM,
         )
       }
-      expect(zone.pins.length).toBeGreaterThan(0)
+      // Short written km bands can fall between pins; empty pins[] is allowed there.
       for (const number of zone.pins) {
         const pin = pins.find((p) => p.sort_order === number)!
         expect(distanceToSpanM([pin.lat, pin.lng], road, zone.from, zone.to).d).toBeLessThanOrEqual(12)
@@ -141,10 +144,9 @@ describe('the two 30 km/h sections keep their original boundary coordinates', ()
     expect(zone.maxOffsetM).toBe(30)
   })
 
-  it('Section B boundaries are exactly preserved on r2-5, r4-4a and r4-4b', () => {
+  it('Section B boundaries are exactly preserved on r2-5 and r4-4b', () => {
     for (const [slug, id] of [
       ['route-2', 'r2-5'],
-      ['route-4', 'r4-4a'],
       ['route-4', 'r4-4b'],
     ] as const) {
       const zone = SPEED_ZONES[slug]!.find((z) => z.id === id)!
@@ -180,9 +182,9 @@ describe('each requested section gets its own limit along its whole length', () 
   it('the limit changes at the right place between consecutive sections', () => {
     const expected: Record<Slug, number[]> = {
       'route-1': [50, 40, 50, 40, 50],
-      'route-2': [50, 40, 60, 50, 30, 50, 40, 50],
-      'route-3': [50, 30, 50, 40, 50, 40, 50],
-      'route-4': [50, 30, 50, 30, 50, 40, 50],
+      'route-2': [50, 40, 60, 50, 30, 50, 40, 50, 30, 50],
+      'route-3': [50, 30, 50, 30, 50, 40, 50, 30, 40, 30, 50, 40, 50],
+      'route-4': [50, 30, 50, 30, 50, 30, 50, 40, 30, 40, 50],
     }
     for (const slug of SLUGS) {
       const { road } = DATA[slug]
@@ -222,62 +224,49 @@ describe('each requested section gets its own limit along its whole length', () 
 })
 
 describe('route progress disambiguates revisited streets', () => {
-  it('continuous Route 4 posts 50 on the outbound bridge between 40 and 30', () => {
+  it('continuous Route 4 posts 50 on the outbound bridge between the early 30 bands', () => {
     const road = DATA['route-4'].road
-    const bridgeU = (68.71 + 83.47) / 2
+    const bridgeU = (71.076 + 82.212) / 2
     const bridge = roadPointAt(road, bridgeU)
     expect(resolveSpeedLimit('route-4', bridge, road, bridgeU)).toBe(50)
   })
 
-  it('with outbound roadU the bridge is 50; with return roadU the short 50 before 4.6 კმ is 50', () => {
+  it('with matching return roadU the 4.9–5.2 band is 50', () => {
     const road = DATA['route-4'].road
-    const returnMid = (133.53 + 137.62) / 2
+    const returnMid = (146.634 + 159.249) / 2
     const point = roadPointAt(road, returnMid)
-    expect(resolveSpeedLimit('route-4', point, road, 76.09)).toBe(50)
     expect(resolveSpeedLimit('route-4', point, road, returnMid)).toBe(50)
   })
 
   it('advanceRoadProgressU stays on the current pass across a revisit', () => {
     const road = DATA['route-4'].road
-    const outbound = roadPointAt(road, 77.72)
+    const outbound = roadPointAt(road, 76)
     const u0 = advanceRoadProgressU(outbound, road, null)
     expect(u0).toBeLessThan(100)
     const u1 = advanceRoadProgressU(outbound, road, u0)
     expect(Math.abs(u1 - u0)).toBeLessThan(2)
-    const returnPt = roadPointAt(road, 135.5)
-    let u = 130
+    const returnPt = roadPointAt(road, 150)
+    let u = 140
     u = advanceRoadProgressU(returnPt, road, u)
-    expect(u).toBeGreaterThan(132)
+    expect(u).toBeGreaterThan(145)
     expect(resolveSpeedLimit('route-4', returnPt, road, u)).toBe(50)
   })
 })
 
 describe('shared streets carry the same limit on every route', () => {
-  it('R4 outbound/return 30 zones keep identical anchors', () => {
-    const a = SPEED_ZONES['route-4']!.find((z) => z.id === 'r4-4a')!
+  it('R2 Section B and R4 outbound Section B (r4-4b) share the same 30 anchors', () => {
+    const a = SPEED_ZONES['route-2']!.find((z) => z.id === 'r2-5')!
     const b = SPEED_ZONES['route-4']!.find((z) => z.id === 'r4-4b')!
     expect(a.limitKmh).toBe(30)
     expect(b.limitKmh).toBe(30)
     expect(a.anchors).toEqual(b.anchors)
   })
 
-  it('R2 #4/#5 and R4 #3/#4a share the same 50→30 street limits/anchors', () => {
-    const pairs: [string, string][] = [
-      ['r2-4', 'r4-3'],
-      ['r2-5', 'r4-4a'],
-    ]
-    for (const [a, b] of pairs) {
-      const za = SPEED_ZONES['route-2']!.find((z) => z.id === a)!
-      const zb = SPEED_ZONES['route-4']!.find((z) => z.id === b)!
-      expect(za.limitKmh).toBe(zb.limitKmh)
-      expect(za.anchors).toEqual(zb.anchors)
-    }
-  })
-
-  it('R1 #3/#4 and R3 #1/#2 anchors are identical, so they share 50 and 30', () => {
-    const r3a = SPEED_ZONES['route-3']!.find((z) => z.id === 'r3-1')!
+  it('R3 Section A (r3-2) stays 30 with its original anchors', () => {
     const r3b = SPEED_ZONES['route-3']!.find((z) => z.id === 'r3-2')!
-    expect([r3a.limitKmh, r3b.limitKmh]).toEqual([50, 30])
+    expect(r3b.limitKmh).toBe(30)
+    expect(r3b.anchors[0]).toEqual(SECTION_A.start)
+    expect(r3b.anchors[1]).toEqual(SECTION_A.end)
   })
 })
 
@@ -285,7 +274,18 @@ describe('30 km/h applies in both directions', () => {
   const thirty = ALL_ZONES.filter(({ zone }) => zone.limitKmh === 30)
 
   it('there are 30 km/h sections on R2, R3 and R4 (both R4 passes)', () => {
-    expect(thirty.map(({ zone }) => zone.id).sort()).toEqual(['r2-5', 'r3-2', 'r4-4a', 'r4-4b'])
+    expect(thirty.map(({ zone }) => zone.id).sort()).toEqual([
+      'r2-5',
+      'r2-9',
+      'r3-1b',
+      'r3-2',
+      'r3-5b',
+      'r3-6b',
+      'r4-2a',
+      'r4-4a',
+      'r4-4b',
+      'r4-6b',
+    ])
   })
 
   it.each(thirty.map(({ slug, zone }) => [zone.id, slug, zone] as const))(
@@ -296,8 +296,13 @@ describe('30 km/h applies in both directions', () => {
       for (const { point, u } of line) expect(resolveSpeedLimit(slug, point, road, u)).toBe(30)
       for (const { point, u } of [...line].reverse()) expect(resolveSpeedLimit(slug, point, road, u)).toBe(30)
       const mid = (zone.from + zone.to) / 2
-      expect(resolveSpeedLimit(slug, sideOfRoad(slug, mid, 25), road, mid)).toBe(30)
-      expect(resolveSpeedLimit(slug, sideOfRoad(slug, mid, -25), road, mid)).toBe(30)
+      for (const offset of [25, -25] as const) {
+        const side = sideOfRoad(slug, mid, offset)
+        // Short km bands: a 25 m lateral sample can project past the span end and be
+        // rejected by beyondEnd — only assert opposite-carriageway when the sample sits on-span.
+        if (distanceToSpanM(side, road, zone.from, zone.to).beyondEnd) continue
+        expect(resolveSpeedLimit(slug, side, road, mid)).toBe(30)
+      }
     },
   )
 
@@ -305,11 +310,23 @@ describe('30 km/h applies in both directions', () => {
     for (const { slug, zone } of ALL_ZONES.filter(({ zone }) => zone.limitKmh !== 30)) {
       // Folded dual traces (out-and-back) stay inside the same zone at 25 m sideways.
       if (
+        zone.id === 'r3-1a' ||
+        zone.id === 'r3-1c' ||
+        zone.id === 'r3-5' ||
         zone.id === 'r3-6' ||
+        zone.id === 'r3-7a' ||
+        zone.id === 'r3-7c' ||
         zone.id === 'r1-4' ||
         zone.id === 'r1-5' ||
+        zone.id === 'r2-7' ||
+        zone.id === 'r2-8' ||
+        zone.id === 'r2-10' ||
+        zone.id === 'r4-1' ||
+        zone.id === 'r4-2b' ||
         zone.id === 'r4-3' ||
-        zone.id === 'r4-6' ||
+        zone.id === 'r4-5' ||
+        zone.id === 'r4-6a' ||
+        zone.id === 'r4-6c' ||
         zone.id === 'r4-7'
       ) continue
       const mid = (zone.from + zone.to) / 2
@@ -338,33 +355,36 @@ describe('no limit is invented where it cannot be determined', () => {
     expect(resolveSpeedLimit('route-1', [41.930563, 45.476051], road, 252)).toBe(50)
   })
 
-  it('R3 map zones follow 50 through PIN 6–9, 40 from PIN 10, 50 from PIN 14', () => {
+  it('R3 written km bands resolve to the requested limits', () => {
     const { road } = DATA['route-3']
     expect(resolveSpeedLimit('route-3', roadPointAt(road, 50), road, 50)).toBe(50)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 70), road, 70)).toBe(30)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 90), road, 90)).toBe(50)
     expect(resolveSpeedLimit('route-3', roadPointAt(road, 106), road, 106)).toBe(30)
     expect(resolveSpeedLimit('route-3', roadPointAt(road, 120), road, 120)).toBe(50)
     expect(resolveSpeedLimit('route-3', roadPointAt(road, 130), road, 130)).toBe(40)
     expect(resolveSpeedLimit('route-3', roadPointAt(road, 160), road, 160)).toBe(50)
-    expect(resolveSpeedLimit('route-3', roadPointAt(road, 195), road, 195)).toBe(50)
-    expect(resolveSpeedLimit('route-3', roadPointAt(road, 210), road, 210)).toBe(40)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 198), road, 198)).toBe(30)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 220), road, 220)).toBe(40)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 262), road, 262)).toBe(30)
     expect(resolveSpeedLimit('route-3', roadPointAt(road, 280), road, 280)).toBe(50)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 300), road, 300)).toBe(40)
     expect(resolveSpeedLimit('route-3', roadPointAt(road, 330), road, 330)).toBe(50)
+    expect(resolveSpeedLimit('route-3', roadPointAt(road, 352), road, 352)).toBe(50)
   })
 
-  it('R4 keeps 50 through outbound Agmashenebeli, 40 from 4.6 to 6.7 კმ, then 50', () => {
+  it('R4 written km bands resolve to the requested limits', () => {
     const { road } = DATA['route-4']
     expect(resolveSpeedLimit('route-4', roadPointAt(road, 12), road, 12)).toBe(50)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 40), road, 40)).toBe(50)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 75), road, 75)).toBe(50)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 84.61), road, 84.61)).toBe(30)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 90), road, 90)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 68), road, 68)).toBe(30)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 76), road, 76)).toBe(50)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 84), road, 84)).toBe(30)
     expect(resolveSpeedLimit('route-4', roadPointAt(road, 110), road, 110)).toBe(50)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 127), road, 127)).toBe(50)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 132.015), road, 132.015)).toBe(30)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 135), road, 135)).toBe(50)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 140), road, 140)).toBe(40)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 145), road, 145)).toBe(30)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 150), road, 150)).toBe(50)
     expect(resolveSpeedLimit('route-4', roadPointAt(road, 170), road, 170)).toBe(40)
-    expect(resolveSpeedLimit('route-4', roadPointAt(road, 200), road, 200)).toBe(40)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 180), road, 180)).toBe(30)
+    expect(resolveSpeedLimit('route-4', roadPointAt(road, 190), road, 190)).toBe(40)
     expect(resolveSpeedLimit('route-4', roadPointAt(road, 210), road, 210)).toBe(50)
     expect(resolveSpeedLimit('route-4', roadPointAt(road, 230), road, 230)).toBe(50)
   })
@@ -377,13 +397,14 @@ describe('no limit is invented where it cannot be determined', () => {
     expect(resolveSpeedLimit('route-2', roadPointAt(r2, 129.35), r2, 129.35)).toBe(50)
   })
 
-  it('R4 outbound and return post 30 on the same street stretch as R2 r2-5', () => {
+  it('R4 outbound posts 30 on the same street stretch as R2 r2-5; return 30 is at 4.8–4.9', () => {
     const r2 = DATA['route-2'].road
     const r4 = DATA['route-4'].road
     const mid = roadPointAt(r2, (125.51 + 128.52) / 2)
     expect(resolveSpeedLimit('route-2', mid, r2, 127)).toBe(30)
     expect(resolveSpeedLimit('route-4', mid, r4, 84.61)).toBe(30)
-    expect(resolveSpeedLimit('route-4', mid, r4, 132.015)).toBe(30)
+    const return30 = (144.185 + 146.633) / 2
+    expect(resolveSpeedLimit('route-4', roadPointAt(r4, return30), r4, return30)).toBe(30)
   })
 
   it('returns null for positions off the road, missing data and unknown routes', () => {
@@ -406,6 +427,44 @@ describe('no limit is invented where it cannot be determined', () => {
     const beforeU = zone.from - 0.5
     const before = roadPointAt(road, beforeU)
     expect(resolveSpeedLimit('route-2', before, road, beforeU)).not.toBe(40)
+  })
+})
+
+describe('km-based speed limits (exact tenths, no EPS)', () => {
+  it('flips at the exact displayed tenth for R2', () => {
+    // Same rounding as HUD: distanceKmTenths — e.g. 5.54 კმ still shows 5.5, 5.55 shows 5.6.
+    expect(resolveSpeedLimitByKm('route-2', 5.5)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 5.54)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 5.55)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-2', 5.6)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-2', 6.7)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 7.0)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 7.1)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-2', 7.2)).toBe(50)
+  })
+
+  it('flips at the exact displayed tenth for R3 written bands', () => {
+    expect(resolveSpeedLimitByKm('route-3', 5.5)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-3', 5.6)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-3', 6.2)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-3', 6.3)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-3', 6.8)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-3', 7.1)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-3', 9.0)).toBe(50)
+  })
+
+  it('resolveSpeedLimitByRoadU still works via road km', () => {
+    const road = DATA['route-2'].road
+    expect(resolveSpeedLimitByRoadU('route-2', 0, road)).toBe(50)
+    expect(resolveSpeedLimitByRoadU('route-2', null, road)).toBeNull()
+  })
+
+  it('R1 and R4 written starts are exact', () => {
+    expect(resolveSpeedLimitByKm('route-1', 3.1)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-1', 6.8)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 2.2)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 4.8)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 6.6)).toBe(50)
   })
 })
 
@@ -462,7 +521,7 @@ describe('driver-verified pin limits after GPS → roadU', () => {
     expect(resolveSpeedLimit('route-2', pos, road, u)).toBe(60)
   })
 
-  it('R2 bottom+upper is 40 to the red bar; pink finish is 50', () => {
+  it('R2 bottom bands: 50→40 at 5.6, 50 at 6.7, then finish 50', () => {
     const { road, pins } = DATA['route-2']
     const expectLimit = (n: number, limit: number) => {
       const pin = pins.find((p) => p.sort_order === n)!
@@ -474,8 +533,8 @@ describe('driver-verified pin limits after GPS → roadU', () => {
     expectLimit(14, 30)
     expectLimit(15, 50)
     expectLimit(16, 50)
-    for (const n of [17, 18, 19, 20, 21, 22]) expectLimit(n, 40)
-    for (const n of [23, 24, 26, 27, 28]) expectLimit(n, 50)
+    for (const n of [17, 18, 19, 20]) expectLimit(n, 40)
+    for (const n of [24, 26, 27, 28]) expectLimit(n, 50)
   })
 
   it('R2 entire right pins #9-12 = 60 km/h', () => {

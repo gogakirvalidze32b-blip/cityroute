@@ -115,7 +115,7 @@ import {
   type RoundaboutReturnGateState,
   type RoundaboutPinRoute,
 } from '@/lib/pin-audio'
-import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
+import { advanceRoadProgressU, resolveSpeedLimitByOdometerMeters } from '@/lib/speed-limit'
 import { SPEED_LIMIT_DEBUG_PANEL } from '@/lib/debug-flags'
 import type { PreviewGpsSource } from '@/lib/preview-gps-source'
 import {
@@ -150,7 +150,6 @@ const AUDIO_RETRY_MAX_MS = 4000
 const AUDIO_QUEUE_WATCHDOG_MS = 13_000
 /** Temporary engine busy/cancel retries before the PIN advances anyway. */
 const AUDIO_BUSY_MAX_RETRIES = 8
-const SPEED_LIMIT_FIX_STALE_MS = 20_000
 
 function initialHandledOrders(
   saved: SavedExamState,
@@ -418,9 +417,7 @@ export function ExamDriveSession({
   const [rawPos, setRawPos] = useState<GpsPosition | null>(null)
   const [userPos, setUserPos] = useState<LatLng | null>(savedState?.userPos || null)
   const currentPositionRef = useRef<LatLng | null>(savedState?.userPos || null)
-  const [speedLimitFixSlug, setSpeedLimitFixSlug] = useState<string | null>(null)
-  const speedLimitFixTimerRef = useRef<number | null>(null)
-  /** Along-road u on examRoadTrace for speed zones (monotonic; optional for resolver). */
+  /** Along-road u on examRoadTrace for km-based speed zones (monotonic). */
   const [speedRoadU, setSpeedRoadU] = useState<number | null>(null)
   const speedRoadURef = useRef<number | null>(null)
   const speedLimitRoadRef = useRef<LatLng[] | null>(null)
@@ -773,9 +770,8 @@ export function ExamDriveSession({
     savedState ? savedProgressOrders : null,
   )
   const pinsActive = voicePins.length > 0
-  // Posted limit comes from the vehicle's real position on the route's road line (not from PIN proximity).
-  // null (shown as "—") whenever the position is not inside a known zone.
-  // roadU disambiguates Route 4 (and any route) where the same street is driven more than once.
+  // Posted limit from along-road kilometres (speedRoadU → km). Always shown while the road
+  // trace exists — not gated on GPS freshness or lateral distance to the line.
   const speedLimitRoad = useMemo(() => examRoadTrace(route.slug, voicePins), [route.slug, voicePins])
   speedLimitRoadRef.current = speedLimitRoad
   const roundaboutGateGeometry = useMemo(() => {
@@ -807,59 +803,21 @@ export function ExamDriveSession({
     previewProgress.status === 'resume' &&
     sortedPins.length > 0 &&
     previewProgress.nextSortOrder === null
+  // Limit follows the same 0.1 კმ digit as traveledKmLabel (odometer) — flips instantly at that tenth.
   const speedLimitKmh = useMemo(
-    () =>
-      speedLimitFixSlug === route.slug
-        ? resolveSpeedLimit(route.slug, userPos, speedLimitRoad, speedRoadU)
-        : null,
-    [route.slug, userPos, speedLimitRoad, speedRoadU, speedLimitFixSlug],
+    () => resolveSpeedLimitByOdometerMeters(route.slug, distanceMeters),
+    [route.slug, distanceMeters],
   )
-
-  const clearSpeedLimitFixFreshness = useCallback(() => {
-    if (speedLimitFixTimerRef.current !== null) {
-      window.clearTimeout(speedLimitFixTimerRef.current)
-      speedLimitFixTimerRef.current = null
-    }
-    setSpeedLimitFixSlug(null)
-  }, [])
-
-  const markSpeedLimitFixFresh = useCallback(() => {
-    if (speedLimitFixTimerRef.current !== null) {
-      window.clearTimeout(speedLimitFixTimerRef.current)
-    }
-    setSpeedLimitFixSlug(route.slug)
-    speedLimitFixTimerRef.current = window.setTimeout(() => {
-      speedLimitFixTimerRef.current = null
-      setSpeedLimitFixSlug(null)
-    }, SPEED_LIMIT_FIX_STALE_MS)
-  }, [route.slug])
 
   useEffect(() => {
     speedRoadURef.current = null
     setSpeedRoadU(null)
   }, [route.slug, speedLimitRoad])
 
-  useEffect(() => {
-    setSpeedLimitFixSlug(null)
-    if (speedLimitFixTimerRef.current !== null) {
-      window.clearTimeout(speedLimitFixTimerRef.current)
-      speedLimitFixTimerRef.current = null
-    }
-    return () => {
-      if (speedLimitFixTimerRef.current !== null) {
-        window.clearTimeout(speedLimitFixTimerRef.current)
-        speedLimitFixTimerRef.current = null
-      }
-    }
-  }, [route.slug])
-
   const updateSpeedRoadProgress = useCallback((pos: LatLng | null, reset = false) => {
     const road = speedLimitRoadRef.current
-    if (!pos || !road || road.length < 2) {
-      speedRoadURef.current = null
-      setSpeedRoadU(null)
-      return
-    }
+    // Keep last roadU on missing GPS so the km-based limit stays on.
+    if (!pos || !road || road.length < 2) return
     const prev = reset ? null : speedRoadURef.current
     const next = advanceRoadProgressU(pos, road, prev)
     speedRoadURef.current = next
@@ -1184,7 +1142,6 @@ export function ExamDriveSession({
       setRawPos(pos)
       currentPositionRef.current = raw
       setUserPos(raw)
-      markSpeedLimitFixFresh()
       updateSpeedRoadProgress(raw)
       setHeading(resolveHeading(pos, null, raw, polyline))
       prevGpsRef.current = pos
@@ -1201,7 +1158,7 @@ export function ExamDriveSession({
     } finally {
       if (!silent) setGpsStarting(false)
     }
-  }, [polyline, previewGpsSource, markSpeedLimitFixFresh, updateSpeedRoadProgress])
+  }, [polyline, previewGpsSource, updateSpeedRoadProgress])
 
   useEffect(() => {
     if (previewGpsSource || gpsStarted || gpsStarting || getGpsEnvironmentIssue()) return
@@ -1421,7 +1378,6 @@ export function ExamDriveSession({
         setGpsError(null)
         const raw = filtered.position
         setUserPos(raw)
-        markSpeedLimitFixFresh()
         currentPositionRef.current = raw
         updateSpeedRoadProgress(raw)
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
@@ -1837,12 +1793,12 @@ export function ExamDriveSession({
       },
       (err) => {
         setGpsError(formatGpsError(err))
-        clearSpeedLimitFixFreshness()
+        // Keep last speedRoadU / km-based limit; do not clear on GPS loss.
       },
     )
     // Intentionally omit `phase` from deps: use phaseRef so GPS watch is not torn down on
     // active→summary (temporary GPS gaps must not unmount/remount the route map).
-  }, [gpsStarted, voicePins, route.slug, features.routeAudio, polyline, previewGpsSource, clearSpeedLimitFixFreshness, markSpeedLimitFixFresh, updateSpeedRoadProgress])
+  }, [gpsStarted, voicePins, route.slug, features.routeAudio, polyline, previewGpsSource, updateSpeedRoadProgress])
 
   useEffect(() => {
     if (

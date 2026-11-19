@@ -153,7 +153,7 @@ async function driveToZone() {
   await sendZoneFix()
 }
 
-describe('Speed Limit GPS freshness', () => {
+describe('Speed Limit stays on without fresh GPS', () => {
   beforeEach(() => {
     localStorage.clear()
     gps.onFix = null
@@ -168,7 +168,7 @@ describe('Speed Limit GPS freshness', () => {
     vi.useRealTimers()
   })
 
-  it('hides the last posted limit on GPS error and restores it on the next fix', async () => {
+  it('keeps the posted limit on GPS error (km-based, always on)', async () => {
     await startSession()
     await driveToZone()
     expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
@@ -182,13 +182,10 @@ describe('Speed Limit GPS freshness', () => {
         TIMEOUT: 3,
       } as GeolocationPositionError)
     })
-    expect(screen.getByTestId('speed-limit').textContent).toBe('unknown')
-
-    await sendZoneFix()
     expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
   })
 
-  it('hides the posted limit when no fresh GPS fix arrives before the stale timeout', async () => {
+  it('keeps the posted limit after a long gap without GPS fixes', async () => {
     vi.useFakeTimers()
     await startSession()
     await driveToZone()
@@ -197,9 +194,11 @@ describe('Speed Limit GPS freshness', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(20_000)
     })
-    expect(screen.getByTestId('speed-limit').textContent).toBe('unknown')
+    expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
+  })
 
-    await sendZoneFix()
+  it('shows the first-zone limit from km 0 before any progress fixes', async () => {
+    await startSession()
     expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
   })
 })

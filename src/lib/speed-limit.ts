@@ -1,5 +1,7 @@
 import type { LatLng } from '@/lib/gps'
+import { SPEED_KM_BANDS } from '@/data/speed-km-bands'
 import { SPEED_ZONES, type SpeedZone } from '@/data/speed-limits'
+import { distanceKmTenths } from '@/lib/route-odometer'
 
 const M_PER_DEG_LAT = 110_540
 const mPerDegLng = (lat: number) => 111_320 * Math.cos((lat * Math.PI) / 180)
@@ -202,4 +204,73 @@ export function resolveSpeedLimit(
   roadU?: number | null,
 ): number | null {
   return resolveSpeedZone(slug, position, road, roadU)?.zone.limitKmh ?? null
+}
+
+function haversineMeters(a: LatLng, b: LatLng): number {
+  const R = 6371000
+  const φ1 = (a[0] * Math.PI) / 180
+  const φ2 = (b[0] * Math.PI) / 180
+  const Δφ = ((b[0] - a[0]) * Math.PI) / 180
+  const Δλ = ((b[1] - a[1]) * Math.PI) / 180
+  const sinΔφ = Math.sin(Δφ / 2)
+  const sinΔλ = Math.sin(Δλ / 2)
+  const h = sinΔφ * sinΔφ + Math.cos(φ1) * Math.cos(φ2) * sinΔλ * sinΔλ
+  return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h))
+}
+
+/**
+ * Along-road distance in kilometres from the start of `road` to position `u`
+ * (vertex index + fraction). Matches the km bands written for SPEED_ZONES.
+ */
+export function roadKmAtU(road: readonly LatLng[], u: number): number {
+  if (!road || road.length < 2 || !Number.isFinite(u)) return 0
+  const clamped = Math.max(0, Math.min(u, road.length - 1))
+  const i = Math.min(Math.floor(clamped), road.length - 2)
+  const f = clamped - i
+  let metres = 0
+  for (let k = 0; k < i; k += 1) {
+    metres += haversineMeters(road[k]!, road[k + 1]!)
+  }
+  metres += f * haversineMeters(road[i]!, road[i + 1]!)
+  return metres / 1000
+}
+
+/**
+ * Posted limit from exact kilometre bands ({@link SPEED_KM_BANDS}).
+ * Uses the same 0.1 კმ rounding as the HUD distance label — the limit flips the
+ * instant that tenth appears (no EPS / no early or late switch).
+ * `road` is unused (kept for call-site compatibility).
+ */
+export function resolveSpeedLimitByKm(
+  slug: string,
+  km: number,
+  _road?: readonly LatLng[] | null | undefined,
+): number | null {
+  const bands = SPEED_KM_BANDS[slug]
+  if (!bands?.length || !Number.isFinite(km)) return null
+  // Same digit the HUD shows: Math.round(m/100)/10 via metres, or tenths of km.
+  const t = distanceKmTenths(km * 1000)
+  for (let i = 0; i < bands.length; i += 1) {
+    const band = bands[i]!
+    const last = i === bands.length - 1
+    if (t >= band.fromKm && (last ? t <= band.toKm : t < band.toKm)) return band.limitKmh
+  }
+  if (t < bands[0]!.fromKm) return bands[0]!.limitKmh
+  return bands[bands.length - 1]!.limitKmh
+}
+
+/** Posted limit from along-road progress `roadU` (exact km bands). */
+export function resolveSpeedLimitByRoadU(
+  slug: string,
+  roadU: number | null | undefined,
+  road: readonly LatLng[] | null | undefined,
+): number | null {
+  if (roadU == null || !Number.isFinite(roadU) || !road) return null
+  return resolveSpeedLimitByKm(slug, roadKmAtU(road, roadU), road)
+}
+
+/** Posted limit from live odometer metres — same source as the HUD კმ label. */
+export function resolveSpeedLimitByOdometerMeters(slug: string, meters: number): number | null {
+  if (!Number.isFinite(meters)) return null
+  return resolveSpeedLimitByKm(slug, Math.max(0, meters) / 1000)
 }

@@ -3,7 +3,7 @@ import { ExamLiveMapLeaflet } from '@/components/ExamLiveMapLeaflet'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { applyRelocatedPin } from '@/hooks/useRoutes'
 import { examRoadTrace, examRouteLine } from '@/lib/pin-route-line'
-import { advanceRoadProgressU, resolveSpeedLimit } from '@/lib/speed-limit'
+import { advanceRoadProgressU, resolveSpeedLimitByKm, roadKmAtU } from '@/lib/speed-limit'
 import type { LatLng } from '@/lib/gps'
 
 const SLUGS = ['route-1', 'route-2', 'route-3', 'route-4']
@@ -61,7 +61,11 @@ export function MapPreviewPage() {
     }
     return u
   }, [road, pins, safeIndex])
-  const speedLimit = resolveSpeedLimit(route.slug, userPos, road, speedRoadU)
+  const speedLimit = resolveSpeedLimitByKm(
+    route.slug,
+    road ? roadKmAtU(road, speedRoadU ?? 0) : 0,
+    road,
+  )
   const heading = nextPin
     ? bearing(userPos, [nextPin.lat, nextPin.lng])
     : safeIndex > 0
