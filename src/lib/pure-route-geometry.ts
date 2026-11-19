@@ -135,6 +135,30 @@ function bearingDegrees(from: LatLng, to: LatLng): number {
   return (Math.atan2(y, x) / DEGREES_TO_RADIANS + 360) % 360
 }
 
+/** Forward along-route bearing at a chainage (for lit-PIN / dual-carriage disambiguation). */
+function bearingAtChainageMeters(
+  route: PreparedRouteGeometry,
+  chainageMeters: number,
+): number | null {
+  if (
+    !Number.isFinite(chainageMeters) ||
+    chainageMeters < 0 ||
+    chainageMeters > route.totalLengthMeters ||
+    route.coordinates.length < 2
+  ) {
+    return null
+  }
+  let segmentIndex = 0
+  for (let index = 0; index < route.cumulativeMeters.length - 1; index++) {
+    if (route.cumulativeMeters[index + 1] >= chainageMeters) {
+      segmentIndex = index
+      break
+    }
+    segmentIndex = index
+  }
+  return bearingDegrees(route.coordinates[segmentIndex], route.coordinates[segmentIndex + 1])
+}
+
 function localMeters(origin: LatLng, point: LatLng): readonly [number, number] {
   const meanLatitude = ((origin[0] + point[0]) / 2) * DEGREES_TO_RADIANS
   const x = (point[1] - origin[1]) * DEGREES_TO_RADIANS * EARTH_RADIUS_METERS * Math.cos(meanLatitude)
@@ -460,6 +484,17 @@ export function matchGpsPosition(
     if (candidates.length === 0) return rejected('ambiguous-route-match', nearest)
   }
 
+  const preferredForwardChainageMeters = options.expectedForwardChainageMeters
+  const litPinBearingDegrees =
+    preferredForwardChainageMeters !== undefined
+      ? bearingAtChainageMeters(route, preferredForwardChainageMeters)
+      : null
+  const preferTowardLitPin =
+    previous != null && preferredForwardChainageMeters !== undefined
+  const litPinStillAhead =
+    preferTowardLitPin &&
+    preferredForwardChainageMeters! > previous.chainageMeters
+
   if (previous) {
     const elapsedSeconds = (fix.timestampMs - previous.timestampMs) / 1000
     const allowedTravelMeters =
@@ -477,16 +512,100 @@ export function matchGpsPosition(
           fix.headingDegrees == null || Math.abs(deltaMeters) <= stationaryThresholdMeters
             ? 0
             : angleDifferenceDegrees(fix.headingDegrees, movementBearing) * 0.05
+        // Lit PIN ahead: punish reverse snaps on loops / dual carriage so travel
+        // stays on the same road toward that PIN.
+        const reverseVsPinPenalty =
+          litPinStillAhead && deltaMeters < -stationaryThresholdMeters ? 40 : 0
+        // Same compass heading on a parallel opposite carriageway: geographic step
+        // exceeds along-route progress — keep the arrow on the lit-PIN road.
+        const geographicStepMeters = distanceMeters(previous.position, projection.position)
+        const alongStepMeters = Math.abs(deltaMeters)
+        const sideJumpPenalty =
+          geographicStepMeters > alongStepMeters + 10
+            ? (geographicStepMeters - alongStepMeters) * 1.5
+            : 0
+        const pastLitPinPenalty =
+          litPinStillAhead &&
+          projection.chainageMeters > preferredForwardChainageMeters! + 20
+            ? 35
+            : 0
+        // Opposite carriageway near agency/Alazani: same place, bearing ~+180° from
+        // the lit-PIN road run (e.g. 206° vs 26°). Never prefer that for the arrow.
+        const oppositeCarriagePenalty =
+          litPinBearingDegrees != null &&
+          angleDifferenceDegrees(
+            projection.segmentBearingDegrees,
+            litPinBearingDegrees,
+          ) >= 90
+            ? 55
+            : 0
         return {
           projection,
           deltaMeters,
           score:
             projection.crossTrackMeters +
-            Math.abs(deltaMeters) * 0.01 +
-            headingPenalty,
+            Math.abs(deltaMeters) * (preferTowardLitPin ? 0.04 : 0.01) +
+            headingPenalty +
+            reverseVsPinPenalty +
+            sideJumpPenalty +
+            pastLitPinPenalty +
+            oppositeCarriagePenalty,
         }
       })
-      .filter(({ deltaMeters }) => Math.abs(deltaMeters) <= allowedTravelMeters)
+      .filter(({ deltaMeters, projection }) => {
+        if (Math.abs(deltaMeters) <= allowedTravelMeters) return true
+        // Escape hatch: if we are stuck on the opposite Alazani carriageway, allow a
+        // one-shot snap back onto the lit-PIN road near its expected chainage.
+        return (
+          litPinBearingDegrees != null &&
+          preferredForwardChainageMeters !== undefined &&
+          angleDifferenceDegrees(
+            projection.segmentBearingDegrees,
+            litPinBearingDegrees,
+          ) < 90 &&
+          Math.abs(projection.chainageMeters - preferredForwardChainageMeters) <= 150
+        )
+      })
+
+    // Hard lock onto the lit-PIN corridor / bearing when the PIN is still ahead.
+    if (litPinStillAhead && preferredForwardChainageMeters !== undefined) {
+      const corridorMin = Math.max(
+        0,
+        previous.chainageMeters - Math.max(allowedTravelMeters, 40),
+      )
+      const corridorMax = preferredForwardChainageMeters + 20
+      const sameRoadTowardPin = candidates.filter(
+        (candidate) =>
+          candidate.projection.chainageMeters >= corridorMin &&
+          candidate.projection.chainageMeters <= corridorMax &&
+          (litPinBearingDegrees == null ||
+            angleDifferenceDegrees(
+              candidate.projection.segmentBearingDegrees,
+              litPinBearingDegrees,
+            ) < 90),
+      )
+      if (sameRoadTowardPin.length > 0) {
+        candidates = sameRoadTowardPin
+      }
+    } else if (
+      preferTowardLitPin &&
+      preferredForwardChainageMeters !== undefined &&
+      litPinBearingDegrees != null
+    ) {
+      // Already past the lit PIN on a wrong opposite run — snap back to the PIN road.
+      const aligned = candidates.filter(
+        (candidate) =>
+          angleDifferenceDegrees(
+            candidate.projection.segmentBearingDegrees,
+            litPinBearingDegrees,
+          ) < 90 &&
+          Math.abs(candidate.projection.chainageMeters - preferredForwardChainageMeters) <=
+            Math.max(allowedTravelMeters, 80),
+      )
+      if (aligned.length > 0) {
+        candidates = aligned
+      }
+    }
   }
 
   if (candidates.length === 0) return rejected('gps-jump', nearest)
@@ -500,7 +619,7 @@ export function matchGpsPosition(
     competingCandidate &&
     competingCandidate.score - best.score <= ambiguityToleranceMeters
   ) {
-    const preferredChainageMeters = options.expectedForwardChainageMeters
+    const preferredChainageMeters = preferredForwardChainageMeters
     const forwardCandidates =
       previous &&
       preferredChainageMeters !== undefined &&
@@ -518,15 +637,17 @@ export function matchGpsPosition(
               Math.abs(second.projection.chainageMeters - preferredChainageMeters),
           )
       : []
-    const headingAwareForwardCandidates = fix.headingDegrees == null
-      ? forwardCandidates
-      : forwardCandidates.filter(
-          (candidate) =>
-            angleDifferenceDegrees(
-              fix.headingDegrees!,
-              candidate.projection.segmentBearingDegrees,
-            ) <= 45,
-        )
+    // Lit PIN ahead: do not let noisy/opposing GPS heading discard the forward run.
+    const headingAwareForwardCandidates =
+      preferTowardLitPin || fix.headingDegrees == null
+        ? forwardCandidates
+        : forwardCandidates.filter(
+            (candidate) =>
+              angleDifferenceDegrees(
+                fix.headingDegrees!,
+                candidate.projection.segmentBearingDegrees,
+              ) <= 45,
+          )
     const distinctForwardChainages = headingAwareForwardCandidates.filter(
       (candidate, index) =>
         index === 0 ||
@@ -552,16 +673,47 @@ export function matchGpsPosition(
             candidate.projection.segmentBearingDegrees,
           ) >= 90,
       )
-    if (distinctForwardChainages.length === 1 && reverseCandidateSupportsAmbiguity) {
-      best = distinctForwardChainages[0]
-    } else if (distinctForwardChainages.length === 1 && fix.headingDegrees == null) {
+    // Unique forward continuation toward the lit PIN always wins; otherwise keep
+    // the older heading/null-heading gates so opposing GPS heading stays ambiguous.
+    if (
+      distinctForwardChainages.length === 1 &&
+      (preferTowardLitPin ||
+        reverseCandidateSupportsAmbiguity ||
+        fix.headingDegrees == null)
+    ) {
       best = distinctForwardChainages[0]
     } else {
       return rejected('ambiguous-route-match', best.projection)
     }
   }
+
+  // If a lit PIN is ahead and the best snap went reverse onto a worse road, prefer
+  // a forward candidate only when it is at least as on-road (no forward teleport).
+  if (preferTowardLitPin && best.deltaMeters < -stationaryThresholdMeters) {
+    const forwardTowardPin = candidates
+      .filter(
+        (candidate) =>
+          candidate.deltaMeters > stationaryThresholdMeters &&
+          candidate.projection.chainageMeters <= preferredForwardChainageMeters! + 20 &&
+          candidate.projection.crossTrackMeters <= best.projection.crossTrackMeters + 3 &&
+          candidate.score - best.score <= ambiguityToleranceMeters,
+      )
+      .sort((first, second) => first.score - second.score)[0]
+    if (forwardTowardPin) best = forwardTowardPin
+  }
   if (best.projection.crossTrackMeters > maxCrossTrackMeters) {
-    return rejected('off-route', best.projection)
+    // Lit-PIN road can sit ~50 m from GPS when the opposite carriageway is nearer;
+    // still accept the aligned run so the arrow does not freeze on 180°-wrong bearing.
+    const litAlignedRecovery =
+      litPinBearingDegrees != null &&
+      angleDifferenceDegrees(
+        best.projection.segmentBearingDegrees,
+        litPinBearingDegrees,
+      ) < 90 &&
+      best.projection.crossTrackMeters <= Math.max(maxCrossTrackMeters, 70)
+    if (!litAlignedRecovery) {
+      return rejected('off-route', best.projection)
+    }
   }
 
   const direction: RouteDirection = previous

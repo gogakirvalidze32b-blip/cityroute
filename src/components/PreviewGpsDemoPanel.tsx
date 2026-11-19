@@ -20,7 +20,9 @@ import {
 } from '@/lib/preview-gps-demo-speed'
 import {
   prepareDemoRouteGeometry,
+  resolveDemoNextPinAfterChainage,
   resolveDemoPinChainage,
+  resolveDemoStartPinChainage,
 } from '@/lib/preview-gps-demo-pin'
 import type { ActiveRouteId, PreparedRouteGeometry, RouteProjection } from '@/lib/pure-route-geometry'
 import type { PreviewGpsSource } from '@/lib/preview-gps-source'
@@ -76,7 +78,12 @@ function demoPinChainageMeters(
   sortOrder: number,
   afterChainageMeters = 0,
 ): number {
-  const chainage = resolveDemoPinChainage(geometry, route.pins, sortOrder, afterChainageMeters)
+  const chainage = resolveDemoStartPinChainage(
+    geometry,
+    route.pins,
+    sortOrder,
+    afterChainageMeters,
+  )
   if (chainage === null) {
     throw new Error(`PIN ${sortOrder} cannot be placed on the displayed route line in sequence.`)
   }
@@ -116,6 +123,9 @@ export function PreviewGpsDemoPanel({
     [route.pins],
   )
   const [startPinOrder, setStartPinOrder] = useState(sortedPins[0]?.sort_order ?? 1)
+  /** When set, PLAY starts GPS at this chainage (km jump) instead of PIN approach lead. */
+  const [startChainageMeters, setStartChainageMeters] = useState<number | null>(null)
+  const [startKmInput, setStartKmInput] = useState('0')
   /** Selected cruise ceiling; live speed adapts 20↔this based on distance to next PIN. */
   const [speedKmh, setSpeedKmh] = useState<DemoSpeedKmh>(DEFAULT_DEMO_SPEED_KMH)
   const [timeScale, setTimeScale] = useState<DemoTimeScale>(DEFAULT_DEMO_TIME_SCALE)
@@ -132,6 +142,7 @@ export function PreviewGpsDemoPanel({
   const runningRef = useRef(false)
   const stopAtPinRef = useRef<number | null>(null)
   const controlsRef = useRef<PreviewDemoControls | null>(controls)
+  const totalKm = geometry.totalLengthMeters / 1000
 
   cruiseSpeedRef.current = speedKmh
   timeScaleRef.current = timeScale
@@ -164,6 +175,9 @@ export function PreviewGpsDemoPanel({
         const pinChainage = demoPinChainageMeters(route, geometry, pinOrder, after)
         liveSpeedRef.current = DEMO_NEAR_PIN_SPEED_KMH
         setLiveSpeedKmh(DEMO_NEAR_PIN_SPEED_KMH)
+        // Pin pick clears km-jump; PLAY then uses PIN approach unless user types a კმ again.
+        setStartChainageMeters(null)
+        setStartKmInput('0')
         // Exact pin chainage (not approach lead) — lead would sit nearer the previous PIN.
         publishAt(pinChainage, DEMO_NEAR_PIN_SPEED_KMH)
         setStatus(`მზადაა · GPS PIN ${pinOrder}-თან · შემდეგი PIN ${pinOrder}`)
@@ -172,6 +186,38 @@ export function PreviewGpsDemoPanel({
       }
     },
     [geometry, publishAt, route],
+  )
+
+  /** Park at along-route km and select the next PIN at/after that point (demo-only). */
+  const seekToKm = useCallback(
+    (rawKm: number, labelKm?: string) => {
+      if (controlsRef.current?.isActive()) {
+        setStatus('სესია აქტიურია — კმ-ზე გადასვლა მხოლოდ PLAY-მდე (RESET DEMO და მერე)')
+        return null
+      }
+      if (!Number.isFinite(rawKm)) {
+        setStatus('კილომეტრი არასწორია')
+        return null
+      }
+      const km = Math.max(0, Math.min(rawKm, totalKm))
+      const shown = labelKm?.trim() || km.toFixed(1)
+      const chainage = km * 1000
+      const next = resolveDemoNextPinAfterChainage(geometry, route.pins, chainage)
+      liveSpeedRef.current = DEMO_NEAR_PIN_SPEED_KMH
+      setLiveSpeedKmh(DEMO_NEAR_PIN_SPEED_KMH)
+      setStartChainageMeters(chainage)
+      setStartKmInput(shown)
+      publishAt(chainage, DEMO_NEAR_PIN_SPEED_KMH)
+      if (!next) {
+        setStatus(`მზადაა · ${shown} კმ · შემდეგი PIN აღარ არის (ტრასის ბოლო)`)
+        return { km, chainage, pinOrder: null as number | null, shown }
+      }
+      setStartPinOrder(next.sortOrder)
+      setNextPinOrder(next.sortOrder)
+      setStatus(`მზადაა · ${shown} კმ · შემდეგი PIN ${next.sortOrder}`)
+      return { km, chainage, pinOrder: next.sortOrder, shown }
+    },
+    [geometry, publishAt, route.pins, totalKm],
   )
 
   const pause = useCallback((message = 'შეჩერებულია') => {
@@ -312,28 +358,58 @@ export function PreviewGpsDemoPanel({
       setStatus('სესია უკვე აქტიურია — გამოიყენეთ RESUME ან RESET DEMO')
       return
     }
-    const manualStart = api.manualStartPinOrder()
-    const playPinOrder = manualStart ?? startPinOrder
-    if (manualStart !== null && manualStart !== startPinOrder) {
-      setStartPinOrder(manualStart)
-      setNextPinOrder(manualStart)
+
+    // PLAY reads the კმ field directly — no need to press „კმ-ზე“ first.
+    const typedRaw = startKmInput.replace(',', '.').trim()
+    const typedKm = typedRaw === '' ? NaN : Number(typedRaw)
+    const wantKm =
+      (Number.isFinite(typedKm) && typedKm > 0) ||
+      (startChainageMeters !== null && startChainageMeters > 0)
+
+    let playPinOrder = api.manualStartPinOrder() ?? startPinOrder
+    let startChainage = 0
+    let kmLabel: string | null = null
+
+    if (wantKm) {
+      const rawKm =
+        Number.isFinite(typedKm) && typedKm > 0
+          ? typedKm
+          : (startChainageMeters as number) / 1000
+      const jumped = seekToKm(rawKm, Number.isFinite(typedKm) && typedKm > 0 ? typedRaw : undefined)
+      if (!jumped || jumped.pinOrder === null) {
+        setStatus(
+          jumped
+            ? `${jumped.shown} კმ-ზე შემდეგი PIN აღარ არის`
+            : 'კილომეტრზე გადასვლა ვერ მოხერხდა',
+        )
+        return
+      }
+      playPinOrder = jumped.pinOrder
+      startChainage = jumped.chainage
+      kmLabel = jumped.shown
+    } else {
+      const manualStart = api.manualStartPinOrder()
+      if (manualStart !== null && manualStart !== startPinOrder) {
+        setStartPinOrder(manualStart)
+        setNextPinOrder(manualStart)
+        playPinOrder = manualStart
+      }
     }
+
     try {
       pause('ვიწყებ DEMO GPS-ს')
-      const priorOrder = [...route.pins]
-        .map((pin) => pin.sort_order)
-        .filter((order) => order < playPinOrder)
-        .sort((a, b) => b - a)[0]
-      const after =
-        priorOrder !== undefined
-          ? resolveDemoPinChainage(geometry, route.pins, priorOrder, 0) ?? 0
-          : 0
-      const pinChainage = demoPinChainageMeters(route, geometry, playPinOrder, after)
-      // Start upstream of the PIN so the arrow visibly approaches instead of spawning on it.
-      const startChainage = Math.max(
-        0,
-        pinChainage - DEMO_START_APPROACH_LEAD_METERS,
-      )
+      if (!wantKm) {
+        const priorOrder = [...route.pins]
+          .map((pin) => pin.sort_order)
+          .filter((order) => order < playPinOrder)
+          .sort((a, b) => b - a)[0]
+        const after =
+          priorOrder !== undefined
+            ? resolveDemoPinChainage(geometry, route.pins, priorOrder, 0) ?? 0
+            : 0
+        const pinChainage = demoPinChainageMeters(route, geometry, playPinOrder, after)
+        startChainage = Math.max(0, pinChainage - DEMO_START_APPROACH_LEAD_METERS)
+      }
       const startProjection = positionAtChainage(geometry, startChainage)
       chainageRef.current = startProjection.chainageMeters
       source.clear()
@@ -343,7 +419,9 @@ export function PreviewGpsDemoPanel({
       await api.startAtPin(playPinOrder)
       setNextPinOrder(playPinOrder)
       setStatus(
-        `DEMO აქტიურია PIN ${playPinOrder}-დან · ${DEMO_NEAR_PIN_SPEED_KMH}→${cruiseSpeedRef.current} კმ/სთ · ${timeScaleRef.current}x`,
+        kmLabel !== null
+          ? `DEMO აქტიურია ${kmLabel} კმ-დან · PIN ${playPinOrder} · ${DEMO_NEAR_PIN_SPEED_KMH}→${cruiseSpeedRef.current} კმ/სთ · ${timeScaleRef.current}x`
+          : `DEMO აქტიურია PIN ${playPinOrder}-დან · ${DEMO_NEAR_PIN_SPEED_KMH}→${cruiseSpeedRef.current} კმ/სთ · ${timeScaleRef.current}x`,
       )
       runningRef.current = true
       setRunning(true)
@@ -351,7 +429,17 @@ export function PreviewGpsDemoPanel({
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'DEMO ვერ გაეშვა')
     }
-  }, [geometry, pause, route, scheduleFix, source, startPinOrder])
+  }, [
+    geometry,
+    pause,
+    route,
+    scheduleFix,
+    seekToKm,
+    source,
+    startChainageMeters,
+    startKmInput,
+    startPinOrder,
+  ])
 
   const resume = useCallback(() => {
     if (!controlsRef.current?.isActive()) {
@@ -399,15 +487,21 @@ export function PreviewGpsDemoPanel({
     pause('DEMO გადატვირთულია')
     source.clear()
     chainageRef.current = 0
+    setStartChainageMeters(null)
+    setStartKmInput('0.0')
     controlsRef.current?.reset()
-    setNextPinOrder(startPinOrder)
-    publishPreviewAtPin(startPinOrder)
-  }, [pause, publishPreviewAtPin, source, startPinOrder])
+    const firstOrder = sortedPins[0]?.sort_order ?? 1
+    setStartPinOrder(firstOrder)
+    setNextPinOrder(firstOrder)
+    publishPreviewAtPin(firstOrder)
+  }, [pause, publishPreviewAtPin, sortedPins, source])
 
   useEffect(() => {
     const firstOrder = sortedPins[0]?.sort_order ?? 1
     setStartPinOrder(firstOrder)
     setNextPinOrder(firstOrder)
+    setStartChainageMeters(null)
+    setStartKmInput('0.0')
     pause('მზადაა')
     source.clear()
     publishPreviewAtPin(firstOrder)
@@ -488,6 +582,37 @@ export function PreviewGpsDemoPanel({
           </select>
         </label>
         <label>
+          საწყისი კმ (0–{totalKm.toFixed(1)})
+          <span style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+            <input
+              aria-label="DEMO საწყისი კმ"
+              data-testid="demo-start-km"
+              type="number"
+              min={0}
+              max={Number(totalKm.toFixed(1))}
+              step={0.1}
+              value={startKmInput}
+              disabled={Boolean(controls?.isActive())}
+              onChange={(event) => setStartKmInput(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  seekToKm(Number(startKmInput.replace(',', '.')))
+                }
+              }}
+              style={{ width: '5.5rem' }}
+            />
+            <button
+              type="button"
+              data-testid="demo-seek-km"
+              disabled={Boolean(controls?.isActive())}
+              onClick={() => seekToKm(Number(startKmInput.replace(',', '.')))}
+            >
+              კმ-ზე
+            </button>
+          </span>
+        </label>
+        <label>
           კრუიზი (ცარიელზე) · ახლა {Math.round(liveSpeedKmh)} კმ/სთ
           <select
             aria-label="DEMO სიჩქარე"
@@ -547,6 +672,9 @@ export function PreviewGpsDemoPanel({
           RESET DEMO
         </button>
       </div>
+      <p data-testid="demo-selected-km" style={{ margin: 0, fontWeight: 600 }}>
+        არჩეული კმ: {startKmInput.trim() === '' ? '—' : `${startKmInput.trim()} კმ`}
+      </p>
       <p role="status" aria-live="polite" style={{ margin: 0 }}>
         {status}
         {nextPinOrder !== null ? ` · შემდეგი PIN ${nextPinOrder}` : ' · შემდეგი PIN: FINISH'}

@@ -88,9 +88,59 @@ export function resolveDemoPinChainage(
   return null
 }
 
+/**
+ * Demo-panel start / preview placement only (not production auto-start).
+ * Route 3 #16/#17 sit on the early west-loop of the exam line; sequential
+ * "after PIN 15" search parks at #15 and drives downhill. Drop on the pin.
+ */
+const ROUTE_3_DEMO_GEO_START_ORDERS = new Set([16, 17])
+
+export function resolveDemoStartPinChainage(
+  geometry: PreparedRouteGeometry,
+  pins: readonly PinRoutePoint[],
+  sortOrder: number,
+  afterChainageMeters = 0,
+): number | null {
+  if (
+    geometry.routeId === 'route-3' &&
+    ROUTE_3_DEMO_GEO_START_ORDERS.has(sortOrder)
+  ) {
+    const target = pins.find((pin) => pin.sort_order === sortOrder)
+    if (!target) return null
+    const nearest = projectPointToRoute(geometry, [target.lat, target.lng])
+    if (nearest && nearest.crossTrackMeters <= DEMO_PIN_CROSS_TRACK_M) {
+      return nearest.chainageMeters
+    }
+  }
+  return resolveDemoPinChainage(geometry, pins, sortOrder, afterChainageMeters)
+}
+
 export function prepareDemoRouteGeometry(
   routeId: ActiveRouteId,
   coordinates: readonly (readonly [number, number])[],
 ): PreparedRouteGeometry {
   return prepareRouteGeometry(routeId, coordinates)
+}
+
+/**
+ * First PIN (route order) whose along-route chainage is at/after `chainageMeters`.
+ * Used by DEMO "jump to km" so PLAY continues from the next unfinished PIN.
+ */
+export function resolveDemoNextPinAfterChainage(
+  geometry: PreparedRouteGeometry,
+  pins: readonly PinRoutePoint[],
+  chainageMeters: number,
+): { sortOrder: number; chainageMeters: number } | null {
+  const sorted = [...pins].sort((a, b) => a.sort_order - b.sort_order)
+  const target = Math.max(0, chainageMeters)
+  let cursor = 0
+  for (const pin of sorted) {
+    const chainage = resolveDemoStartPinChainage(geometry, pins, pin.sort_order, cursor)
+    if (chainage === null) continue
+    if (chainage + 1e-3 >= target) {
+      return { sortOrder: pin.sort_order, chainageMeters: chainage }
+    }
+    cursor = chainage
+  }
+  return null
 }

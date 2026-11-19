@@ -26,6 +26,7 @@ export function ExamSummary({
 }: Props) {
   const lines = examSummaryLines(summary)
   const failed = summary.failedMinor || summary.severeTotal > 0
+  const leaveExam = onReturnToMenu ?? onRestart
 
   return (
     <div className="exam-summary-overlay" data-testid="exam-summary">
@@ -99,28 +100,21 @@ export function ExamSummary({
             </button>
           )}
           {finalized ? (
-            <>
-              {onReturnToMenu && (
-                <button
-                  type="button"
-                  className="exam-summary__action exam-summary__action--secondary"
-                  onClick={onReturnToMenu}
-                >
-                  მარშრუტების არჩევა
-                </button>
-              )}
-              <button type="button" className="exam-summary__action exam-summary__action--primary" onClick={onRestart}>
-                ახალი გამოცდა
-                <span aria-hidden="true">→</span>
-              </button>
-            </>
+            <button
+              type="button"
+              className="exam-summary__action exam-summary__action--primary exam-summary__action--emphasis"
+              onClick={leaveExam}
+            >
+              მარშრუტების არჩევა
+              <span aria-hidden="true">→</span>
+            </button>
           ) : (
             <button
               type="button"
-              className="exam-summary__action exam-summary__action--primary"
+              className="exam-summary__action exam-summary__action--primary exam-summary__action--emphasis"
               onClick={onFinish}
             >
-              დასრულება
+              გამოცდის დასრულება
               <span aria-hidden="true">→</span>
             </button>
           )}

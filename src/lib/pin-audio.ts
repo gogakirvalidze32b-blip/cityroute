@@ -29,12 +29,12 @@ export const AUDIO_GPS_MAX_CROSS_TRACK_M = 40
 const ROUTE_FINISH_PIN_ORDERS: Readonly<Record<string, number>> = {
   'route-1': 35,
   'route-2': 29,
-  'route-3': 30,
+  'route-3': 31,
   'route-4': 32,
 }
 const ROUTE_CONTEXT_TRIGGER_ORDERS: Readonly<Record<string, number>> = {
   'route-1': 32,
-  'route-3': 29,
+  'route-3': 28,
   'route-4': 29,
 }
 
@@ -43,7 +43,7 @@ const ROUTE_CONTEXT_TRIGGER_ORDERS: Readonly<Record<string, number>> = {
  * west-loop PINs whose road polyline order does not follow sort_order after #15.
  */
 export const ROUTE_3_RELIABLE_SPEAK_ORDERS = new Set([
-  6, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27,
+  6, 7, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27,
 ])
 
 export function pinAudioTriggerDistanceMeters(route: string, sortOrder: number): number {
@@ -67,10 +67,10 @@ export function pinAudioApproachWindowMeters(route: string, sortOrder: number): 
 
 /**
  * Rare per-PIN tempo overrides. Most voices stay at 1.0x (recorded speed).
- * Route 4 #8 was exported too fast relative to neighbouring clips.
+ * Route 4 #7/#8 were exported too fast relative to neighbouring clips.
  */
 export function pinVoicePlaybackRate(route: string, sortOrder: number): number {
-  if (route === 'route-4' && sortOrder === 8) return 0.9
+  if (route === 'route-4' && (sortOrder === 7 || sortOrder === 8)) return 0.9
   return 1
 }
 

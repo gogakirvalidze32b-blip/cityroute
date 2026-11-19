@@ -58,4 +58,27 @@ describe('PreviewGpsDemoPanel speed controls', () => {
     expect(screen.getByRole('button', { name: 'RESUME' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'PLAY' })).toBeEnabled()
   })
+
+  it('exposes km jump controls and parks GPS near the requested kilometre', async () => {
+    const routes = selectableRoutes(TELAVI_ROUTES_FALLBACK)
+    const route = routes.find((item) => item.slug === 'route-2') ?? routes[0]!
+    const source = createPreviewGpsSource()
+
+    render(
+      <MemoryRouter>
+        <PreviewGpsDemoPanel route={route} routes={routes} controls={null} source={source} />
+      </MemoryRouter>,
+    )
+
+    const kmInput = screen.getByTestId('demo-start-km') as HTMLInputElement
+    fireEvent.change(kmInput, { target: { value: '5.6' } })
+    fireEvent.click(screen.getByTestId('demo-seek-km'))
+
+    expect(kmInput.value).toBe('5.6')
+    expect(screen.getByTestId('demo-selected-km').textContent).toMatch(/5\.6 კმ/)
+    expect(screen.getByRole('status').textContent).toMatch(/5\.6 კმ/)
+    const fix = await source.getCurrentPosition()
+    expect(Number.isFinite(fix.lat)).toBe(true)
+    expect(Number.isFinite(fix.lng)).toBe(true)
+  })
 })

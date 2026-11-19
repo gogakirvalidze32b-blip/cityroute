@@ -186,7 +186,8 @@ describe('final 300 m right-turn PIN audio', () => {
         scenario.lng,
         null,
       )).toBe(true)
-      const contextTarget = scenario.route === 'route-1' || scenario.route === 'route-4'
+      const contextTarget =
+        scenario.route === 'route-1' || scenario.route === 'route-3' || scenario.route === 'route-4'
       expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder)).toBe(
         contextTarget ? AUDIO_SPECIAL_TRIGGER_DISTANCE_M : AUDIO_TRIGGER_DISTANCE_M,
       )
@@ -206,21 +207,21 @@ describe('final 300 m right-turn PIN audio', () => {
 
   it('keeps the normal PIN-audio trigger distance for other PINs', () => {
     expect(pinAudioTriggerDistanceMeters('route-1', 31)).toBe(AUDIO_TRIGGER_DISTANCE_M)
-    expect(pinAudioTriggerDistanceMeters('route-3', 28)).toBe(AUDIO_TRIGGER_DISTANCE_M)
-    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-3', 28)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(AUDIO_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 25)).toBe(AUDIO_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 27)).toBe(AUDIO_TRIGGER_DISTANCE_M)
   })
 
-  it('slows Route 4 PIN 8 voice to 0.9x and keeps other voices at 1.0x', () => {
+  it('slows Route 4 PIN 7 and 8 voices to 0.9x and keeps other voices at 1.0x', () => {
     expect(pinVoicePlaybackRate('route-4', 8)).toBe(0.9)
-    expect(pinVoicePlaybackRate('route-4', 7)).toBe(1)
+    expect(pinVoicePlaybackRate('route-4', 7)).toBe(0.9)
     expect(pinVoicePlaybackRate('route-1', 8)).toBe(1)
   })
 
   it('widens Route 3 field-missed PIN triggers so voices still fire', () => {
     expect([...ROUTE_3_RELIABLE_SPEAK_ORDERS].sort((a, b) => a - b)).toEqual([
-      6, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27,
+      6, 7, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27,
     ])
     for (const order of ROUTE_3_RELIABLE_SPEAK_ORDERS) {
       expect(pinAudioTriggerDistanceMeters('route-3', order)).toBe(AUDIO_RELIABLE_TRIGGER_DISTANCE_M)
@@ -233,8 +234,8 @@ describe('final 300 m right-turn PIN audio', () => {
     expect(pinAudioTriggerDistanceMeters('route-1', 32)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-1', 35)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
-    expect(pinAudioTriggerDistanceMeters('route-3', 30)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
-    expect(pinAudioTriggerDistanceMeters('route-3', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-3', 31)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-3', 28)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-4', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-4', 32)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 26)).toBe(AUDIO_TRIGGER_DISTANCE_M)

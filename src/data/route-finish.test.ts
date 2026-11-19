@@ -4,6 +4,7 @@ import { resolvePinAudioUrl } from './route-audio'
 import {
   COMMON_FINISH_INSTRUCTIONS,
   isFinishAudioAllowed,
+  isInAlazaniSessionZone,
   isNearPin1ForSessionVoice,
   isRouteFinishGpsReady,
   isStartAudioAllowed,
@@ -142,22 +143,30 @@ describe('shared finish sequence', () => {
       'route-3': { start: 25, end: 30 },
       'route-4': { start: 26, end: 31 },
     })
-    expect(SESSION_VOICE_PIN1_RADIUS_M).toBe(50)
+    expect(SESSION_VOICE_PIN1_RADIUS_M).toBe(800)
   })
 
-  it('allows დაწყება / ფინიში only within 50 m of PIN 1 on all four routes', () => {
+  it('allows დაწყება / ფინიში on Alazani corridor and near PIN 1 on all four routes', () => {
     for (const slug of ['route-1', 'route-2', 'route-3', 'route-4'] as const) {
       const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
       const pin1 = route.pins.find((pin) => pin.sort_order === 1)!
       const near: [number, number] = [pin1.lat, pin1.lng]
-      // ~111 m north — outside the 50 m radius
-      const far: [number, number] = [pin1.lat + 0.001, pin1.lng]
+      // South Alazani near Telavi Mall — inside corridor box
+      const alazaniSouth: [number, number] = [41.9260, 45.4735]
+      // Far outside Alazani / agency zone
+      const far: [number, number] = [pin1.lat + 0.02, pin1.lng]
 
+      expect(isInAlazaniSessionZone(near)).toBe(true)
+      expect(isInAlazaniSessionZone(alazaniSouth)).toBe(true)
+      expect(isInAlazaniSessionZone(far)).toBe(false)
       expect(isNearPin1ForSessionVoice(near, pin1)).toBe(true)
+      expect(isNearPin1ForSessionVoice(alazaniSouth, pin1)).toBe(true)
       expect(isNearPin1ForSessionVoice(far, pin1)).toBe(false)
       expect(isStartAudioAllowed(slug, near, pin1)).toBe(true)
+      expect(isStartAudioAllowed(slug, alazaniSouth, pin1)).toBe(true)
       expect(isStartAudioAllowed(slug, far, pin1)).toBe(false)
       expect(isFinishAudioAllowed(slug, near, pin1)).toBe(true)
+      expect(isFinishAudioAllowed(slug, alazaniSouth, pin1)).toBe(true)
       expect(isFinishAudioAllowed(slug, far, pin1)).toBe(false)
       expect(isStartAudioAllowed(slug, null, pin1)).toBe(false)
       expect(isFinishAudioAllowed(slug, null, pin1)).toBe(false)
@@ -175,12 +184,12 @@ describe('shared finish sequence', () => {
     expect(audioUrl).toBe('/audio/points/გთხოვთ, შემდეგ მინიშნებამდე იმოძრაოთ პირდაპირ.wav')
   })
 
-  it('route-3 field-missed PINs sit on-road with audio and a 45 m trigger', () => {
+  it('route-3 field-missed PINs sit on-road with audio and a reliable trigger', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
-    for (const order of [6, 10, 15, 17, 25, 27]) {
+    for (const order of [6, 7, 10, 15, 17, 25, 27]) {
       const pin = route.pins.find((item) => item.sort_order === order)!
       expect(resolvePinAudioUrl('route-3', pin)).not.toBeNull()
-      expect(pinAudioTriggerDistanceMeters('route-3', order)).toBe(45)
+      expect(pinAudioTriggerDistanceMeters('route-3', order)).toBe(20)
     }
   })
 
@@ -204,44 +213,24 @@ describe('shared finish sequence', () => {
     }
   })
 
-  it.each(['route-1', 'route-2', 'route-4'] as const)(
-    '%s completes only after all route PINs and forward GPS reaches the final trace segment',
+  it.each(['route-1', 'route-2', 'route-3', 'route-4'] as const)(
+    '%s never auto-finishes on GPS — examiner must press დასრულება',
     (routeSlug) => {
       const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === routeSlug)!
-      const { geometry, previous, match } = makeFinalForwardMatch(routeSlug)
-      const handledOrders = new Set(route.pins.map((pin) => pin.sort_order))
+      const geometry = prepareRouteGeometry(routeSlug, roads[routeSlug])
       expect(isRouteFinishGpsReady({
         routeSlug,
         pins: route.pins,
-        handledOrders,
-        geometry,
-        match,
-        previous,
-      })).toBe(true)
-
-      expect(isRouteFinishGpsReady({
-        routeSlug,
-        pins: route.pins,
-        handledOrders: new Set([...handledOrders].filter((order) => order !== ROUTE_FINISH_PIN_RANGES[routeSlug].end)),
-        geometry,
-        match,
-        previous,
-      })).toBe(false)
-      expect(match.direction).toBe('forward')
-
-      expect(isRouteFinishGpsReady({
-        routeSlug,
-        pins: route.pins,
-        handledOrders,
+        handledOrders: new Set(route.pins.map((pin) => pin.sort_order)),
         geometry,
         match: {
-          ...match,
-          nextState: {
-            ...match.nextState!,
-            timestampMs: previous.timestampMs + 60_001,
-          },
+          status: 'matched',
+          accepted: true,
+          projection: null,
+          direction: 'forward',
+          nextState: null,
         },
-        previous,
+        previous: null,
       })).toBe(false)
     },
   )
@@ -336,7 +325,7 @@ describe('shared finish sequence', () => {
   })
 
   it('places shared late right-turn PINs and requested Route 1/3/4 updates', () => {
-    const shared = [41.931564, 45.476486] as const
+    const shared = [41.932048, 45.476813] as const
     const checks = [
       ['route-1', 33],
       ['route-2', 27],
@@ -352,7 +341,7 @@ describe('shared finish sequence', () => {
 
     const route1 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
     expect([route1.pins.find((pin) => pin.sort_order === 9)?.lat, route1.pins.find((pin) => pin.sort_order === 9)?.lng])
-      .toEqual([41.926887, 45.461326])
+      .toEqual([41.926867, 45.461207])
 
     const route3 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
     expect([route3.pins.find((pin) => pin.sort_order === 11)?.lat, route3.pins.find((pin) => pin.sort_order === 11)?.lng])
@@ -366,6 +355,7 @@ describe('shared finish sequence', () => {
     expect(pin7.instruction_ka).toBe('500 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ')
     expect(resolvePinAudioUrl('route-4', pin7)).not.toBeNull()
     expect([pin12.lat, pin12.lng]).toEqual([41.91915, 45.498674])
+    expect(pinVoicePlaybackRate('route-4', 7)).toBe(0.9)
     expect(pinVoicePlaybackRate('route-4', 8)).toBe(0.9)
   })
 })

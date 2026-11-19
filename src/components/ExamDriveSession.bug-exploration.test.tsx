@@ -122,8 +122,8 @@ vi.mock('@/components/ExamSummary', () => ({
   }) => (
     <div data-testid="exam-summary">
       {onContinue && <button onClick={onContinue}>გაგრძელება</button>}
-      {!finalized && <button onClick={onFinish}>დასრულება</button>}
-      {finalized && <button onClick={onRestart}>ახალი გამოცდა</button>}
+      {!finalized && <button onClick={onFinish}>გამოცდის დასრულება</button>}
+      {finalized && <button onClick={onRestart}>მარშრუტების არჩევა</button>}
     </div>
   ),
 }))
@@ -238,7 +238,7 @@ describe('Exam session finish and persistence', () => {
     expect(screen.getByTestId('exam-summary')).toBeInTheDocument()
     expect(localStorage.getItem('cityroute-active-exam')).not.toBeNull()
 
-    await user.click(screen.getByRole('button', { name: 'დასრულება' }))
+    await user.click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
     expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
   })
 
@@ -282,7 +282,7 @@ describe('Exam session finish and persistence', () => {
       await new Promise((resolve) => setTimeout(resolve, 200))
     })
 
-    await user.click(screen.getByRole('button', { name: 'დასრულება' }))
+    await user.click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
     expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
 
     unmount()
@@ -341,7 +341,7 @@ describe('Exam session finish and persistence', () => {
     expect(screen.getByTestId('exam-summary')).toBeInTheDocument()
     expect(localStorage.getItem('cityroute-active-exam')).not.toBeNull()
 
-    await user.click(screen.getByRole('button', { name: 'დასრულება' }))
+    await user.click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
     expect(localStorage.getItem('cityroute-active-exam')).toBeNull()
   })
 })

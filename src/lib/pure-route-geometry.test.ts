@@ -345,12 +345,16 @@ describe('pure route geometry', () => {
     expect(result.status).toBe('matched')
     expect(result.direction).toBe('forward')
     expect(result.projection?.chainageMeters).toBeGreaterThan(6_000)
-    expect(matchGpsPosition(
+    // Lit PIN ahead: even opposing GPS heading must stay on the forward road run.
+    const opposing = matchGpsPosition(
       route,
       { ...fix, headingDegrees: 252 },
       previous,
       { nowMs: 11_000, expectedForwardChainageMeters: 6_232 },
-    ).status).toBe('ambiguous-route-match')
+    )
+    expect(opposing.status).toBe('matched')
+    expect(opposing.direction).toBe('forward')
+    expect(opposing.projection?.chainageMeters).toBeGreaterThan(previous.chainageMeters)
   })
 
   it('uses recent chainage context to disambiguate a repeated location', () => {
@@ -369,6 +373,93 @@ describe('pure route geometry', () => {
     )
     expect(result.status).toBe('matched')
     expect(result.projection?.chainageMeters).toBeLessThan(100)
+  })
+
+  it('rejects the opposite-bearing Alazani carriageway when a lit PIN is ahead', () => {
+    const dual = prepareRouteGeometry('route-1', [
+      [41.93, 45.476],
+      [41.932, 45.477],
+      [41.934, 45.478],
+      [41.9345, 45.4782],
+      [41.9325, 45.4772],
+      [41.9305, 45.4762],
+    ])
+    const outbound = matchGpsPosition(
+      dual,
+      { position: [41.931, 45.4765], accuracyMeters: 3, timestampMs: 1_000 },
+      null,
+      { nowMs: 1_000, expectedChainageMeters: 80, expectedChainageWindowMeters: 120 },
+    )
+    expect(outbound.accepted).toBe(true)
+    const previous = outbound.nextState!
+    const litPinChainage = previous.chainageMeters + 120
+    // GPS sits where outbound (~26°) and return (~206°) both exist.
+    const fix = {
+      position: [41.932, 45.477] as const,
+      accuracyMeters: 3,
+      timestampMs: 4_000,
+      headingDegrees: 206,
+    }
+    const matched = matchGpsPosition(dual, fix, previous, {
+      nowMs: 4_000,
+      maxCrossTrackMeters: 40,
+      expectedForwardChainageMeters: litPinChainage,
+    })
+    expect(matched.accepted).toBe(true)
+    expect(matched.projection!.segmentBearingDegrees).toBeLessThan(90)
+    expect(matched.projection!.segmentBearingDegrees).toBeGreaterThan(0)
+  })
+
+  it('never jumps to a parallel opposite road with the same forward bearing while a lit PIN is ahead', () => {
+    // South carriageway eastbound (lit PIN), short U-turn, then north also eastbound.
+    const dual = prepareRouteGeometry('route-1', [
+      [41.9, 45.5],
+      [41.9, 45.501],
+      [41.9, 45.502],
+      [41.90025, 45.502],
+      [41.90025, 45.503],
+      [41.90025, 45.504],
+    ])
+    const litPin = projectPointToRoute(dual, [41.9, 45.5015])
+    expect(litPin).not.toBeNull()
+    const onSouth = matchGpsPosition(
+      dual,
+      { position: [41.9, 45.5005], accuracyMeters: 3, timestampMs: 1_000 },
+      null,
+      { nowMs: 1_000 },
+    )
+    expect(onSouth.accepted).toBe(true)
+    const previous = onSouth.nextState!
+    // GPS sits on the northern parallel road (same eastbound bearing).
+    const fix = {
+      position: [41.9002, 45.5028] as const,
+      accuracyMeters: 3,
+      timestampMs: 6_000,
+      headingDegrees: 90,
+    }
+    const withoutLitPin = matchGpsPosition(dual, fix, previous, {
+      nowMs: 6_000,
+      maxCrossTrackMeters: 40,
+    })
+    const withLitPin = matchGpsPosition(dual, fix, previous, {
+      nowMs: 6_000,
+      maxCrossTrackMeters: 40,
+      expectedForwardChainageMeters: litPin!.chainageMeters,
+    })
+
+    // Without the lit-PIN lock the parallel northern run can win (same bearing).
+    expect(withoutLitPin.accepted).toBe(true)
+    expect(withoutLitPin.projection!.position[0]).toBeGreaterThan(41.9001)
+
+    // With a lit PIN on the southern run: never accept that opposite carriageway.
+    if (withLitPin.accepted) {
+      expect(withLitPin.projection!.position[0]).toBeLessThan(41.9001)
+      expect(withLitPin.projection!.chainageMeters).toBeLessThanOrEqual(
+        litPin!.chainageMeters + 20,
+      )
+    } else {
+      expect(['off-route', 'gps-jump', 'ambiguous-route-match']).toContain(withLitPin.status)
+    }
   })
 
   it('requires a real forward route movement before a PIN becomes ready', () => {

@@ -14,6 +14,7 @@ import {
   createExamSession,
   finishExamSession,
   formatExamDuration,
+  isExamFailed,
   loadExamHistory,
   recordExamError,
   recordSevereQuick,
@@ -70,7 +71,6 @@ import {
 } from '@/data/route-audio'
 import {
   isFinishAudioAllowed,
-  isRouteFinishGpsReady,
   isStartAudioAllowed,
 } from '@/data/route-finish'
 import {
@@ -94,6 +94,7 @@ import {
   type ActiveRouteId,
   type RouteMatchState,
 } from '@/lib/pure-route-geometry'
+import { resolveDemoPinChainage } from '@/lib/preview-gps-demo-pin'
 import {
   clearManualPinSelection,
   loadManualPinSelection,
@@ -714,6 +715,10 @@ export function ExamDriveSession({
   }, [route.slug, autoStartPolyline, polyline])
 
   function seedLiveDistanceMeters(startSortOrder: number, gpsPos?: LatLng | null): number {
+    // PIN 1 sits on the agency loop (start ≈ finish). Nearest-on-line hits the end of
+    // the road (~full route km). Starting from PIN 1 must always show 0.0 კმ.
+    if (startSortOrder <= 1) return 0
+
     const pin = voicePins.find((row) => row.sort_order === startSortOrder)
     const pinPos: LatLng | null =
       pin && Number.isFinite(pin.lat) && Number.isFinite(pin.lng) ? [pin.lat, pin.lng] : null
@@ -721,8 +726,8 @@ export function ExamDriveSession({
     const position =
       (gpsPos !== undefined ? gpsPos : currentPositionRef.current) ?? pinPos
     if (!position) return 0
-    // Loop routes share start/end at the agency: nearest-on-line alone can seed ~full
-    // route length. Anchor to the start PIN's chainage so a new session begins correctly.
+    // Mid/late starts: anchor near the start PIN's chainage so a resume does not
+    // snap to the wrong loop occurrence.
     if (routeGeometry) {
       const pinProjection = pinPos ? projectPointToRoute(routeGeometry, pinPos) : null
       const expectedChainage = pinProjection?.chainageMeters ?? 0
@@ -929,11 +934,13 @@ export function ExamDriveSession({
           const nextOrder =
             sortedPins.find((pin) => !triggeredRef.current.has(pin.id))?.sort_order ?? 1
           const restoredDistance =
-            typeof saved.distanceMeters === 'number' &&
-            Number.isFinite(saved.distanceMeters) &&
-            saved.distanceMeters > 0
-              ? saved.distanceMeters
-              : seedLiveDistanceMeters(nextOrder, saved.userPos)
+            nextOrder <= 1
+              ? 0
+              : typeof saved.distanceMeters === 'number' &&
+                  Number.isFinite(saved.distanceMeters) &&
+                  saved.distanceMeters > 0
+                ? saved.distanceMeters
+                : seedLiveDistanceMeters(nextOrder, saved.userPos)
           applySeededDistance(restoredDistance)
         }
         setGpsStarted(true)
@@ -1381,7 +1388,11 @@ export function ExamDriveSession({
         currentPositionRef.current = raw
         updateSpeedRoadProgress(raw)
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
-        setHeading(resolveHeading(pos, prevRaw, raw, polyline))
+        // While route-matching drives the arrow, skip GPS compass here — alternating
+        // GPS vs road bearing was making the arrow stutter on every fix.
+        if (!features.routeAudio || !routeMatchStateRef.current) {
+          setHeading(resolveHeading(pos, prevRaw, raw, polyline))
+        }
         if (phaseRef.current === 'active') {
           setSpeedKmh(resolveExamSpeedKmh(pos, prevGpsRef.current, speedTrackerRef.current))
           const odo = routeOdometerRef.current.observe(raw, pos.timestamp)
@@ -1485,7 +1496,7 @@ export function ExamDriveSession({
           route.slug === 'route-2' && pending?.sort_order === 26
         const usesRouteContextTarget =
           (route.slug === 'route-1' && pending?.sort_order === 32) ||
-          (route.slug === 'route-3' && pending?.sort_order === 29) ||
+          (route.slug === 'route-3' && pending?.sort_order === 28) ||
           (route.slug === 'route-4' && pending?.sort_order === 29)
         const orderedPendingProjection = pending
           ? projectOrderedPointsToRoute(
@@ -1505,6 +1516,19 @@ export function ExamDriveSession({
           : pending && usesOrderedPendingContext
             ? orderedPendingProjection
             : null
+        // Every lit PIN: forward along-road chainage so matching/arrow never ride the opposite run.
+        const pendingForwardChainageMeters = pending
+          ? resolveDemoPinChainage(
+              routeGeometry,
+              voicePins,
+              pending.sort_order,
+              previousRouteMatch?.chainageMeters ?? 0,
+            )
+          : null
+        const expectedForwardChainageMeters =
+          pendingRouteProjection?.chainageMeters ??
+          pendingForwardChainageMeters ??
+          undefined
         let expectedChainageMeters: number | undefined
         let expectedPinChainageMeters = usesTargetOccurrenceContext || usesOrderedRouteContext
           ? pendingRouteProjection?.chainageMeters
@@ -1568,7 +1592,7 @@ export function ExamDriveSession({
             ambiguityToleranceMeters: 5,
             ambiguitySeparationMeters: 100,
             expectedChainageMeters,
-            expectedForwardChainageMeters: pendingRouteProjection?.chainageMeters,
+            expectedForwardChainageMeters,
           },
         )
 
@@ -1579,7 +1603,12 @@ export function ExamDriveSession({
           '| Chainage:', routeMatch.projection ? Math.round(routeMatch.projection.chainageMeters) + 'm' : '—',
         )
 
-        if (!routeMatch.accepted || !routeMatch.nextState) return
+        if (!routeMatch.accepted || !routeMatch.nextState) {
+          // Match failed (often dual-carriage near Alazani): do not leave the arrow
+          // frozen on the last wrong bearing — fall back to GPS/movement heading.
+          setHeading(resolveHeading(pos, prevRaw, raw, polyline))
+          return
+        }
         routeMatchStateRef.current = routeMatch.nextState
         const matchedPosition: LatLng = [
           routeMatch.projection.position[0],
@@ -1587,15 +1616,20 @@ export function ExamDriveSession({
         ]
         setUserPos(matchedPosition)
         currentPositionRef.current = matchedPosition
+        // Arrow: forward along the lit-PIN road (never +180). Skip tiny jitter;
+        // always take large corrections (wrong carriageway → right road).
         if (
           routeMatch.direction === 'forward' ||
-          routeMatch.direction === 'reverse'
+          routeMatch.direction === 'reverse' ||
+          routeMatch.direction === 'stationary'
         ) {
-          const matchedHeading =
-            routeMatch.direction === 'reverse'
-              ? (routeMatch.projection.segmentBearingDegrees + 180) % 360
-              : routeMatch.projection.segmentBearingDegrees
-          setHeading(matchedHeading)
+          const nextHeading = routeMatch.projection.segmentBearingDegrees
+          setHeading((prev) => {
+            const rawDiff = Math.abs(((nextHeading - prev) % 360 + 360) % 360)
+            const delta = Math.min(rawDiff, 360 - rawDiff)
+            if (delta < 6) return prev
+            return nextHeading
+          })
         }
 
         const target = pending
@@ -1646,45 +1680,7 @@ export function ExamDriveSession({
         if (movementMeters < 0.5 && !nearPendingPin) return
 
         if (!target) {
-          const handledOrders = handledOrdersRef.current
-          if (
-            !automaticFinishStartedRef.current &&
-            handledOrders !== null &&
-            pendingPinSortOrderRef.current === null &&
-            queuedAudioPinOrdersRef.current.length === 0 &&
-            !audioAttemptInFlightRef.current &&
-            !startAudioPendingRef.current &&
-            !audioEngine.isBusy() &&
-            isRouteFinishGpsReady({
-              routeSlug: route.slug,
-              pins: voicePins,
-              handledOrders,
-              geometry: routeGeometry,
-              match: routeMatch,
-              previous: previousRouteMatch,
-            })
-          ) {
-            automaticFinishStartedRef.current = true
-            finishSession()
-            void audioEngine.playDetailed(
-              EXAM_SUCCESS_AUDIO,
-              `route-success-${route.slug}-${audioSessionGenerationRef.current}`,
-              EXAM_SUCCESS_TEXT,
-              {
-                onFailure: (reason) => {
-                  console.warn('[AUDIO] Route success voice failed', route.slug, reason)
-                },
-              },
-            ).then((status) => {
-              if (status === 'failed') {
-                console.warn('[AUDIO] Route success voice unavailable', route.slug)
-              } else if (status === 'busy' || status === 'cancelled') {
-                console.warn('[AUDIO] Route success voice was not played', route.slug, status)
-              }
-            }).catch((error) => {
-              console.warn('[AUDIO] Route success voice threw', route.slug, error)
-            })
-          }
+          // Never auto-finish / auto-play გილოცავთ — examiner presses დასრულება.
           return
         }
 
@@ -1715,7 +1711,7 @@ export function ExamDriveSession({
           usesRoute2Pin26Context || usesRouteContextTarget
             ? 45
             : AUDIO_HEADING_TOLERANCE_DEG
-        // Loop-context PINs (R1#32 / R2#26 / R3#29 / R4#29): first roadside can be
+        // Loop-context PINs (R1#32 / R2#26 / R3#28 / R4#29): first roadside can be
         // near the same coords — only route-geometry + expected chainage may speak.
         const proximityReady =
           !usesTargetOccurrenceContext &&
@@ -1944,7 +1940,7 @@ export function ExamDriveSession({
         audioAttemptInFlightRef.current = false
         return
       }
-      // ფინიში only within 50 m of PIN 1 — outside that radius advance silently.
+      // ფინიში only on Alazani / near PIN 1 — outside that zone advance silently.
       if (currentTarget.instruction_ka === 'ფინიში') {
         const pin1 = voicePinsRef.current.find((pin) => pin.sort_order === 1) ?? null
         if (!isFinishAudioAllowed(route.slug, currentPositionRef.current, pin1)) {
@@ -2112,7 +2108,11 @@ export function ExamDriveSession({
     })
   }
 
-  function startSession(startSortOrder = 1, startMode: 'automatic' | 'manual' = 'automatic') {
+  function startSession(
+    startSortOrder = 1,
+    startMode: 'automatic' | 'manual' = 'automatic',
+    sessionVoicePosition?: LatLng | null,
+  ) {
     const isFieldTest = FIELD_TEST_SLUGS.has(route.slug)
     const progressRead = isFieldTest ? readRoutePinProgress(route.slug, persistenceScope) : null
     if (progressRead?.status === 'invalid' || progressRead?.status === 'unavailable') {
@@ -2121,6 +2121,27 @@ export function ExamDriveSession({
       setNextPin(null)
       setRouteComplete(false)
       return
+    }
+
+    const voicePosEarly = sessionVoicePosition ?? currentPositionRef.current
+    const pin1Early = voicePins.find((pin) => pin.sort_order === 1) ?? null
+    // Completed route + Alazani zone: clear progress so every new start can say დაწყება.
+    if (isFieldTest) {
+      const priorHandled = mostAdvancedPinProgress(
+        voicePins,
+        loadRoutePinProgress(route.slug, persistenceScope),
+        voicePins.filter((pin) => pin.sort_order < startSortOrder).map((pin) => pin.sort_order),
+      )
+      const priorResolution = resolvePinProgress(voicePins, priorHandled)
+      if (
+        priorResolution.status === 'resume' &&
+        priorResolution.nextSortOrder === null &&
+        isStartAudioAllowed(route.slug, voicePosEarly, pin1Early)
+      ) {
+        clearRoutePinProgress(route.slug, persistenceScope)
+        clearManualPinSelection(route.slug, persistenceScope)
+        startSortOrder = 1
+      }
     }
 
     audioSessionGenerationRef.current++
@@ -2164,7 +2185,7 @@ export function ExamDriveSession({
       setResumeError(
         resolution?.status === 'error'
           ? resolution.message
-          : 'მარშრუტზე გასაგრძელებელი PIN აღარ არის. გამოიყენეთ „თავიდან დაწყება“ პროგრესის გასანულებლად.',
+          : 'მარშრუტზე გასაგრძელებელი PIN აღარ არის. დააჭირეთ „გამოცდის დასრულება“.',
       )
       setRouteComplete(resolution?.status === 'resume' && voicePins.length > 0)
       return
@@ -2187,6 +2208,8 @@ export function ExamDriveSession({
     resumePendingRef.current = false
     sessionStartRef.current = Date.now()
     setElapsedMs(0)
+    const voicePos = sessionVoicePosition ?? currentPositionRef.current
+    if (voicePos) currentPositionRef.current = voicePos
     applySeededDistance(seedLiveDistanceMeters(startSortOrder, currentPositionRef.current))
     setLastSpoken(null)
     
@@ -2203,9 +2226,9 @@ export function ExamDriveSession({
     setPhase('active')
     resumedSlugRef.current = route.slug
     const pin1 = voicePins.find((pin) => pin.sort_order === 1) ?? null
-    startAudioPendingRef.current = features.routeAudio &&
-      !(progressRead?.status === 'valid' && progressRead.orders.length > 0) &&
-      isStartAudioAllowed(route.slug, currentPositionRef.current, pin1)
+    // Every start on Alazani / near PIN 1 — including after finish + restart (ignore progress).
+    startAudioPendingRef.current =
+      features.routeAudio && isStartAudioAllowed(route.slug, voicePos, pin1)
     if (startAudioPendingRef.current) playSessionStartAudio(sessionGeneration)
   }
 
@@ -2381,6 +2404,7 @@ export function ExamDriveSession({
     startSession(
       selectedSortOrder,
       startAtSortOrder === undefined ? previewSelectionMode : 'manual',
+      gpsResult.position ?? currentPositionRef.current,
     )
   }
 
@@ -2781,6 +2805,29 @@ export function ExamDriveSession({
     sessionStartRef.current = 0
     setElapsedMs(pausedElapsedMs)
     finishInProgressRef.current = false
+    // გილოცავთ on every complete დასრულება in the Alazani / PIN-1 zone when not failed.
+    // Never on mid-route pause with remaining pins.
+    const pin1ForSuccess =
+      voicePinsRef.current.find((pin) => pin.sort_order === 1) ?? null
+    const finishVoicePos = currentPositionRef.current ?? userPos
+    if (
+      !hasRemainingPins &&
+      !isExamFailed(exam) &&
+      isFinishAudioAllowed(route.slug, finishVoicePos, pin1ForSuccess)
+    ) {
+      void audioEngine.playDetailed(
+        EXAM_SUCCESS_AUDIO,
+        `route-success-${route.slug}-${audioSessionGenerationRef.current}-${Date.now()}`,
+        EXAM_SUCCESS_TEXT,
+        {
+          onFailure: (reason) => {
+            console.warn('[AUDIO] Route success voice failed', route.slug, reason)
+          },
+        },
+      ).catch((error) => {
+        console.warn('[AUDIO] Route success voice threw', route.slug, error)
+      })
+    }
     if (
       hasRemainingPins &&
       FIELD_TEST_SLUGS.has(route.slug) &&
@@ -2895,11 +2942,13 @@ export function ExamDriveSession({
         sortedPins.at(-1)?.sort_order ??
         1
       const restoredDistance =
-        typeof saved.distanceMeters === 'number' &&
-        Number.isFinite(saved.distanceMeters) &&
-        saved.distanceMeters > 0
-          ? saved.distanceMeters
-          : seedLiveDistanceMeters(nextOrder, saved.userPos)
+        nextOrder <= 1
+          ? 0
+          : typeof saved.distanceMeters === 'number' &&
+              Number.isFinite(saved.distanceMeters) &&
+              saved.distanceMeters > 0
+            ? saved.distanceMeters
+            : seedLiveDistanceMeters(nextOrder, saved.userPos)
       applySeededDistance(restoredDistance)
     }
     let next =
@@ -3174,11 +3223,10 @@ export function ExamDriveSession({
                   </p>
                   <button
                     type="button"
-                    className="nav-start-btn"
-                    style={{ marginTop: '0.5rem' }}
-                    onClick={restartPreview}
+                    className="exam-route-complete__finish"
+                    onClick={finishSession}
                   >
-                    თავიდან დაწყება
+                    გამოცდის დასრულება
                   </button>
                 </div>
               )}
@@ -3285,10 +3333,19 @@ export function ExamDriveSession({
               </div>
             )}
             {previewRouteComplete && (
-              <div role="status" data-testid="route-complete">
-                <p>მარშრუტი დასრულებულია — ყველა PIN გავლილია.</p>
-                <button type="button" className="nav-start-btn" onClick={restartPreview}>
-                  თავიდან დაწყება
+              <div role="status" data-testid="route-complete" className="exam-route-complete">
+                <p className="exam-route-complete__message">
+                  მარშრუტი დასრულებულია — ყველა PIN გავლილია.
+                </p>
+                <button
+                  type="button"
+                  className="exam-route-complete__finish"
+                  onClick={() => {
+                    // Preview has no live session — clear progress so menu/start is fresh.
+                    restartPreview()
+                  }}
+                >
+                  გამოცდის დასრულება
                 </button>
               </div>
             )}

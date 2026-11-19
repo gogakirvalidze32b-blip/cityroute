@@ -133,7 +133,7 @@ vi.mock('@/components/ExamScoreboard', () => ({
 vi.mock('@/components/ExamSummary', () => ({
   ExamSummary: ({ onRestart }: { onRestart: () => void }) => (
     <div data-testid="exam-summary">
-      <button onClick={onRestart}>დაიწყე თავიდან</button>
+      <button onClick={onRestart}>მარშრუტების არჩევა</button>
     </div>
   ),
 }))
@@ -305,7 +305,8 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       polyline: [[BASE_LAT, 45.4], [BASE_LAT + 0.02, 45.4]] as LatLng[],
       pins: Array.from({ length: 6 }, (_, index) => pinAt(index, (index + 1) * 200)),
     } as RouteWithPins
-    vi.mocked(requestGpsOnce).mockResolvedValue(fix(1000) as never)
+    // Far past the 800 m PIN-1 / Alazani session-voice gate (PIN 1 sits at 200 m).
+    vi.mocked(requestGpsOnce).mockResolvedValue(fix(2500) as never)
     render(<ExamDriveSession route={sixPinRoute} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }))
@@ -323,7 +324,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
   })
 
   it.each(['route-1', 'route-2', 'route-4'] as const)(
-    '%s auto-finishes on forward GPS entry to its final road segment, once and without a return',
+    '%s does not auto-finish or play გილოცავთ on final GPS — waits for დასრულება',
     async (slug) => {
       cleanup()
       localStorage.clear()
@@ -339,7 +340,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       const savedPosition = roadPointAt(geometry, geometry.totalLengthMeters - 160)
 
       saveRoutePinProgress(slug, handledOrders)
-      h.autoEnd = false
+      h.autoEnd = true
       saveActiveExam({
         routeId: selectedRoute.id,
         routeSlug: slug,
@@ -380,35 +381,20 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       for (let chainage = 0; chainage < geometry.totalLengthMeters - 30; chainage += 50) {
         await emitAt(roadPointAt(geometry, chainage), chainage)
       }
-      await emitAt(
-        roadPointAt(geometry, geometry.totalLengthMeters - 10),
-        geometry.totalLengthMeters - 10,
-      )
-      expect(played()).toContain(finalPin.id)
+      await emitAt(roadPointAt(geometry, geometry.totalLengthMeters - 4), geometry.totalLengthMeters - 4)
+      await emitAt(roadPointAt(geometry, geometry.totalLengthMeters - 1), geometry.totalLengthMeters - 1)
+
       expect(vi.mocked(audioEngine.playDetailed).mock.calls.filter(
         ([url]) => url === '/audio/გილოცავთ.wav',
       )).toHaveLength(0)
       expect(screen.queryByTestId('exam-summary')).toBeNull()
-
-      await act(async () => {
-        h.playOptions[0]?.onEnded?.()
-      })
-      h.autoEnd = true
-      await emitAt(roadPointAt(geometry, geometry.totalLengthMeters - 4), geometry.totalLengthMeters - 4)
-      await emitAt(roadPointAt(geometry, geometry.totalLengthMeters - 1), geometry.totalLengthMeters - 1)
-
-      const successCalls = vi.mocked(audioEngine.playDetailed).mock.calls.filter(
-        ([url]) => url === '/audio/გილოცავთ.wav',
-      )
-      expect(successCalls).toHaveLength(1)
-      expect(screen.getByTestId('exam-summary')).toBeTruthy()
     },
   )
 
   it.each([
     { slug: 'route-1', order: 32 },
     { slug: 'route-2', order: 26 },
-    { slug: 'route-3', order: 29 },
+    { slug: 'route-3', order: 28 },
     { slug: 'route-4', order: 29 },
   ] as const)(
     '$slug PIN $order plays once within its configured distance on its forward road trace',

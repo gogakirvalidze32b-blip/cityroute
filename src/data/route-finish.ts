@@ -27,10 +27,21 @@ export interface PinOrderRange {
 export const SESSION_VOICE_ROUTES = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
 
 /**
- * Start (დაწყება) and finish (ფინიში) session voices only play within this
- * radius of PIN 1. Outside that circle neither clip is spoken.
+ * Fallback circle around PIN 1 (agency). Primary gate is ALAZANI_SESSION_ZONE
+ * so the whole Alazani Avenue start/finish strip hears დაწყება / ფინიში / გილოცავთ.
  */
-export const SESSION_VOICE_PIN1_RADIUS_M = 50
+export const SESSION_VOICE_PIN1_RADIUS_M = 800
+
+/**
+ * Alazani Avenue corridor around the MIA Telavi agency (red-oval exam zone).
+ * Session voices play on every start/finish while GPS is inside this box.
+ */
+export const ALAZANI_SESSION_ZONE = {
+  minLat: 41.9235,
+  maxLat: 41.9375,
+  minLng: 45.4675,
+  maxLng: 45.4835,
+} as const
 
 /** @deprecated Kept for finish-range docs/tests; start voice is PIN-1 radius gated. */
 export const START_AUDIO_PIN_RANGES: Readonly<Record<string, PinOrderRange>> = {
@@ -47,7 +58,8 @@ export const ROUTE_FINISH_PIN_RANGES: Readonly<Record<string, PinOrderRange>> = 
   'route-4': { start: 26, end: 31 },
 }
 
-const GPS_AUTO_FINISH_ROUTES = new Set(['route-1', 'route-2', 'route-4'])
+/** Empty: exam never auto-finishes — examiner must press დასრულება. */
+const GPS_AUTO_FINISH_ROUTES = new Set<string>()
 const FINISH_PIN_APPROACH_METERS = 20
 const MAX_FINISH_CROSS_TRACK_METERS = 20
 
@@ -71,17 +83,33 @@ function distanceMeters(a: LatLngLike, b: LatLngLike): number {
   return 2 * earthRadiusMeters * Math.asin(Math.sqrt(value))
 }
 
-/** True when GPS is within SESSION_VOICE_PIN1_RADIUS_M of PIN 1. */
+/** True when GPS is on the Alazani Avenue exam corridor (agency strip). */
+export function isInAlazaniSessionZone(
+  position: LatLngLike | null | undefined,
+): boolean {
+  if (!position) return false
+  const [lat, lng] = asLatLng(position)
+  return (
+    lat >= ALAZANI_SESSION_ZONE.minLat &&
+    lat <= ALAZANI_SESSION_ZONE.maxLat &&
+    lng >= ALAZANI_SESSION_ZONE.minLng &&
+    lng <= ALAZANI_SESSION_ZONE.maxLng
+  )
+}
+
+/** True on Alazani corridor, or within SESSION_VOICE_PIN1_RADIUS_M of PIN 1. */
 export function isNearPin1ForSessionVoice(
   position: LatLngLike | null | undefined,
   pin1: LatLngLike | null | undefined,
   radiusM = SESSION_VOICE_PIN1_RADIUS_M,
 ): boolean {
-  if (!position || !pin1) return false
+  if (!position) return false
+  if (isInAlazaniSessionZone(position)) return true
+  if (!pin1) return false
   return distanceMeters(position, pin1) <= radiusM
 }
 
-/** დაწყება — only on exam routes and only within 50 m of PIN 1. */
+/** დაწყება — every new start on Alazani / near PIN 1. */
 export function isStartAudioAllowed(
   routeSlug: string,
   position: LatLngLike | null | undefined,
@@ -90,7 +118,7 @@ export function isStartAudioAllowed(
   return SESSION_VOICE_ROUTES.has(routeSlug) && isNearPin1ForSessionVoice(position, pin1)
 }
 
-/** ფინიში — same PIN-1 radius gate as start. */
+/** ფინიში / გილოცავთ — same Alazani / PIN-1 gate as start. */
 export function isFinishAudioAllowed(
   routeSlug: string,
   position: LatLngLike | null | undefined,
