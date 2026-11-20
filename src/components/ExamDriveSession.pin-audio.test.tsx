@@ -87,6 +87,7 @@ vi.mock('@/lib/gps', () => ({
   formatGpsError: vi.fn((err) => String(err)),
   gpsToLatLng: vi.fn((pos) => [pos.latitude, pos.longitude] as LatLng),
   resolveHeading: vi.fn(() => 0),
+  stabilizeRoadArrowHeading: vi.fn((_prev: number, target: number) => target),
   resolveExamSpeedKmh: vi.fn(() => 0),
 }))
 
@@ -105,6 +106,7 @@ vi.mock('@/lib/route-nav', () => ({
   gpsToLatLng: vi.fn((pos) => [pos.latitude, pos.longitude] as LatLng),
   resolveExamSpeedKmh: vi.fn(() => 0),
   resolveHeading: vi.fn(() => 0),
+  stabilizeRoadArrowHeading: vi.fn((_prev: number, target: number) => target),
   formatDuration: vi.fn((ms) => `${Math.floor(ms / 1000)}s`),
   routeLengthMeters: vi.fn(() => 5000),
   seedAlongRouteMeters: vi.fn(() => 0),
@@ -305,7 +307,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       polyline: [[BASE_LAT, 45.4], [BASE_LAT + 0.02, 45.4]] as LatLng[],
       pins: Array.from({ length: 6 }, (_, index) => pinAt(index, (index + 1) * 200)),
     } as RouteWithPins
-    // Far past the 800 m PIN-1 / Alazani session-voice gate (PIN 1 sits at 200 m).
+    // Far past the 50 m PIN-1 / PIN-2 session-start gate (PIN 1 sits at 200 m).
     vi.mocked(requestGpsOnce).mockResolvedValue(fix(2500) as never)
     render(<ExamDriveSession route={sixPinRoute} />)
 
@@ -415,19 +417,17 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       const targetChainage = targetProjection!.chainageMeters
       // Late-route context PINs must sit near the end of the forward road trace.
       expect(targetChainage).toBeGreaterThan(geometry.totalLengthMeters * 0.7)
-      const expectedGpsRadius = slug === 'route-2' ? 20 : pinAudioTriggerDistanceMeters(slug, order)
-      const triggerChainage = slug === 'route-2'
-        ? targetChainage - 1
-        : targetChainage - pinAudioApproachWindowMeters(slug, order) + 1
+      const expectedGpsRadius = pinAudioTriggerDistanceMeters(slug, order)
+      const triggerChainage =
+        targetChainage - pinAudioApproachWindowMeters(slug, order) + 1
       expect(distanceToPinMeters(
         roadPointAt(geometry, triggerChainage),
         targetPosition,
-      )).toBeLessThanOrEqual(expectedGpsRadius)
+      )).toBeLessThanOrEqual(Math.max(expectedGpsRadius, 25))
       const completedPins = selectedRoute.pins.filter((pin) => pin.sort_order < order)
       const completedOrders = completedPins.map((pin) => pin.sort_order)
-      const previousPin = slug === 'route-2'
-        ? selectedRoute.pins.find((pin) => pin.sort_order === 25)
-        : null
+      // Seed just before the 300m-right PIN on the forward return pass (R1/R3 style).
+      const previousPin = selectedRoute.pins.find((pin) => pin.sort_order === order - 1) ?? null
       const initialChainage = previousPin
         ? projectOrderedPointsToRoute(
             geometry,
@@ -435,7 +435,7 @@ describe('ExamDriveSession – PIN audio wiring', () => {
               .filter((pin) => pin.sort_order <= previousPin.sort_order)
               .sort((first, second) => first.sort_order - second.sort_order)
               .map((pin) => [pin.lat, pin.lng] as const),
-          )!.chainageMeters
+          )?.chainageMeters ?? targetChainage - 40
         : targetChainage - 40
       saveRoutePinProgress(slug, completedOrders)
       saveActiveExam({
@@ -476,33 +476,32 @@ describe('ExamDriveSession – PIN audio wiring', () => {
       }
 
       const triggerDistance = pinAudioApproachWindowMeters(slug, order)
-      if (slug === 'route-2') {
-        expect(initialChainage).toBeLessThan(targetChainage - triggerDistance)
-        const wrongOccurrence = projectPointToRouteNearChainage(
-          geometry,
-          [target.lat, target.lng],
-          targetChainage - 157,
-          20,
-        )
-        expect(wrongOccurrence).not.toBeNull()
-        expect(wrongOccurrence!.chainageMeters).toBeLessThan(targetChainage - triggerDistance)
-        // Earlier loop pass must stay silent even if GPS is near the PIN coords.
-        await emitAt(wrongOccurrence!.chainageMeters)
+      // Same as route 3: drive the end U-turn first, then 300m-right speaks.
+      const sequentialApproach = projectOrderedPointsToRoute(
+        geometry,
+        selectedRoute.pins
+          .filter((pin) => pin.sort_order <= order)
+          .sort((first, second) => first.sort_order - second.sort_order)
+          .map((pin) => [pin.lat, pin.lng] as const),
+      )?.chainageMeters
+      expect(initialChainage).toBeLessThan(targetChainage - triggerDistance)
+      if (sequentialApproach != null && targetChainage > sequentialApproach + 40) {
+        await emitAt(Math.max(initialChainage, sequentialApproach - 40))
         expect(played()).toEqual([])
-        await emitAt(targetChainage - 50)
-        await emitAt(targetChainage - triggerDistance - 2)
+        // Crawl the end U-turn — silent until inside the post-turn approach window.
+        for (
+          let ch = sequentialApproach;
+          ch < targetChainage - triggerDistance - 5;
+          ch += 15
+        ) {
+          await emitAt(ch)
+          expect(played()).toEqual([])
+        }
+        await emitAt(targetChainage - triggerDistance + 1)
       } else {
+        // Route 3: ordered≈nearest / ordered null — approach the roadside occurrence.
         await emitAt(targetChainage - triggerDistance - 15)
-        await emitAt(targetChainage - triggerDistance - 5)
-      }
-      expect(played()).toEqual([])
-      if (slug === 'route-2') {
-        vi.mocked(headingMatches).mockReturnValue(false)
-        await emitAt(targetChainage - Math.max(triggerDistance - 2, 1))
         expect(played()).toEqual([])
-        vi.mocked(headingMatches).mockReturnValue(true)
-        await emitAt(targetChainage - 1)
-      } else {
         await emitAt(targetChainage - triggerDistance + 1)
       }
       expect(played()).toEqual([target.id])

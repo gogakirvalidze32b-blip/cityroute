@@ -72,6 +72,7 @@ import {
 import {
   isFinishAudioAllowed,
   isStartAudioAllowed,
+  ROUTE_FINISH_PIN_RANGES,
 } from '@/data/route-finish'
 import {
   createSpeedTracker,
@@ -80,13 +81,16 @@ import {
   resolveHeading,
   routeLengthMeters,
   seedAlongRouteMeters,
+  stabilizeRoadArrowHeading,
 } from '@/lib/route-nav'
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
 import { createRouteOdometer, distanceKmTenths } from '@/lib/route-odometer'
 import { resolveAutoStart } from '@/lib/auto-start-pin'
 import {
   evaluatePinRouteCompletion,
+  forwardBearingAlongRoute,
   matchGpsPosition,
+  positionAtChainageMeters,
   prepareRouteGeometry,
   projectOrderedPointsToRoute,
   projectPointToRoute,
@@ -116,7 +120,7 @@ import {
   type RoundaboutReturnGateState,
   type RoundaboutPinRoute,
 } from '@/lib/pin-audio'
-import { advanceRoadProgressU, resolveSpeedLimitByOdometerMeters } from '@/lib/speed-limit'
+import { advanceRoadProgressU, resolveSpeedLimitByRoadU } from '@/lib/speed-limit'
 import { SPEED_LIMIT_DEBUG_PANEL } from '@/lib/debug-flags'
 import type { PreviewGpsSource } from '@/lib/preview-gps-source'
 import {
@@ -667,6 +671,8 @@ export function ExamDriveSession({
   const distanceMetersRef = useRef(distanceMeters)
   distanceMetersRef.current = distanceMeters
   const routeMatchStateRef = useRef<RouteMatchState | null>(null)
+  /** Display-only crawl on Alazani finish U-turn; pin-audio still uses routeMatchStateRef. */
+  const routeArrowChainageRef = useRef<number | null>(null)
   const gpsAutoStartBlockedRef = useRef(false)
   const roundaboutGateRef = useRef<RoundaboutReturnGateState | null>(null)
 
@@ -775,8 +781,7 @@ export function ExamDriveSession({
     savedState ? savedProgressOrders : null,
   )
   const pinsActive = voicePins.length > 0
-  // Posted limit from along-road kilometres (speedRoadU → km). Always shown while the road
-  // trace exists — not gated on GPS freshness or lateral distance to the line.
+  // Exam street line for GPS speed zones (same roadU progress as before the odometer switch).
   const speedLimitRoad = useMemo(() => examRoadTrace(route.slug, voicePins), [route.slug, voicePins])
   speedLimitRoadRef.current = speedLimitRoad
   const roundaboutGateGeometry = useMemo(() => {
@@ -808,10 +813,15 @@ export function ExamDriveSession({
     previewProgress.status === 'resume' &&
     sortedPins.length > 0 &&
     previewProgress.nextSortOrder === null
-  // Limit follows the same 0.1 კმ digit as traveledKmLabel (odometer) — flips instantly at that tenth.
+  // Road-km bands (old map stretches + new overlays). Monotonic roadU → exact km; start at u=0.
   const speedLimitKmh = useMemo(
-    () => resolveSpeedLimitByOdometerMeters(route.slug, distanceMeters),
-    [route.slug, distanceMeters],
+    () =>
+      resolveSpeedLimitByRoadU(
+        route.slug,
+        speedRoadU ?? (speedLimitRoad && speedLimitRoad.length >= 2 ? 0 : null),
+        speedLimitRoad,
+      ),
+    [route.slug, speedRoadU, speedLimitRoad],
   )
 
   useEffect(() => {
@@ -1088,6 +1098,7 @@ export function ExamDriveSession({
     )
     prevGpsRef.current = null
     routeMatchStateRef.current = null
+    routeArrowChainageRef.current = null
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
@@ -1388,11 +1399,7 @@ export function ExamDriveSession({
         currentPositionRef.current = raw
         updateSpeedRoadProgress(raw)
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
-        // While route-matching drives the arrow, skip GPS compass here — alternating
-        // GPS vs road bearing was making the arrow stutter on every fix.
-        if (!features.routeAudio || !routeMatchStateRef.current) {
-          setHeading(resolveHeading(pos, prevRaw, raw, polyline))
-        }
+        setHeading(resolveHeading(pos, prevRaw, raw, polyline))
         if (phaseRef.current === 'active') {
           setSpeedKmh(resolveExamSpeedKmh(pos, prevGpsRef.current, speedTrackerRef.current))
           const odo = routeOdometerRef.current.observe(raw, pos.timestamp)
@@ -1491,11 +1498,12 @@ export function ExamDriveSession({
         }
 
         const previousRouteMatch = routeMatchStateRef.current
-        const usesOrderedRouteContext = route.slug === 'route-3'
-        const usesRoute2Pin26Context =
-          route.slug === 'route-2' && pending?.sort_order === 26
+        // Route 3 logic for all Telavi routes: ordered forward match through the
+        // finish U-turn, then 300m-right speaks on the post-turn roadside.
+        const usesOrderedRouteContext = FIELD_TEST_SLUGS.has(route.slug)
         const usesRouteContextTarget =
           (route.slug === 'route-1' && pending?.sort_order === 32) ||
+          (route.slug === 'route-2' && pending?.sort_order === 26) ||
           (route.slug === 'route-3' && pending?.sort_order === 28) ||
           (route.slug === 'route-4' && pending?.sort_order === 29)
         const orderedPendingProjection = pending
@@ -1509,14 +1517,16 @@ export function ExamDriveSession({
           : null
         const usesOrderedPendingContext =
           usesOrderedRouteContext || usesRouteContextTarget
-        const usesTargetOccurrenceContext =
-          usesRoute2Pin26Context || usesRouteContextTarget
+        const usesTargetOccurrenceContext = usesRouteContextTarget
+        // Speak window: nearest roadside (post-turn on Alazani loops). Same as R3.
         const pendingRouteProjection = pending && usesTargetOccurrenceContext
           ? projectPointToRoute(routeGeometry, [pending.lat, pending.lng])
           : pending && usesOrderedPendingContext
             ? orderedPendingProjection
             : null
-        // Every lit PIN: forward along-road chainage so matching/arrow never ride the opposite run.
+        // R3: ordered projection is often null → forward = nearest, speak after the turn.
+        // R1/R2/R4: ordered sits ~150 m before nearest on the dual pass — hold forward on
+        // ordered until the car reaches it, then open forward to nearest (turn, then speak).
         const pendingForwardChainageMeters = pending
           ? resolveDemoPinChainage(
               routeGeometry,
@@ -1525,10 +1535,43 @@ export function ExamDriveSession({
               previousRouteMatch?.chainageMeters ?? 0,
             )
           : null
-        const expectedForwardChainageMeters =
-          pendingRouteProjection?.chainageMeters ??
-          pendingForwardChainageMeters ??
-          undefined
+        const orderedForwardM = orderedPendingProjection?.chainageMeters
+        const nearestForwardM = pendingRouteProjection?.chainageMeters
+        let expectedForwardChainageMeters: number | undefined
+        if (
+          usesTargetOccurrenceContext &&
+          orderedForwardM != null &&
+          nearestForwardM != null &&
+          nearestForwardM > orderedForwardM + 40
+        ) {
+          // Dual-pass Alazani: never prefer nearest until the car has crawled the
+          // U-turn — otherwise match teleports and 300m-right speaks too early.
+          if (
+            previousRouteMatch == null ||
+            previousRouteMatch.chainageMeters < orderedForwardM - 10
+          ) {
+            expectedForwardChainageMeters = orderedForwardM
+          } else if (previousRouteMatch.chainageMeters < nearestForwardM - 5) {
+            expectedForwardChainageMeters = Math.min(
+              nearestForwardM,
+              previousRouteMatch.chainageMeters + 25,
+            )
+          } else {
+            expectedForwardChainageMeters = nearestForwardM
+          }
+        } else {
+          // Route 3 style: ordered is null / ≈ nearest → forward = speak occurrence.
+          expectedForwardChainageMeters =
+            nearestForwardM ??
+            orderedForwardM ??
+            pendingForwardChainageMeters ??
+            undefined
+        }
+        const finishRange = ROUTE_FINISH_PIN_RANGES[route.slug]
+        const inAlazaniFinishArrowCorridor =
+          pending != null &&
+          finishRange != null &&
+          pending.sort_order >= finishRange.start
         let expectedChainageMeters: number | undefined
         let expectedPinChainageMeters = usesTargetOccurrenceContext || usesOrderedRouteContext
           ? pendingRouteProjection?.chainageMeters
@@ -1562,13 +1605,13 @@ export function ExamDriveSession({
           const contextProjection = contextPin
             ? startsAtFirstPin
               ? projectPointToRoute(routeGeometry, routeStart)
-            : usesOrderedPendingContext || usesRoute2Pin26Context
+            : usesOrderedPendingContext
                 ? orderedContextProjection
                 : projectPointToRoute(routeGeometry, [contextPin.lat, contextPin.lng])
             : null
           if (contextProjection && contextProjection.crossTrackMeters <= 20) {
             expectedChainageMeters = contextProjection.chainageMeters
-            if (contextPin === pending && !usesRoute2Pin26Context) {
+            if (contextPin === pending) {
               expectedPinChainageMeters = contextProjection.chainageMeters
             }
           }
@@ -1603,34 +1646,70 @@ export function ExamDriveSession({
           '| Chainage:', routeMatch.projection ? Math.round(routeMatch.projection.chainageMeters) + 'm' : '—',
         )
 
-        if (!routeMatch.accepted || !routeMatch.nextState) {
-          // Match failed (often dual-carriage near Alazani): do not leave the arrow
-          // frozen on the last wrong bearing — fall back to GPS/movement heading.
-          setHeading(resolveHeading(pos, prevRaw, raw, polyline))
-          return
-        }
+        if (!routeMatch.accepted || !routeMatch.nextState) return
+        // Audio / progress use match state. Arrow display is smoothed separately
+        // (Maps-style) so pins, voice, and route geometry stay untouched.
         routeMatchStateRef.current = routeMatch.nextState
+        const matchedChainage = routeMatch.projection.chainageMeters
         const matchedPosition: LatLng = [
           routeMatch.projection.position[0],
           routeMatch.projection.position[1],
         ]
-        setUserPos(matchedPosition)
-        currentPositionRef.current = matchedPosition
-        // Arrow: forward along the lit-PIN road (never +180). Skip tiny jitter;
-        // always take large corrections (wrong carriageway → right road).
-        if (
-          routeMatch.direction === 'forward' ||
-          routeMatch.direction === 'reverse' ||
-          routeMatch.direction === 'stationary'
-        ) {
-          const nextHeading = routeMatch.projection.segmentBearingDegrees
-          setHeading((prev) => {
-            const rawDiff = Math.abs(((nextHeading - prev) % 360 + 360) % 360)
-            const delta = Math.min(rawDiff, 360 - rawDiff)
-            if (delta < 6) return prev
-            return nextHeading
-          })
+        // Google/Yandex-like arrow: crawl along the road, never teleport on GPS
+        // jumps; slew heading along the road (no instant segment snaps / jitter).
+        let displayChainage = routeArrowChainageRef.current
+        if (displayChainage == null) {
+          displayChainage =
+            previousRouteMatch?.chainageMeters ?? matchedChainage
         }
+        const chainageJump = matchedChainage - displayChainage
+        // Finish U-turns can teleport ~140 m; normal GPS noise is smaller.
+        const teleportJumpM = inAlazaniFinishArrowCorridor ? 40 : 28
+        const crawlStepM = inAlazaniFinishArrowCorridor ? 18 : 22
+        if (chainageJump > teleportJumpM) {
+          const local = projectPointToRouteNearChainage(
+            routeGeometry,
+            raw,
+            displayChainage,
+            Math.max(40, teleportJumpM),
+          )
+          if (local && local.chainageMeters >= displayChainage - 5) {
+            displayChainage += Math.min(
+              crawlStepM,
+              Math.max(0, local.chainageMeters - displayChainage),
+            )
+          } else {
+            displayChainage += Math.min(crawlStepM, chainageJump)
+          }
+        } else if (chainageJump >= -10) {
+          // Follow match, including tiny GPS back-steps.
+          displayChainage = matchedChainage
+        }
+        // Larger backward jumps: hold display — do not yank the arrow reverse.
+        displayChainage = Math.min(
+          routeGeometry.totalLengthMeters,
+          Math.max(0, displayChainage),
+        )
+        routeArrowChainageRef.current = displayChainage
+        const atChainage = positionAtChainageMeters(
+          routeGeometry,
+          displayChainage,
+        )
+        const displayPosition: LatLng = atChainage
+          ? [atChainage[0], atChainage[1]]
+          : matchedPosition
+        setUserPos(displayPosition)
+        currentPositionRef.current = displayPosition
+        const roadBearing =
+          forwardBearingAlongRoute(routeGeometry, displayChainage, 10) ??
+          routeMatch.projection.segmentBearingDegrees
+        const mapsBearing =
+          routeMatch.direction === 'reverse'
+            ? (roadBearing + 180) % 360
+            : roadBearing
+        setHeading((prev) =>
+          stabilizeRoadArrowHeading(prev, mapsBearing, 22, 4, false),
+        )
 
         const target = pending
         const gateTarget = target
@@ -1708,7 +1787,7 @@ export function ExamDriveSession({
         // fire if the live GPS is inside the PIN's audio bubble. Sequential pending
         // order is unchanged — only the next PIN can use this fallback.
         const audioHeadingToleranceDeg =
-          usesRoute2Pin26Context || usesRouteContextTarget
+          usesRouteContextTarget
             ? 45
             : AUDIO_HEADING_TOLERANCE_DEG
         // Loop-context PINs (R1#32 / R2#26 / R3#28 / R4#29): first roadside can be
@@ -2123,9 +2202,9 @@ export function ExamDriveSession({
       return
     }
 
-    const voicePosEarly = sessionVoicePosition ?? currentPositionRef.current
-    const pin1Early = voicePins.find((pin) => pin.sort_order === 1) ?? null
-    // Completed route + Alazani zone: clear progress so every new start can say დაწყება.
+    // Completed route: always clear progress so restart never sticks on
+    // "ყველა PIN გავლილია" (location must not gate this — დაწყება voice stays
+    // gated by isStartAudioAllowed later).
     if (isFieldTest) {
       const priorHandled = mostAdvancedPinProgress(
         voicePins,
@@ -2133,14 +2212,11 @@ export function ExamDriveSession({
         voicePins.filter((pin) => pin.sort_order < startSortOrder).map((pin) => pin.sort_order),
       )
       const priorResolution = resolvePinProgress(voicePins, priorHandled)
-      if (
-        priorResolution.status === 'resume' &&
-        priorResolution.nextSortOrder === null &&
-        isStartAudioAllowed(route.slug, voicePosEarly, pin1Early)
-      ) {
+      if (priorResolution.status === 'resume' && priorResolution.nextSortOrder === null) {
         clearRoutePinProgress(route.slug, persistenceScope)
         clearManualPinSelection(route.slug, persistenceScope)
         startSortOrder = 1
+        setSavedEpoch((value) => value + 1)
       }
     }
 
@@ -2196,6 +2272,7 @@ export function ExamDriveSession({
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     routeMatchStateRef.current = null
+    routeArrowChainageRef.current = null
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       handledOrdersRef.current = handled
@@ -2226,9 +2303,10 @@ export function ExamDriveSession({
     setPhase('active')
     resumedSlugRef.current = route.slug
     const pin1 = voicePins.find((pin) => pin.sort_order === 1) ?? null
-    // Every start on Alazani / near PIN 1 — including after finish + restart (ignore progress).
+    const pin2 = voicePins.find((pin) => pin.sort_order === 2) ?? null
+    // დაწყება only within 50 m of PIN 1 or PIN 2.
     startAudioPendingRef.current =
-      features.routeAudio && isStartAudioAllowed(route.slug, voicePos, pin1)
+      features.routeAudio && isStartAudioAllowed(route.slug, voicePos, pin1, pin2)
     if (startAudioPendingRef.current) playSessionStartAudio(sessionGeneration)
   }
 
@@ -2800,6 +2878,14 @@ export function ExamDriveSession({
     routeOdometerRef.current.reset()
     distanceMetersRef.current = 0
     setDistanceMeters(0)
+    // Full route done (same for 1/2/3/4): drop PIN progress so return/restart
+    // cannot reopen the complete wall at 0.0 კმ (R3 loop end ≈ start).
+    if (!hasRemainingPins && FIELD_TEST_SLUGS.has(route.slug)) {
+      clearRoutePinProgress(route.slug, persistenceScope)
+      clearManualPinSelection(route.slug, persistenceScope)
+      handledOrdersRef.current = new Set()
+      setSavedEpoch((value) => value + 1)
+    }
     releaseWake.current?.()
     audioEngine.stopAll()
     sessionStartRef.current = 0
@@ -2927,6 +3013,7 @@ export function ExamDriveSession({
     triggeredRef.current = restoredIds
     pinApproachRef.current = new Map()
     routeMatchStateRef.current = null
+    routeArrowChainageRef.current = null
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = orders
     sessionStartModeRef.current = saved.startMode ?? 'manual'
     currentPositionRef.current = saved.userPos
@@ -3037,6 +3124,7 @@ export function ExamDriveSession({
     triggeredRef.current = pinIdsForOrders(sortedPins, handled)
     pinApproachRef.current = new Map()
     routeMatchStateRef.current = null
+    routeArrowChainageRef.current = null
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = handled
     resumedSlugRef.current = null
@@ -3224,9 +3312,16 @@ export function ExamDriveSession({
                   <button
                     type="button"
                     className="exam-route-complete__finish"
-                    onClick={finishSession}
+                    onClick={() => {
+                      // Same as routes 1/2/4 preview complete: clear progress so
+                      // 0.0 კმ + „ყველა PIN გავლილია“ cannot stick (esp. R3 loop).
+                      void restartPreview()
+                    }}
                   >
                     გამოცდის დასრულება
+                  </button>
+                  <button type="button" className="nav-start-btn" onClick={() => void restartPreview()}>
+                    თავიდან დაწყება
                   </button>
                 </div>
               )}
@@ -3464,7 +3559,15 @@ export function ExamDriveSession({
           onRestart={restartPreview}
           onFinish={finalizeSession}
           onContinue={summaryCanContinue ? continueFromSummary : undefined}
-          onReturnToMenu={onReturnToMenu}
+          onReturnToMenu={
+            onReturnToMenu
+              ? () => {
+                  // Menu leave must clear completed PIN progress — same as თავიდან —
+                  // otherwise DEMO return reopens "ყველა PIN გავლილია" at 0.0 კმ.
+                  void restartPreview().then(() => onReturnToMenu())
+                }
+              : undefined
+          }
           finalized={summaryFinalized}
           error={resumeError}
         />

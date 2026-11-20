@@ -34,6 +34,7 @@ const ROUTE_FINISH_PIN_ORDERS: Readonly<Record<string, number>> = {
 }
 const ROUTE_CONTEXT_TRIGGER_ORDERS: Readonly<Record<string, number>> = {
   'route-1': 32,
+  'route-2': 26,
   'route-3': 28,
   'route-4': 29,
 }

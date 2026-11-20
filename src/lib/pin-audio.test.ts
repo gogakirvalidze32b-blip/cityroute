@@ -186,13 +186,12 @@ describe('final 300 m right-turn PIN audio', () => {
         scenario.lng,
         null,
       )).toBe(true)
-      const contextTarget =
-        scenario.route === 'route-1' || scenario.route === 'route-3' || scenario.route === 'route-4'
+      // All four return-pass 300m-right PINs share the context-PIN bubble.
       expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder)).toBe(
-        contextTarget ? AUDIO_SPECIAL_TRIGGER_DISTANCE_M : AUDIO_TRIGGER_DISTANCE_M,
+        AUDIO_SPECIAL_TRIGGER_DISTANCE_M,
       )
       expect(pinAudioApproachWindowMeters(scenario.route, scenario.sortOrder)).toBe(
-        contextTarget ? AUDIO_SPECIAL_TRIGGER_DISTANCE_M : AUDIO_TRIGGER_DISTANCE_M,
+        AUDIO_SPECIAL_TRIGGER_DISTANCE_M,
       )
       expect(pinAudioTriggerDistanceMeters(scenario.route, scenario.sortOrder - 1)).toBe(
         scenario.route === 'route-3'
@@ -233,13 +232,13 @@ describe('final 300 m right-turn PIN audio', () => {
     expect(pinAudioTriggerDistanceMeters('route-1', 1)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-1', 32)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-1', 35)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-2', 26)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
+    expect(pinAudioApproachWindowMeters('route-2', 26)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-2', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-3', 31)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-3', 28)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-4', 29)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
     expect(pinAudioTriggerDistanceMeters('route-4', 32)).toBe(AUDIO_SPECIAL_TRIGGER_DISTANCE_M)
-    expect(pinAudioTriggerDistanceMeters('route-2', 26)).toBe(AUDIO_TRIGGER_DISTANCE_M)
-    expect(pinAudioApproachWindowMeters('route-2', 26)).toBe(AUDIO_TRIGGER_DISTANCE_M)
   })
 })
 

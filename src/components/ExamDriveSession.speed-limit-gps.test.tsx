@@ -65,6 +65,7 @@ vi.mock('@/lib/route-nav', () => ({
   createSpeedTracker: () => ({}),
   gpsToLatLng: (pos: GpsPosition) => [pos.lat, pos.lng] as [number, number],
   resolveHeading: () => 0,
+  stabilizeRoadArrowHeading: (_prev: number, target: number) => target,
   resolveExamSpeedKmh: () => 5,
   formatDuration: (ms: number) => `${Math.floor(ms / 1000)}s`,
   routeLengthMeters: () => 5000,

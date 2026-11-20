@@ -27,14 +27,17 @@ export interface PinOrderRange {
 export const SESSION_VOICE_ROUTES = new Set(['route-1', 'route-2', 'route-3', 'route-4'])
 
 /**
- * Fallback circle around PIN 1 (agency). Primary gate is ALAZANI_SESSION_ZONE
- * so the whole Alazani Avenue start/finish strip hears დაწყება / ფინიში / გილოცავთ.
+ * Fallback circle around PIN 1 (agency) for ფინიში / გილოცავთ.
+ * Primary finish gate is ALAZANI_SESSION_ZONE.
  */
 export const SESSION_VOICE_PIN1_RADIUS_M = 800
 
+/** დაწყება — only within this radius of PIN 1 or PIN 2. */
+export const SESSION_START_VOICE_RADIUS_M = 50
+
 /**
  * Alazani Avenue corridor around the MIA Telavi agency (red-oval exam zone).
- * Session voices play on every start/finish while GPS is inside this box.
+ * Finish / success voices play while GPS is inside this box.
  */
 export const ALAZANI_SESSION_ZONE = {
   minLat: 41.9235,
@@ -43,12 +46,12 @@ export const ALAZANI_SESSION_ZONE = {
   maxLng: 45.4835,
 } as const
 
-/** @deprecated Kept for finish-range docs/tests; start voice is PIN-1 radius gated. */
+/** @deprecated Kept for finish-range docs/tests; start voice is PIN 1/2 50 m gated. */
 export const START_AUDIO_PIN_RANGES: Readonly<Record<string, PinOrderRange>> = {
-  'route-1': { start: 1, end: 5 },
-  'route-2': { start: 1, end: 4 },
-  'route-3': { start: 1, end: 5 },
-  'route-4': { start: 1, end: 5 },
+  'route-1': { start: 1, end: 2 },
+  'route-2': { start: 1, end: 2 },
+  'route-3': { start: 1, end: 2 },
+  'route-4': { start: 1, end: 2 },
 }
 
 export const ROUTE_FINISH_PIN_RANGES: Readonly<Record<string, PinOrderRange>> = {
@@ -109,13 +112,17 @@ export function isNearPin1ForSessionVoice(
   return distanceMeters(position, pin1) <= radiusM
 }
 
-/** დაწყება — every new start on Alazani / near PIN 1. */
+/** დაწყება — only within 50 m of PIN 1 or PIN 2 (not the whole Alazani strip). */
 export function isStartAudioAllowed(
   routeSlug: string,
   position: LatLngLike | null | undefined,
   pin1: LatLngLike | null | undefined,
+  pin2?: LatLngLike | null | undefined,
 ): boolean {
-  return SESSION_VOICE_ROUTES.has(routeSlug) && isNearPin1ForSessionVoice(position, pin1)
+  if (!SESSION_VOICE_ROUTES.has(routeSlug) || !position) return false
+  if (pin1 && distanceMeters(position, pin1) <= SESSION_START_VOICE_RADIUS_M) return true
+  if (pin2 && distanceMeters(position, pin2) <= SESSION_START_VOICE_RADIUS_M) return true
+  return false
 }
 
 /** ფინიში / გილოცავთ — same Alazani / PIN-1 gate as start. */

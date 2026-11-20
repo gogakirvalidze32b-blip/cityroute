@@ -75,6 +75,7 @@ vi.mock('@/lib/route-nav', () => ({
   createSpeedTracker: () => ({}),
   gpsToLatLng: (pos: GpsPosition) => [pos.lat, pos.lng] as [number, number],
   resolveHeading: () => 0,
+  stabilizeRoadArrowHeading: (_prev: number, target: number) => target,
   resolveExamSpeedKmh: () => 5,
   formatDuration: (ms: number) => `${Math.floor(ms / 1000)}s`,
   routeLengthMeters: () => 5000,
@@ -821,10 +822,50 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(loadRoutePinProgress(route.slug)).toEqual(sorted(route).map((pin) => pin.sort_order))
 
     await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'თავიდან დაწყება' }))
+      await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
     })
     await pressStart()
 
+    expect(nextOrder()).toBe(1)
+    expect(loadRoutePinProgress(route.slug)).toBeNull()
+  })
+
+  it('route-3: starting again after a completed route clears progress even far from PIN 1/2', async () => {
+    const route = routeBySlug('route-3')
+    saveRoutePinProgress(
+      route.slug,
+      sorted(route).map((pin) => pin.sort_order),
+    )
+    // Far from PIN 1/2 — must not block clearing completed progress on start.
+    gps.once = {
+      lat: 41.9,
+      lng: 45.4,
+      accuracy: 5,
+      heading: 0,
+      speed: 0,
+      timestamp: Date.now(),
+    }
+    let demoControls: { startAtPin: (order: number) => void } | null = null
+    render(
+      <ExamDriveSession
+        route={route}
+        onPreviewDemoControls={(controls) => {
+          demoControls = controls
+        }}
+      />,
+    )
+    await settle()
+    expect(screen.getByTestId('route-complete')).toBeTruthy()
+    expect(demoControls).not.toBeNull()
+
+    // DEMO PLAY path: startAtPin while completed (start button is hidden).
+    await act(async () => {
+      demoControls!.startAtPin(1)
+      await Promise.resolve()
+    })
+    await settle()
+
+    expect(screen.queryByTestId('route-complete')).toBeNull()
     expect(nextOrder()).toBe(1)
     expect(loadRoutePinProgress(route.slug)).toBeNull()
   })
@@ -1839,36 +1880,44 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2, 3])
   })
 
-  it.each(cases)('%s: finishing all pins keeps the completed state after reload', async (slug) => {
+  it.each(cases)('%s: active complete overlay restart clears like preview (same for 1–4)', async (slug) => {
     const route = routeBySlug(slug)
-    const finishStart = ROUTE_FINISH_PIN_RANGES[slug].start
-    const first = await startAtFinishSection(route)
-    for (const pin of sorted(route).filter((item) => item.sort_order >= finishStart)) {
-      await driveTo(route, pin.sort_order)
-    }
+    const allOrders = sorted(route).map((pin) => pin.sort_order)
+    saveRoutePinProgress(route.slug, allOrders)
+    saveActiveExam({
+      routeId: route.id,
+      routeSlug: route.slug,
+      routeName: route.name_ka,
+      phase: 'active',
+      exam: createExamSession(route.id, route.name_ka),
+      userPos: [sorted(route)[0]!.lat, sorted(route)[0]!.lng],
+      heading: 0,
+      speedKmh: 0,
+      elapsedMs: 60_000,
+      distanceMeters: 0,
+      triggeredPins: sorted(route).map((pin) => pin.id),
+      triggeredSortOrders: allOrders,
+      lastPassedSortOrder: allOrders[allOrders.length - 1]!,
+      nextSortOrder: null,
+      startMode: 'automatic',
+      savedAt: Date.now(),
+    })
+    gps.once = fix(route, 1)
+    const view = render(<ExamDriveSession route={route} />)
+    await settle()
     expect(screen.getByTestId('route-complete').textContent).toContain('მარშრუტი დასრულებულია')
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual(
-      sorted(route).map((pin) => pin.sort_order),
-    )
-    expect(loadRoutePinProgress(route.slug)).toEqual(sorted(route).map((pin) => pin.sort_order))
+    // Same as preview complete on routes 1/2/4: overlay clears progress for a fresh start.
     await act(async () => {
       await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
     })
     await settle()
-    expect(screen.getByTestId('exam-summary')).toBeTruthy()
-    await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
-    })
-    await settle()
-    expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
-    first.unmount()
-
-    playDetailed.mockClear()
-    render(<ExamDriveSession route={route} />)
-    await settle()
-    expect(screen.getByTestId('route-complete').textContent).toContain('მარშრუტი დასრულებულია')
-    expect(playDetailed).not.toHaveBeenCalled()
-  }, 20_000)
+    expect(loadRoutePinProgress(route.slug)).toBeNull()
+    expect(screen.queryByTestId('route-complete')).toBeNull()
+    gps.once = fix(route, 1)
+    await pressStart()
+    expect(nextOrder()).toBe(1)
+    view.unmount()
+  }, 15_000)
 
   it.each(cases)('%s: pagehide writes the current pin progress', async (slug) => {
     const route = routeBySlug(slug)

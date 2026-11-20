@@ -115,6 +115,35 @@ export function resolveHeading(
   return headingOnRoute(raw, route)
 }
 
+/** Shortest signed turn from `fromDeg` to `toDeg` in (-180, 180]. */
+export function shortestHeadingTurnDegrees(fromDeg: number, toDeg: number): number {
+  return ((toDeg - fromDeg + 540) % 360) - 180
+}
+
+/**
+ * Exam map arrow only: follow the road bearing without GPS compass flips.
+ * Tiny jitter is ignored; normal road turns slew. Instant snap is optional —
+ * Maps-style finish corridors should slew only so the arrow never jumps sides.
+ */
+export function stabilizeRoadArrowHeading(
+  previousDeg: number,
+  targetDeg: number,
+  maxStepDeg = 45,
+  deadbandDeg = 8,
+  allowInstantSnap = true,
+): number {
+  if (!Number.isFinite(targetDeg)) return previousDeg
+  if (!Number.isFinite(previousDeg)) return ((targetDeg % 360) + 360) % 360
+  const turn = shortestHeadingTurnDegrees(previousDeg, targetDeg)
+  if (Math.abs(turn) < deadbandDeg) return previousDeg
+  // Sharp geometry recovery: optional instant snap (off for Maps-style corridors).
+  if (allowInstantSnap && Math.abs(turn) >= 60) {
+    return ((targetDeg % 360) + 360) % 360
+  }
+  const step = Math.sign(turn) * Math.min(Math.abs(turn), Math.max(1, maxStepDeg))
+  return ((previousDeg + step) % 360 + 360) % 360
+}
+
 export function gpsToLatLng(gps: GpsPosition): LatLng {
   return [gps.lat, gps.lng]
 }

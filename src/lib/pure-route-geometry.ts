@@ -159,6 +159,63 @@ function bearingAtChainageMeters(
   return bearingDegrees(route.coordinates[segmentIndex], route.coordinates[segmentIndex + 1])
 }
 
+/** Point on the prepared route at an along-route chainage (Google/Yandex-style road snap). */
+export function positionAtChainageMeters(
+  route: PreparedRouteGeometry,
+  chainageMeters: number,
+): LatLng | null {
+  if (
+    !Number.isFinite(chainageMeters) ||
+    chainageMeters < 0 ||
+    route.coordinates.length < 2
+  ) {
+    return null
+  }
+  const clamped = Math.min(chainageMeters, route.totalLengthMeters)
+  let segmentIndex = 0
+  for (let index = 0; index < route.cumulativeMeters.length - 1; index++) {
+    if (route.cumulativeMeters[index + 1] >= clamped) {
+      segmentIndex = index
+      break
+    }
+    segmentIndex = index
+  }
+  const start = route.coordinates[segmentIndex]
+  const end = route.coordinates[Math.min(segmentIndex + 1, route.coordinates.length - 1)]
+  const segmentStart = route.cumulativeMeters[segmentIndex]
+  const segmentEnd = route.cumulativeMeters[Math.min(segmentIndex + 1, route.cumulativeMeters.length - 1)]
+  const span = segmentEnd - segmentStart
+  const fraction = span > 0 ? (clamped - segmentStart) / span : 0
+  return [
+    start[0] + (end[0] - start[0]) * fraction,
+    start[1] + (end[1] - start[1]) * fraction,
+  ]
+}
+
+/**
+ * Maps-style nav arrow: bearing looking a few meters ahead along the route
+ * from `chainageMeters` (increasing chainage = toward next PIN).
+ */
+export function forwardBearingAlongRoute(
+  route: PreparedRouteGeometry,
+  chainageMeters: number,
+  lookAheadMeters = 18,
+): number | null {
+  if (!Number.isFinite(chainageMeters) || !Number.isFinite(lookAheadMeters) || lookAheadMeters <= 0) {
+    return null
+  }
+  const from = positionAtChainageMeters(route, chainageMeters)
+  const to = positionAtChainageMeters(
+    route,
+    Math.min(route.totalLengthMeters, chainageMeters + lookAheadMeters),
+  )
+  if (!from || !to) return null
+  if (distanceMeters(from, to) < 0.5) {
+    return bearingAtChainageMeters(route, chainageMeters)
+  }
+  return bearingDegrees(from, to)
+}
+
 function localMeters(origin: LatLng, point: LatLng): readonly [number, number] {
   const meanLatitude = ((origin[0] + point[0]) / 2) * DEGREES_TO_RADIANS
   const x = (point[1] - origin[1]) * DEGREES_TO_RADIANS * EARTH_RADIUS_METERS * Math.cos(meanLatitude)

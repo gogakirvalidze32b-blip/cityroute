@@ -65,6 +65,7 @@ vi.mock('@/lib/gps', () => ({
   formatGpsError: vi.fn((err) => String(err)),
   gpsToLatLng: vi.fn((pos) => [pos.latitude, pos.longitude] as LatLng),
   resolveHeading: vi.fn(() => 0),
+  stabilizeRoadArrowHeading: vi.fn((_prev: number, target: number) => target),
   resolveExamSpeedKmh: vi.fn(() => 0),
 }))
 
@@ -83,6 +84,7 @@ vi.mock('@/lib/route-nav', () => ({
   gpsToLatLng: vi.fn((pos) => [pos.latitude, pos.longitude] as LatLng),
   resolveExamSpeedKmh: vi.fn(() => 0),
   resolveHeading: vi.fn(() => 0),
+  stabilizeRoadArrowHeading: vi.fn((_prev: number, target: number) => target),
   formatDuration: vi.fn((ms) => `${Math.floor(ms / 1000)}s`),
   routeLengthMeters: vi.fn(() => 5000),
   seedAlongRouteMeters: vi.fn(() => 0),

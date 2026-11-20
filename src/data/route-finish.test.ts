@@ -132,10 +132,10 @@ describe('shared finish sequence', () => {
 
   it('defines the requested inclusive start and finish PIN ranges', () => {
     expect(START_AUDIO_PIN_RANGES).toEqual({
-      'route-1': { start: 1, end: 5 },
-      'route-2': { start: 1, end: 4 },
-      'route-3': { start: 1, end: 5 },
-      'route-4': { start: 1, end: 5 },
+      'route-1': { start: 1, end: 2 },
+      'route-2': { start: 1, end: 2 },
+      'route-3': { start: 1, end: 2 },
+      'route-4': { start: 1, end: 2 },
     })
     expect(ROUTE_FINISH_PIN_RANGES).toEqual({
       'route-1': { start: 29, end: 34 },
@@ -146,33 +146,36 @@ describe('shared finish sequence', () => {
     expect(SESSION_VOICE_PIN1_RADIUS_M).toBe(800)
   })
 
-  it('allows დაწყება / ფინიში on Alazani corridor and near PIN 1 on all four routes', () => {
+  it('allows დაწყება only within 50 m of PIN 1 or PIN 2; ფინიში stays Alazani / PIN 1', () => {
     for (const slug of ['route-1', 'route-2', 'route-3', 'route-4'] as const) {
       const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
       const pin1 = route.pins.find((pin) => pin.sort_order === 1)!
-      const near: [number, number] = [pin1.lat, pin1.lng]
-      // South Alazani near Telavi Mall — inside corridor box
+      const pin2 = route.pins.find((pin) => pin.sort_order === 2)!
+      const nearPin1: [number, number] = [pin1.lat, pin1.lng]
+      const nearPin2: [number, number] = [pin2.lat, pin2.lng]
+      // South Alazani near Telavi Mall — inside corridor box, but not start-voice radius
       const alazaniSouth: [number, number] = [41.9260, 45.4735]
-      // Far outside Alazani / agency zone
       const far: [number, number] = [pin1.lat + 0.02, pin1.lng]
 
-      expect(isInAlazaniSessionZone(near)).toBe(true)
+      expect(isInAlazaniSessionZone(nearPin1)).toBe(true)
       expect(isInAlazaniSessionZone(alazaniSouth)).toBe(true)
       expect(isInAlazaniSessionZone(far)).toBe(false)
-      expect(isNearPin1ForSessionVoice(near, pin1)).toBe(true)
+      expect(isNearPin1ForSessionVoice(nearPin1, pin1)).toBe(true)
       expect(isNearPin1ForSessionVoice(alazaniSouth, pin1)).toBe(true)
       expect(isNearPin1ForSessionVoice(far, pin1)).toBe(false)
-      expect(isStartAudioAllowed(slug, near, pin1)).toBe(true)
-      expect(isStartAudioAllowed(slug, alazaniSouth, pin1)).toBe(true)
-      expect(isStartAudioAllowed(slug, far, pin1)).toBe(false)
-      expect(isFinishAudioAllowed(slug, near, pin1)).toBe(true)
+      expect(isStartAudioAllowed(slug, nearPin1, pin1, pin2)).toBe(true)
+      expect(isStartAudioAllowed(slug, nearPin2, pin1, pin2)).toBe(true)
+      expect(isStartAudioAllowed(slug, alazaniSouth, pin1, pin2)).toBe(false)
+      expect(isStartAudioAllowed(slug, far, pin1, pin2)).toBe(false)
+      expect(isFinishAudioAllowed(slug, nearPin1, pin1)).toBe(true)
       expect(isFinishAudioAllowed(slug, alazaniSouth, pin1)).toBe(true)
       expect(isFinishAudioAllowed(slug, far, pin1)).toBe(false)
-      expect(isStartAudioAllowed(slug, null, pin1)).toBe(false)
+      expect(isStartAudioAllowed(slug, null, pin1, pin2)).toBe(false)
       expect(isFinishAudioAllowed(slug, null, pin1)).toBe(false)
     }
     const pin1 = TELAVI_ROUTES_FALLBACK[0].pins.find((pin) => pin.sort_order === 1)!
-    expect(isStartAudioAllowed('route-5', [pin1.lat, pin1.lng], pin1)).toBe(false)
+    const pin2 = TELAVI_ROUTES_FALLBACK[0].pins.find((pin) => pin.sort_order === 2)!
+    expect(isStartAudioAllowed('route-5', [pin1.lat, pin1.lng], pin1, pin2)).toBe(false)
     expect(isFinishAudioAllowed('route-5', [pin1.lat, pin1.lng], pin1)).toBe(false)
   })
 
@@ -345,7 +348,7 @@ describe('shared finish sequence', () => {
 
     const route3 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
     expect([route3.pins.find((pin) => pin.sort_order === 11)?.lat, route3.pins.find((pin) => pin.sort_order === 11)?.lng])
-      .toEqual([41.918231, 45.482648])
+      .toEqual([41.918413, 45.483347])
     expect([route3.pins.find((pin) => pin.sort_order === 13)?.lat, route3.pins.find((pin) => pin.sort_order === 13)?.lng])
       .toEqual([41.918623, 45.484153])
 
@@ -354,7 +357,9 @@ describe('shared finish sequence', () => {
     const pin12 = route4.pins.find((pin) => pin.sort_order === 12)!
     expect(pin7.instruction_ka).toBe('500 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ')
     expect(resolvePinAudioUrl('route-4', pin7)).not.toBeNull()
-    expect([pin12.lat, pin12.lng]).toEqual([41.91915, 45.498674])
+    expect([pin12.lat, pin12.lng]).toEqual([41.919276, 45.49935])
+    const pin15 = route4.pins.find((pin) => pin.sort_order === 15)!
+    expect([pin15.lat, pin15.lng]).toEqual([41.919466, 45.499243])
     expect(pinVoicePlaybackRate('route-4', 7)).toBe(0.9)
     expect(pinVoicePlaybackRate('route-4', 8)).toBe(0.9)
   })
