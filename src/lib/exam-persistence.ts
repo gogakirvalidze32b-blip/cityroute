@@ -41,6 +41,8 @@ export type SavedExamState = {
   /** Present when phase is `summary` so Finish survives a page refresh. */
   summary?: ExamSessionSummary
   summaryCanContinue?: boolean
+  /** MAP/PANEL switcher — restored across remount so collapse/expand keeps the same screen. */
+  driveView?: 'map' | 'panel'
   savedAt: number
 }
 
@@ -147,6 +149,7 @@ export function isSavedExamState(value: unknown): value is SavedExamState {
         state.examSessionRevision >= 1)) &&
     (!('examSessionDirty' in state) || typeof state.examSessionDirty === 'boolean') &&
     (!('startMode' in state) || state.startMode === 'automatic' || state.startMode === 'manual') &&
+    (!('driveView' in state) || state.driveView === 'map' || state.driveView === 'panel') &&
     (!('summaryCanContinue' in state) || typeof state.summaryCanContinue === 'boolean') &&
     (!('summary' in state) ||
       state.summary === undefined ||
@@ -367,6 +370,9 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
     if (!('startMode' in incoming) && previous.startMode) {
       merged = { ...merged, startMode: previous.startMode }
     }
+    if (!('driveView' in incoming) && previous.driveView) {
+      merged = { ...merged, driveView: previous.driveView }
+    }
     return merged
   }
   if (prevCount > 0 && nextCount === 0) {
@@ -377,8 +383,54 @@ export function mergeExamSave(previous: SavedExamState | null, incoming: SavedEx
       nextSortOrder: previous.nextSortOrder ?? incoming.nextSortOrder,
     })
   }
-  if (prevCount > nextCount) return mergePendingAudio(previous)
+  if (prevCount > nextCount) {
+    // Keep richer progress, but never discard a newer MAP/PANEL choice from incoming.
+    return mergePendingAudio({
+      ...previous,
+      ...(incoming.driveView ? { driveView: incoming.driveView } : {}),
+      savedAt: incoming.savedAt,
+    })
+  }
   return mergePendingAudio(incoming)
+}
+
+const DRIVE_VIEW_PREFIX = 'cityroute-drive-view:'
+
+function driveViewStorageKey(routeSlug: string, scope?: string): string {
+  return scopedStorageKey(`${DRIVE_VIEW_PREFIX}${encodeURIComponent(routeSlug)}`, scope)
+}
+
+/** Persist MAP/PANEL independently so remount/merge cannot reset the screen. */
+export function saveDriveView(
+  routeSlug: string,
+  view: 'map' | 'panel',
+  scope?: string,
+): void {
+  try {
+    localStorage.setItem(driveViewStorageKey(routeSlug, scope), view)
+  } catch (error) {
+    console.error('Failed to save drive view:', error)
+  }
+}
+
+export function loadDriveView(
+  routeSlug: string,
+  scope?: string,
+): 'map' | 'panel' | null {
+  try {
+    const value = localStorage.getItem(driveViewStorageKey(routeSlug, scope))
+    return value === 'map' || value === 'panel' ? value : null
+  } catch {
+    return null
+  }
+}
+
+export function clearDriveView(routeSlug: string, scope?: string): void {
+  try {
+    localStorage.removeItem(driveViewStorageKey(routeSlug, scope))
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -505,6 +557,7 @@ export function clearActiveExam(
       if (legacyState && matchesRoute(legacyState, id, routeSlug, routeName)) {
         localStorage.removeItem(legacyKey)
       }
+      if (routeSlug) clearDriveView(routeSlug, scope)
     }
     console.log('🗑️ Cleared saved exam state', routeSlug ?? routeId ?? '')
   } catch (err) {

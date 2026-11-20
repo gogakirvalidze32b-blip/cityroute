@@ -30,7 +30,9 @@ import {
   examSessionOriginMs,
   examElapsedMsNow,
   hasSavedExamForSlug,
+  loadDriveView,
   reconcileRemoteExamProgress,
+  saveDriveView,
   type SavedExamState,
 } from '@/lib/exam-persistence'
 import {
@@ -404,7 +406,16 @@ export function ExamDriveSession({
   if (savedState && phase === 'preview') {
     setPhase(savedState.phase === 'summary' ? 'summary' : 'active')
   }
-  const [driveView, setDriveView] = useState<ExamDriveView>('map')
+  const [driveView, setDriveView] = useState<ExamDriveView>(() => {
+    const stored = loadDriveView(route.slug, persistenceScope)
+    if (stored) return stored
+    if (savedState?.driveView === 'panel' || savedState?.driveView === 'map') {
+      return savedState.driveView
+    }
+    return 'map'
+  })
+  const driveViewRef = useRef<ExamDriveView>(driveView)
+  driveViewRef.current = driveView
   const [exam, setExam] = useState(() =>
     savedState ? savedState.exam : createExamSession(route.id, route.name_ka),
   )
@@ -954,7 +965,21 @@ export function ExamDriveSession({
           applySeededDistance(restoredDistance)
         }
         setGpsStarted(true)
-        setDriveView(features.mapNav ? 'map' : 'panel')
+        {
+          // Prefer the dedicated drive-view key, then the exam snapshot. Update the
+          // ref synchronously so the mount-time persist effect cannot overwrite PANEL
+          // with the default MAP before setState flushes.
+          const restoredView: ExamDriveView =
+            loadDriveView(route.slug, persistenceScope) ??
+            (saved.driveView === 'panel' || saved.driveView === 'map'
+              ? saved.driveView
+              : features.mapNav
+                ? 'map'
+                : 'panel')
+          driveViewRef.current = restoredView
+          setDriveView(restoredView)
+          saveDriveView(route.slug, restoredView, persistenceScope)
+        }
         if (FIELD_TEST_SLUGS.has(route.slug)) {
           handledOrdersRef.current = restoredOrders
           if (restoredOrders) {
@@ -1044,10 +1069,10 @@ export function ExamDriveSession({
       return
     }
 
-    // Slug says a session exists; local id may not have matched yet. Do not reset to preview.
+    // Slug says a session exists; local id may not have matched yet. Do not reset to preview
+    // and do not clobber MAP/PANEL — hydrate above restores driveView once the slug matches.
     if (hasSavedExamForSlug(route.slug, route.name_ka, persistenceScope)) {
       setPhase('active')
-      setDriveView(features.mapNav ? 'map' : 'panel')
       return
     }
 
@@ -1057,7 +1082,12 @@ export function ExamDriveSession({
     setExam(createExamSession(route.id, route.name_ka))
     setExamSummary(null)
     setPhase('preview')
-    setDriveView(features.mapNav ? 'map' : 'panel')
+    {
+      const nextView: ExamDriveView = features.mapNav ? 'map' : 'panel'
+      driveViewRef.current = nextView
+      setDriveView(nextView)
+      saveDriveView(route.slug, nextView, persistenceScope)
+    }
     setGpsError(getGpsEnvironmentIssue())
     setLastSpoken(null)
     const progressRead = readRoutePinProgress(route.slug, persistenceScope)
@@ -1319,6 +1349,8 @@ export function ExamDriveSession({
           triggeredPins: Array.from(triggeredRef.current),
           pendingPinSortOrder: pendingPinSortOrderRef.current,
           queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
+          driveView:
+            loadDriveView(route.slug, persistenceScope) ?? driveViewRef.current,
           ...fieldTest,
           savedAt: Date.now(),
         }
@@ -2299,7 +2331,12 @@ export function ExamDriveSession({
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
-    setDriveView(features.mapNav ? 'map' : 'panel')
+    {
+      const nextView: ExamDriveView = features.mapNav ? 'map' : 'panel'
+      driveViewRef.current = nextView
+      setDriveView(nextView)
+      saveDriveView(route.slug, nextView, persistenceScope)
+    }
     setPhase('active')
     resumedSlugRef.current = route.slug
     const pin1 = voicePins.find((pin) => pin.sort_order === 1) ?? null
@@ -2602,6 +2639,7 @@ export function ExamDriveSession({
         triggeredPins: Array.from(pinIdsForOrders(voicePins, new Set(priorOrders))),
         pendingPinSortOrder: null,
         queuedPinSortOrders: [],
+        driveView: driveViewRef.current,
         ...progressFields,
         savedAt: Date.now(),
       }
@@ -2761,11 +2799,26 @@ export function ExamDriveSession({
       startMode: sessionStartModeRef.current,
       pendingPinSortOrder: pendingPinSortOrderRef.current,
       queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
+      driveView: loadDriveView(route.slug, persistenceScope) ?? driveViewRef.current,
       ...(FIELD_TEST_SLUGS.has(route.slug) ? fieldTestProgressFields() : {}),
       savedAt: Date.now(),
     }
     saveActiveExam(snapshot, {}, persistenceScope)
     void persistRemoteSnapshot(snapshot).catch(() => {})
+  }
+
+  function handleDriveViewChange(view: ExamDriveView) {
+    setDriveView(view)
+    driveViewRef.current = view
+    saveDriveView(route.slug, view, persistenceScope)
+    if (phaseRef.current !== 'active' && phaseRef.current !== 'summary') return
+    const existing = loadActiveExam(route.id, route.slug, route.name_ka, persistenceScope)
+    if (!existing) return
+    saveActiveExam(
+      { ...existing, driveView: view, savedAt: Date.now() },
+      { allowProgressRollback: true },
+      persistenceScope,
+    )
   }
 
   /** True when Telavi field-test routes still have an unhandled PIN (mid-route stop). */
@@ -2842,6 +2895,7 @@ export function ExamDriveSession({
       startMode: sessionStartModeRef.current,
       pendingPinSortOrder: pendingPinSortOrderRef.current,
       queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
+      driveView: driveViewRef.current,
       summary,
       summaryCanContinue: hasRemainingPins,
       ...fieldTest,
@@ -3293,7 +3347,9 @@ export function ExamDriveSession({
                   </div>
                 )}
 
-                {features.canSwitchViews && <ExamViewSwitcher view={driveView} onChange={setDriveView} />}
+                {features.canSwitchViews && (
+                  <ExamViewSwitcher view={driveView} onChange={handleDriveViewChange} />
+                )}
 
                 <button type="button" className="exam-finish-fab" onClick={finishSession}>
                   დასრულება

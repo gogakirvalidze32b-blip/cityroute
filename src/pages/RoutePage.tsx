@@ -106,7 +106,10 @@ export function RoutePage() {
     }
   }, [slug, routeName, navPhase, persistenceScope])
 
-  if ((deviceBlocked || !hasAccess) && !resumeDriving) return <Navigate to="/" replace />
+  // Do not auto-bounce to Routes (/) while an exam is active/summary.
+  // hasAccess flickers false during deviceBinding / session revalidation; resumeDriving
+  // alone is not enough (e.g. just after start, before the first local save).
+  if ((deviceBlocked || !hasAccess) && !driving) return <Navigate to="/" replace />
 
   if (!route) {
     return (

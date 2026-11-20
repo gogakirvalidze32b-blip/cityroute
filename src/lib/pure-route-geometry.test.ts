@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { ROUTE_POLYLINES } from '@/data/route-polylines'
 import auditedPins from '@/data/audio-audit-pins.fixture.json'
 import route3Road from '@/data/route-3-road.json'
+import route4Road from '@/data/route-4-road.json'
+import { resolveDemoPinChainage } from '@/lib/preview-gps-demo-pin'
 import {
   ACTIVE_ROUTE_IDS,
   evaluatePinRouteCompletion,
   findNearestSegment,
   matchGpsPosition,
+  positionAtChainageMeters,
   prepareRouteGeometry,
   projectOrderedPointsToRoute,
   projectPointToRoute,
@@ -373,6 +376,45 @@ describe('pure route geometry', () => {
     )
     expect(result.status).toBe('matched')
     expect(result.projection?.chainageMeters).toBeLessThan(100)
+  })
+
+  it('keeps matching through route-4 #24→#25 turn while lit PIN #25 is ahead', () => {
+    const pins = (auditedPins as Array<{ route: number; pin: number; lat: number; lng: number }>)
+      .filter((row) => row.route === 4)
+      .map((row) => ({ sort_order: row.pin, lat: row.lat, lng: row.lng }))
+    const route = prepareRouteGeometry('route-4', route4Road as LatLng[])
+    const ch24 = resolveDemoPinChainage(route, pins, 24, 0)
+    const ch25 = resolveDemoPinChainage(route, pins, 25, ch24 ?? 0)
+    expect(ch24).not.toBeNull()
+    expect(ch25).not.toBeNull()
+
+    let previous: RouteMatchState | null = null
+    let timestampMs = 1_000
+    const chainages: number[] = []
+    for (let chainage = ch24! - 40; chainage <= ch25! + 40; chainage += 8) {
+      const position = positionAtChainageMeters(route, chainage)
+      expect(position).not.toBeNull()
+      timestampMs += 300
+      const matched = matchGpsPosition(
+        route,
+        { position: position!, accuracyMeters: 5, timestampMs, headingDegrees: null },
+        previous,
+        {
+          nowMs: timestampMs + 5,
+          maxCrossTrackMeters: 40,
+          expectedForwardChainageMeters: ch25!,
+        },
+      )
+      expect(matched.accepted, `chainage ${Math.round(chainage)} → ${matched.status}`).toBe(true)
+      expect(matched.direction).not.toBe('reverse')
+      previous = matched.nextState!
+      chainages.push(previous.chainageMeters)
+    }
+
+    for (let index = 1; index < chainages.length; index++) {
+      expect(chainages[index]).toBeGreaterThanOrEqual(chainages[index - 1] - 2)
+    }
+    expect(chainages.at(-1)!).toBeGreaterThan(ch25! - 20)
   })
 
   it('rejects the opposite-bearing Alazani carriageway when a lit PIN is ahead', () => {

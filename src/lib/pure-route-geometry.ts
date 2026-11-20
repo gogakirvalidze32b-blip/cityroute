@@ -542,9 +542,21 @@ export function matchGpsPosition(
   }
 
   const preferredForwardChainageMeters = options.expectedForwardChainageMeters
+  // Corridor / opposite-carriage bearing must follow the road just ahead of the
+  // vehicle — NOT the bearing at a distant lit PIN past a corner. Using the PIN
+  // bearing (e.g. R4 #25 after a right turn) wrongly treated the approach road
+  // as the opposite carriageway, froze the demo arrow at #24, then snapped/spun.
   const litPinBearingDegrees =
     preferredForwardChainageMeters !== undefined
-      ? bearingAtChainageMeters(route, preferredForwardChainageMeters)
+      ? bearingAtChainageMeters(
+          route,
+          previous != null
+            ? Math.min(
+                previous.chainageMeters + 25,
+                preferredForwardChainageMeters,
+              )
+            : preferredForwardChainageMeters,
+        )
       : null
   const preferTowardLitPin =
     previous != null && preferredForwardChainageMeters !== undefined
