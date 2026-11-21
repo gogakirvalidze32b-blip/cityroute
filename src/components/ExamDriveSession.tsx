@@ -74,7 +74,6 @@ import {
 import {
   isFinishAudioAllowed,
   isStartAudioAllowed,
-  ROUTE_FINISH_PIN_RANGES,
 } from '@/data/route-finish'
 import {
   createSpeedTracker,
@@ -83,16 +82,13 @@ import {
   resolveHeading,
   routeLengthMeters,
   seedAlongRouteMeters,
-  stabilizeRoadArrowHeading,
 } from '@/lib/route-nav'
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
 import { createRouteOdometer, distanceKmTenths } from '@/lib/route-odometer'
 import { resolveAutoStart } from '@/lib/auto-start-pin'
 import {
   evaluatePinRouteCompletion,
-  forwardBearingAlongRoute,
   matchGpsPosition,
-  positionAtChainageMeters,
   prepareRouteGeometry,
   projectOrderedPointsToRoute,
   projectPointToRoute,
@@ -682,8 +678,6 @@ export function ExamDriveSession({
   const distanceMetersRef = useRef(distanceMeters)
   distanceMetersRef.current = distanceMeters
   const routeMatchStateRef = useRef<RouteMatchState | null>(null)
-  /** Display-only crawl on Alazani finish U-turn; pin-audio still uses routeMatchStateRef. */
-  const routeArrowChainageRef = useRef<number | null>(null)
   const gpsAutoStartBlockedRef = useRef(false)
   const roundaboutGateRef = useRef<RoundaboutReturnGateState | null>(null)
 
@@ -1128,7 +1122,6 @@ export function ExamDriveSession({
     )
     prevGpsRef.current = null
     routeMatchStateRef.current = null
-    routeArrowChainageRef.current = null
     speedTrackerRef.current = createSpeedTracker()
     gpsFilterRef.current.reset()
     setSpeedKmh(0)
@@ -1599,11 +1592,6 @@ export function ExamDriveSession({
             pendingForwardChainageMeters ??
             undefined
         }
-        const finishRange = ROUTE_FINISH_PIN_RANGES[route.slug]
-        const inAlazaniFinishArrowCorridor =
-          pending != null &&
-          finishRange != null &&
-          pending.sort_order >= finishRange.start
         let expectedChainageMeters: number | undefined
         let expectedPinChainageMeters = usesTargetOccurrenceContext || usesOrderedRouteContext
           ? pendingRouteProjection?.chainageMeters
@@ -1679,69 +1667,24 @@ export function ExamDriveSession({
         )
 
         if (!routeMatch.accepted || !routeMatch.nextState) return
-        // Audio / progress use match state. Arrow display is smoothed separately
-        // (Maps-style) so pins, voice, and route geometry stay untouched.
+        // Arrow = matched projection + segment bearing (preview 0b59080 / 09e1304).
         routeMatchStateRef.current = routeMatch.nextState
-        const matchedChainage = routeMatch.projection.chainageMeters
         const matchedPosition: LatLng = [
           routeMatch.projection.position[0],
           routeMatch.projection.position[1],
         ]
-        // Google/Yandex-like arrow: crawl along the road, never teleport on GPS
-        // jumps; slew heading along the road (no instant segment snaps / jitter).
-        let displayChainage = routeArrowChainageRef.current
-        if (displayChainage == null) {
-          displayChainage =
-            previousRouteMatch?.chainageMeters ?? matchedChainage
-        }
-        const chainageJump = matchedChainage - displayChainage
-        // Finish U-turns can teleport ~140 m; normal GPS noise is smaller.
-        const teleportJumpM = inAlazaniFinishArrowCorridor ? 40 : 28
-        const crawlStepM = inAlazaniFinishArrowCorridor ? 18 : 22
-        if (chainageJump > teleportJumpM) {
-          const local = projectPointToRouteNearChainage(
-            routeGeometry,
-            raw,
-            displayChainage,
-            Math.max(40, teleportJumpM),
-          )
-          if (local && local.chainageMeters >= displayChainage - 5) {
-            displayChainage += Math.min(
-              crawlStepM,
-              Math.max(0, local.chainageMeters - displayChainage),
-            )
-          } else {
-            displayChainage += Math.min(crawlStepM, chainageJump)
-          }
-        } else if (chainageJump >= -10) {
-          // Follow match, including tiny GPS back-steps.
-          displayChainage = matchedChainage
-        }
-        // Larger backward jumps: hold display — do not yank the arrow reverse.
-        displayChainage = Math.min(
-          routeGeometry.totalLengthMeters,
-          Math.max(0, displayChainage),
-        )
-        routeArrowChainageRef.current = displayChainage
-        const atChainage = positionAtChainageMeters(
-          routeGeometry,
-          displayChainage,
-        )
-        const displayPosition: LatLng = atChainage
-          ? [atChainage[0], atChainage[1]]
-          : matchedPosition
-        setUserPos(displayPosition)
-        currentPositionRef.current = displayPosition
-        const roadBearing =
-          forwardBearingAlongRoute(routeGeometry, displayChainage, 10) ??
-          routeMatch.projection.segmentBearingDegrees
-        const mapsBearing =
+        setUserPos(matchedPosition)
+        currentPositionRef.current = matchedPosition
+        if (
+          routeMatch.direction === 'forward' ||
           routeMatch.direction === 'reverse'
-            ? (roadBearing + 180) % 360
-            : roadBearing
-        setHeading((prev) =>
-          stabilizeRoadArrowHeading(prev, mapsBearing, 22, 4, false),
-        )
+        ) {
+          const matchedHeading =
+            routeMatch.direction === 'reverse'
+              ? (routeMatch.projection.segmentBearingDegrees + 180) % 360
+              : routeMatch.projection.segmentBearingDegrees
+          setHeading(matchedHeading)
+        }
 
         const target = pending
         const gateTarget = target
@@ -2304,7 +2247,6 @@ export function ExamDriveSession({
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
     routeMatchStateRef.current = null
-    routeArrowChainageRef.current = null
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       handledOrdersRef.current = handled
@@ -3067,7 +3009,6 @@ export function ExamDriveSession({
     triggeredRef.current = restoredIds
     pinApproachRef.current = new Map()
     routeMatchStateRef.current = null
-    routeArrowChainageRef.current = null
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = orders
     sessionStartModeRef.current = saved.startMode ?? 'manual'
     currentPositionRef.current = saved.userPos
@@ -3178,7 +3119,6 @@ export function ExamDriveSession({
     triggeredRef.current = pinIdsForOrders(sortedPins, handled)
     pinApproachRef.current = new Map()
     routeMatchStateRef.current = null
-    routeArrowChainageRef.current = null
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = handled
     resumedSlugRef.current = null
