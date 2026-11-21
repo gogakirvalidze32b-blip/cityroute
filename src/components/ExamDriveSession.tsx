@@ -82,12 +82,14 @@ import {
   resolveHeading,
   routeLengthMeters,
   seedAlongRouteMeters,
+  stabilizeRoadArrowHeading,
 } from '@/lib/route-nav'
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
 import { createRouteOdometer, distanceKmTenths } from '@/lib/route-odometer'
 import { resolveAutoStart } from '@/lib/auto-start-pin'
 import {
   evaluatePinRouteCompletion,
+  forwardBearingAlongRoute,
   matchGpsPosition,
   prepareRouteGeometry,
   projectOrderedPointsToRoute,
@@ -702,6 +704,8 @@ export function ExamDriveSession({
       return null
     }
   }, [route.slug, route.pins, polyline])
+  const routeGeometryRef = useRef(routeGeometry)
+  routeGeometryRef.current = routeGeometry
   /** Full street-road length (measured polyline), not pin-to-pin shortcuts. */
   const routeLengthM = useMemo(() => {
     const street = examStreetRoad(route.slug)
@@ -1424,7 +1428,12 @@ export function ExamDriveSession({
         currentPositionRef.current = raw
         updateSpeedRoadProgress(raw)
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
-        setHeading(resolveHeading(pos, prevRaw, raw, polyline))
+        // When exam route geometry exists (R1–R4), arrow heading is owned by
+        // matched projection + stabilizeRoadArrowHeading below. Raw GPS/demo
+        // segment bearings snap ~180° on sharp U-tips — do not use them here.
+        if (!routeGeometryRef.current) {
+          setHeading(resolveHeading(pos, prevRaw, raw, polyline))
+        }
         if (phaseRef.current === 'active') {
           setSpeedKmh(resolveExamSpeedKmh(pos, prevGpsRef.current, speedTrackerRef.current))
           const odo = routeOdometerRef.current.observe(raw, pos.timestamp)
@@ -1666,8 +1675,29 @@ export function ExamDriveSession({
           '| Chainage:', routeMatch.projection ? Math.round(routeMatch.projection.chainageMeters) + 'm' : '—',
         )
 
-        if (!routeMatch.accepted || !routeMatch.nextState) return
-        // Arrow = matched projection + segment bearing (preview 0b59080 / 09e1304).
+        // Keep arrow slewing through brief off-route gaps on all R1–R4 U-tips:
+        // never freeze then snap ~180°. Pin speak / 300m-right gate logic untouched.
+        if (!routeMatch.accepted || !routeMatch.nextState) {
+          const rejectTarget =
+            routeMatch.projection != null
+              ? routeMatch.direction === 'reverse'
+                ? (routeMatch.projection.segmentBearingDegrees + 180) % 360
+                : routeMatch.projection.segmentBearingDegrees
+              : previousRouteMatch
+                ? forwardBearingAlongRoute(
+                    routeGeometry,
+                    previousRouteMatch.chainageMeters,
+                    6,
+                  )
+                : null
+          if (rejectTarget != null) {
+            setHeading((prev) =>
+              stabilizeRoadArrowHeading(prev, rejectTarget, 12, 4, false),
+            )
+          }
+          return
+        }
+        // Arrow = matched projection + segment bearing, slewed on every route.
         routeMatchStateRef.current = routeMatch.nextState
         const matchedPosition: LatLng = [
           routeMatch.projection.position[0],
@@ -1675,15 +1705,14 @@ export function ExamDriveSession({
         ]
         setUserPos(matchedPosition)
         currentPositionRef.current = matchedPosition
-        if (
-          routeMatch.direction === 'forward' ||
-          routeMatch.direction === 'reverse'
-        ) {
+        {
           const matchedHeading =
             routeMatch.direction === 'reverse'
               ? (routeMatch.projection.segmentBearingDegrees + 180) % 360
               : routeMatch.projection.segmentBearingDegrees
-          setHeading(matchedHeading)
+          setHeading((prev) =>
+            stabilizeRoadArrowHeading(prev, matchedHeading, 12, 4, false),
+          )
         }
 
         const target = pending
