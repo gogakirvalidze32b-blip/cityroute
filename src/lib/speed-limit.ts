@@ -1,7 +1,6 @@
 import type { LatLng } from '@/lib/gps'
 import { SPEED_KM_BANDS } from '@/data/speed-km-bands'
 import { SPEED_ZONES, type SpeedZone } from '@/data/speed-limits'
-import { distanceKmTenths } from '@/lib/route-odometer'
 
 const M_PER_DEG_LAT = 110_540
 const mPerDegLng = (lat: number) => 111_320 * Math.cos((lat * Math.PI) / 180)
@@ -237,8 +236,8 @@ export function roadKmAtU(road: readonly LatLng[], u: number): number {
 
 /**
  * Posted limit from exact kilometre bands ({@link SPEED_KM_BANDS}).
- * Uses the same 0.1 კმ rounding as the HUD distance label — the limit flips the
- * instant that tenth appears (no EPS / no early or late switch).
+ * Matches raw route kilometres (odometer m / 1000) with no 0.1 rounding —
+ * boundaries like 2.25 / 4.45 flip at those exact positions.
  * `road` is unused (kept for call-site compatibility).
  */
 export function resolveSpeedLimitByKm(
@@ -248,8 +247,7 @@ export function resolveSpeedLimitByKm(
 ): number | null {
   const bands = SPEED_KM_BANDS[slug]
   if (!bands?.length || !Number.isFinite(km)) return null
-  // Same digit the HUD shows: Math.round(m/100)/10 via metres, or tenths of km.
-  const t = distanceKmTenths(km * 1000)
+  const t = Math.max(0, km)
   for (let i = 0; i < bands.length; i += 1) {
     const band = bands[i]!
     const last = i === bands.length - 1

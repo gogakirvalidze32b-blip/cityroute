@@ -10,6 +10,7 @@ import {
   distanceToSpanM,
   resolveSpeedLimit,
   resolveSpeedLimitByKm,
+  resolveSpeedLimitByOdometerMeters,
   resolveSpeedLimitByRoadU,
   resolveSpeedZone,
   roadPointAt,
@@ -506,39 +507,98 @@ describe('driver-verified pin limits after GPS → roadU', () => {
   })
 })
 
-describe('merged km bands: old map stretches + new overlays', () => {
-  it('keeps old early R1 / R2 / R4 stretches', () => {
+describe('exact km bands (R1 / R2 / R4); R3 unchanged', () => {
+  it('Route 1 exact boundaries', () => {
+    expect(resolveSpeedLimitByKm('route-1', 0.0)).toBe(20)
+    expect(resolveSpeedLimitByKm('route-1', 0.059)).toBe(20)
+    expect(resolveSpeedLimitByKm('route-1', 0.06)).toBe(50)
     expect(resolveSpeedLimitByKm('route-1', 1.0)).toBe(50)
-    expect(resolveSpeedLimitByKm('route-1', 1.8)).toBe(40)
-    expect(resolveSpeedLimitByKm('route-1', 2.2)).toBe(50)
-    expect(resolveSpeedLimitByKm('route-2', 0.7)).toBe(50)
-    expect(resolveSpeedLimitByKm('route-2', 0.8)).toBe(40)
-    expect(resolveSpeedLimitByKm('route-2', 3.0)).toBe(40)
-    expect(resolveSpeedLimitByKm('route-2', 3.1)).toBe(40)
-    expect(resolveSpeedLimitByKm('route-2', 3.2)).toBe(60)
-    expect(resolveSpeedLimitByKm('route-2', 5.0)).toBe(30)
-    expect(resolveSpeedLimitByKm('route-4', 0.9)).toBe(50)
-    expect(resolveSpeedLimitByKm('route-4', 2.1)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-1', 1.84)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-1', 1.85)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-1', 2.24)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-1', 2.25)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-1', 3.0)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-1', 3.1)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-1', 6.84)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-1', 6.85)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-1', 8.39)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-1', 8.4)).toBe(20)
   })
 
-  it('adds verified new edges on top', () => {
-    expect(resolveSpeedLimitByKm('route-1', 3.1)).toBe(40)
-    expect(resolveSpeedLimitByKm('route-1', 6.8)).toBe(50)
+  it('Route 2 exact boundaries (keeps existing 4.40→5.00 = 50)', () => {
+    expect(resolveSpeedLimitByKm('route-2', 0.0)).toBe(20)
+    expect(resolveSpeedLimitByKm('route-2', 0.059)).toBe(20)
+    expect(resolveSpeedLimitByKm('route-2', 0.06)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 0.69)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 0.7)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-2', 3.14)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-2', 3.15)).toBe(60)
+    expect(resolveSpeedLimitByKm('route-2', 4.39)).toBe(60)
+    expect(resolveSpeedLimitByKm('route-2', 4.4)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 4.9)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 5.0)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-2', 5.1)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 5.5)).toBe(30)
     expect(resolveSpeedLimitByKm('route-2', 5.6)).toBe(40)
-    expect(resolveSpeedLimitByKm('route-2', 7.1)).toBe(30)
-    expect(resolveSpeedLimitByKm('route-2', 7.2)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 7.59)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-2', 7.6)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 9.09)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-2', 9.1)).toBe(20)
+  })
+
+  it('Route 3 overlays unchanged', () => {
     expect(resolveSpeedLimitByKm('route-3', 2.1)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-3', 2.2)).toBe(50)
     expect(resolveSpeedLimitByKm('route-3', 5.5)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-3', 5.6)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-3', 6.2)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-3', 6.3)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-3', 6.8)).toBe(40)
     expect(resolveSpeedLimitByKm('route-3', 7.1)).toBe(50)
+  })
+
+  it('Route 4 exact boundaries (2.75 / 4.45 / 4.95 preserved)', () => {
+    expect(resolveSpeedLimitByKm('route-4', 0.0)).toBe(20)
+    expect(resolveSpeedLimitByKm('route-4', 0.059)).toBe(20)
+    expect(resolveSpeedLimitByKm('route-4', 0.06)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 0.9)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 2.19)).toBe(50)
     expect(resolveSpeedLimitByKm('route-4', 2.2)).toBe(30)
     expect(resolveSpeedLimitByKm('route-4', 2.3)).toBe(50)
-    expect(resolveSpeedLimitByKm('route-4', 2.7)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 2.74)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 2.75)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 2.9)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 4.3)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 4.44)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 4.45)).toBe(50)
     expect(resolveSpeedLimitByKm('route-4', 4.8)).toBe(30)
-    expect(resolveSpeedLimitByKm('route-4', 6.6)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 4.94)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 4.95)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-4', 5.2)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 5.4)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-4', 5.9)).toBe(30)
+    expect(resolveSpeedLimitByKm('route-4', 6.0)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-4', 6.69)).toBe(40)
+    expect(resolveSpeedLimitByKm('route-4', 6.7)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 8.19)).toBe(50)
+    expect(resolveSpeedLimitByKm('route-4', 8.2)).toBe(20)
   })
 
-  it('roadU uses the same merged bands', () => {
+  it('odometer metres map to exact km (no 0.1 snap)', () => {
+    expect(resolveSpeedLimitByOdometerMeters('route-1', 59)).toBe(20)
+    expect(resolveSpeedLimitByOdometerMeters('route-1', 60)).toBe(50)
+    expect(resolveSpeedLimitByOdometerMeters('route-2', 59)).toBe(20)
+    expect(resolveSpeedLimitByOdometerMeters('route-2', 60)).toBe(50)
+    expect(resolveSpeedLimitByOdometerMeters('route-4', 59)).toBe(20)
+    expect(resolveSpeedLimitByOdometerMeters('route-4', 60)).toBe(50)
+    expect(resolveSpeedLimitByOdometerMeters('route-1', 2250)).toBe(50)
+    expect(resolveSpeedLimitByOdometerMeters('route-1', 2249)).toBe(40)
+    expect(resolveSpeedLimitByOdometerMeters('route-4', 4450)).toBe(50)
+    expect(resolveSpeedLimitByOdometerMeters('route-4', 4449)).toBe(30)
+  })
+
+  it('roadU uses the same exact bands', () => {
     const { road } = DATA['route-2']
-    expect(resolveSpeedLimitByRoadU('route-2', 0, road)).toBe(50)
+    expect(resolveSpeedLimitByRoadU('route-2', 0, road)).toBe(20)
   })
 })

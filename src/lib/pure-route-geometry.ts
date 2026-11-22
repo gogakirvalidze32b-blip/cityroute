@@ -751,6 +751,43 @@ export function matchGpsPosition(
         fix.headingDegrees == null)
     ) {
       best = distinctForwardChainages[0]
+    } else if (previous) {
+      // Out-and-back / dual pass (e.g. R3 PIN15): same street, opposite bearings.
+      // Prefer continuing forward from the locked pass instead of rejecting — that
+      // reject left the arrow freezing or slewing toward the opposing pass (~180°).
+      const forwardContinuation = candidates
+        .filter(
+          (candidate) =>
+            candidate.deltaMeters > stationaryThresholdMeters &&
+            // Plaza overlap (R3 PIN15≈PIN24 corner): never teleport hundreds of
+            // meters forward onto the return pass in one fix.
+            candidate.deltaMeters <= 120 &&
+            candidate.score - best.score <= ambiguityToleranceMeters,
+        )
+        .sort((first, second) => {
+          if (preferredChainageMeters !== undefined) {
+            const firstDist = Math.abs(first.projection.chainageMeters - preferredChainageMeters)
+            const secondDist = Math.abs(second.projection.chainageMeters - preferredChainageMeters)
+            if (Math.abs(firstDist - secondDist) > 40) return firstDist - secondDist
+          }
+          // Prefer the smallest forward step on the locked pass.
+          return first.deltaMeters - second.deltaMeters || first.score - second.score
+        })[0]
+      if (forwardContinuation) best = forwardContinuation
+      else return rejected('ambiguous-route-match', best.projection)
+    } else if (preferredChainageMeters !== undefined) {
+      // Cold start on an out-and-back plaza (R3 PIN15): no locked pass yet, but the
+      // lit-PIN chainage still picks the correct occurrence instead of spinning
+      // between ~280° and the opposing ~100° / PIN24 corner overlap.
+      const towardLitPin = candidates
+        .filter((candidate) => candidate.score - best.score <= ambiguityToleranceMeters)
+        .sort(
+          (first, second) =>
+            Math.abs(first.projection.chainageMeters - preferredChainageMeters) -
+            Math.abs(second.projection.chainageMeters - preferredChainageMeters),
+        )[0]
+      if (towardLitPin) best = towardLitPin
+      else return rejected('ambiguous-route-match', best.projection)
     } else {
       return rejected('ambiguous-route-match', best.projection)
     }

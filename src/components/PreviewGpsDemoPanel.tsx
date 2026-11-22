@@ -24,7 +24,12 @@ import {
   resolveDemoPinChainage,
   resolveDemoStartPinChainage,
 } from '@/lib/preview-gps-demo-pin'
-import type { ActiveRouteId, PreparedRouteGeometry, RouteProjection } from '@/lib/pure-route-geometry'
+import {
+  forwardBearingAlongRoute,
+  type ActiveRouteId,
+  type PreparedRouteGeometry,
+  type RouteProjection,
+} from '@/lib/pure-route-geometry'
 import type { PreviewGpsSource } from '@/lib/preview-gps-source'
 import type { GpsPosition } from '@/lib/gps'
 import type { RouteWithPins } from '@/types/database'
@@ -90,12 +95,20 @@ function demoPinChainageMeters(
   return chainage
 }
 
-function gpsPosition(projection: RouteProjection, speedKmh: number): GpsPosition {
+function gpsPosition(
+  geometry: PreparedRouteGeometry,
+  projection: RouteProjection,
+  speedKmh: number,
+): GpsPosition {
+  // Look-ahead bearing matches ExamDriveSession Maps-style arrow (not short-segment noise).
+  const heading =
+    forwardBearingAlongRoute(geometry, projection.chainageMeters, 14) ??
+    projection.segmentBearingDegrees
   return {
     lat: projection.position[0],
     lng: projection.position[1],
     accuracy: FIX_ACCURACY_METERS,
-    heading: projection.segmentBearingDegrees,
+    heading,
     speed: speedKmh / 3.6,
     timestamp: Date.now(),
   }
@@ -153,7 +166,7 @@ export function PreviewGpsDemoPanel({
       const projection = positionAtChainage(geometry, chainageMeters)
       chainageRef.current = projection.chainageMeters
       liveSpeedRef.current = speedForFixKmh
-      source.publish(gpsPosition(projection, speedForFixKmh))
+      source.publish(gpsPosition(geometry, projection, speedForFixKmh))
       return projection
     },
     [geometry, source],
@@ -415,7 +428,7 @@ export function PreviewGpsDemoPanel({
       source.clear()
       liveSpeedRef.current = DEMO_NEAR_PIN_SPEED_KMH
       setLiveSpeedKmh(DEMO_NEAR_PIN_SPEED_KMH)
-      source.publish(gpsPosition(startProjection, DEMO_NEAR_PIN_SPEED_KMH))
+      source.publish(gpsPosition(geometry, startProjection, DEMO_NEAR_PIN_SPEED_KMH))
       await api.startAtPin(playPinOrder)
       setNextPinOrder(playPinOrder)
       setStatus(

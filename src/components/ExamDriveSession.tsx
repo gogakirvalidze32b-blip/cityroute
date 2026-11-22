@@ -1672,27 +1672,55 @@ export function ExamDriveSession({
 
         // Keep arrow slewing through brief off-route gaps on all R1–R4 U-tips:
         // never freeze then snap ~180°. Pin speak / 300m-right gate logic untouched.
+        // Arrow heading is ALWAYS forward along increasing chainage (Maps-style
+        // look-ahead) — never raw segment bearing or reverse+180 (those spin /
+        // face previous points on short zig-zags and reject gaps).
+        const ARROW_LOOK_AHEAD_M = 14
         if (!routeMatch.accepted || !routeMatch.nextState) {
+          // Never chase a rejected nearest projection on the opposing pass
+          // (same plaza / out-and-back ~+180°). Keep/advance along the locked pass.
+          // Cold start on dual-pass plazas (R3 PIN15): prefer the lit-PIN chainage
+          // over a finish-loop / opposing-pass nearest snap.
+          let rejectChainage: number | null =
+            previousRouteMatch?.chainageMeters ??
+            (expectedForwardChainageMeters != null &&
+            Number.isFinite(expectedForwardChainageMeters)
+              ? expectedForwardChainageMeters
+              : null) ??
+            (routeMatch.projection != null &&
+            routeMatch.projection.chainageMeters <= 150
+              ? routeMatch.projection.chainageMeters
+              : null)
+          if (
+            previousRouteMatch &&
+            rejectChainage != null &&
+            prevRaw
+          ) {
+            // Creep look-ahead forward with real movement so heading does not
+            // freeze through long ambiguous dual-pass stretches (R3 PIN15).
+            const crept = Math.min(
+              routeGeometry.totalLengthMeters,
+              previousRouteMatch.chainageMeters +
+                Math.min(25, Math.max(0, distanceToPinMeters(prevRaw, raw))),
+            )
+            rejectChainage = crept
+          }
           const rejectTarget =
-            routeMatch.projection != null
-              ? routeMatch.direction === 'reverse'
-                ? (routeMatch.projection.segmentBearingDegrees + 180) % 360
-                : routeMatch.projection.segmentBearingDegrees
-              : previousRouteMatch
-                ? forwardBearingAlongRoute(
-                    routeGeometry,
-                    previousRouteMatch.chainageMeters,
-                    6,
-                  )
-                : null
+            rejectChainage != null
+              ? forwardBearingAlongRoute(
+                  routeGeometry,
+                  rejectChainage,
+                  ARROW_LOOK_AHEAD_M,
+                )
+              : null
           if (rejectTarget != null) {
             setHeading((prev) =>
-              stabilizeRoadArrowHeading(prev, rejectTarget, 12, 4, false),
+              stabilizeRoadArrowHeading(prev, rejectTarget, 10, 5, false),
             )
           }
           return
         }
-        // Arrow = matched projection + segment bearing, slewed on every route.
+        // Arrow = forward look-ahead from matched chainage, slewed on every route.
         routeMatchStateRef.current = routeMatch.nextState
         const matchedPosition: LatLng = [
           routeMatch.projection.position[0],
@@ -1701,13 +1729,16 @@ export function ExamDriveSession({
         setUserPos(matchedPosition)
         currentPositionRef.current = matchedPosition
         {
-          const matchedHeading =
-            routeMatch.direction === 'reverse'
-              ? (routeMatch.projection.segmentBearingDegrees + 180) % 360
-              : routeMatch.projection.segmentBearingDegrees
-          setHeading((prev) =>
-            stabilizeRoadArrowHeading(prev, matchedHeading, 12, 4, false),
+          const matchedHeading = forwardBearingAlongRoute(
+            routeGeometry,
+            routeMatch.nextState.chainageMeters,
+            ARROW_LOOK_AHEAD_M,
           )
+          if (matchedHeading != null) {
+            setHeading((prev) =>
+              stabilizeRoadArrowHeading(prev, matchedHeading, 10, 5, false),
+            )
+          }
         }
 
         const target = pending
