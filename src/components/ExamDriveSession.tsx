@@ -120,7 +120,7 @@ import {
   type RoundaboutReturnGateState,
   type RoundaboutPinRoute,
 } from '@/lib/pin-audio'
-import { advanceRoadProgressU, resolveSpeedLimitByRoadU } from '@/lib/speed-limit'
+import { advanceRoadProgressU, resolveSpeedLimitByOdometerMeters } from '@/lib/speed-limit'
 import { SPEED_LIMIT_DEBUG_PANEL } from '@/lib/debug-flags'
 import type { PreviewGpsSource } from '@/lib/preview-gps-source'
 import {
@@ -822,15 +822,10 @@ export function ExamDriveSession({
     previewProgress.status === 'resume' &&
     sortedPins.length > 0 &&
     previewProgress.nextSortOrder === null
-  // Road-km bands (old map stretches + new overlays). Monotonic roadU → exact km; start at u=0.
+  // Exact HUD 0.1 კმ bands — same tenths as the distance label (no 0.1 drift).
   const speedLimitKmh = useMemo(
-    () =>
-      resolveSpeedLimitByRoadU(
-        route.slug,
-        speedRoadU ?? (speedLimitRoad && speedLimitRoad.length >= 2 ? 0 : null),
-        speedLimitRoad,
-      ),
-    [route.slug, speedRoadU, speedLimitRoad],
+    () => resolveSpeedLimitByOdometerMeters(route.slug, distanceMeters),
+    [route.slug, distanceMeters],
   )
 
   useEffect(() => {
@@ -2265,7 +2260,7 @@ export function ExamDriveSession({
       setResumeError(
         resolution?.status === 'error'
           ? resolution.message
-          : 'მარშრუტზე გასაგრძელებელი PIN აღარ არის. დააჭირეთ „გამოცდის დასრულება“.',
+          : 'მარშრუტზე გასაგრძელებელი PIN აღარ არის. დააჭირეთ „დასრულება“.',
       )
       setRouteComplete(resolution?.status === 'resume' && voicePins.length > 0)
       return
@@ -2312,7 +2307,7 @@ export function ExamDriveSession({
     resumedSlugRef.current = route.slug
     const pin1 = voicePins.find((pin) => pin.sort_order === 1) ?? null
     const pin2 = voicePins.find((pin) => pin.sort_order === 2) ?? null
-    // დაწყება only within 50 m of PIN 1 or PIN 2.
+    // დაწყება only within 30 m of PIN 1.
     startAudioPendingRef.current =
       features.routeAudio && isStartAudioAllowed(route.slug, voicePos, pin1, pin2)
     if (startAudioPendingRef.current) playSessionStartAudio(sessionGeneration)
@@ -2916,29 +2911,7 @@ export function ExamDriveSession({
     sessionStartRef.current = 0
     setElapsedMs(pausedElapsedMs)
     finishInProgressRef.current = false
-    // გილოცავთ on every complete დასრულება in the Alazani / PIN-1 zone when not failed.
-    // Never on mid-route pause with remaining pins.
-    const pin1ForSuccess =
-      voicePinsRef.current.find((pin) => pin.sort_order === 1) ?? null
-    const finishVoicePos = currentPositionRef.current ?? userPos
-    if (
-      !hasRemainingPins &&
-      !isExamFailed(exam) &&
-      isFinishAudioAllowed(route.slug, finishVoicePos, pin1ForSuccess)
-    ) {
-      void audioEngine.playDetailed(
-        EXAM_SUCCESS_AUDIO,
-        `route-success-${route.slug}-${audioSessionGenerationRef.current}-${Date.now()}`,
-        EXAM_SUCCESS_TEXT,
-        {
-          onFailure: (reason) => {
-            console.warn('[AUDIO] Route success voice failed', route.slug, reason)
-          },
-        },
-      ).catch((error) => {
-        console.warn('[AUDIO] Route success voice threw', route.slug, error)
-      })
-    }
+    // გილოცავთ voice plays only when the examiner presses the გილოცავთ control — never on დასრულება.
     if (
       hasRemainingPins &&
       FIELD_TEST_SLUGS.has(route.slug) &&
@@ -2989,6 +2962,24 @@ export function ExamDriveSession({
     setSummaryFinalized(true)
     setResumeError(null)
     setSavedEpoch((value) => value + 1)
+  }
+
+  function playCelebrateSuccess() {
+    audioEngine.unlock()
+    void audioEngine
+      .playDetailed(
+        EXAM_SUCCESS_AUDIO,
+        `route-success-${route.slug}-${audioSessionGenerationRef.current}-${Date.now()}`,
+        EXAM_SUCCESS_TEXT,
+        {
+          onFailure: (reason) => {
+            console.warn('[AUDIO] Route success voice failed', route.slug, reason)
+          },
+        },
+      )
+      .catch((error) => {
+        console.warn('[AUDIO] Route success voice threw', route.slug, error)
+      })
   }
 
   function continueFromSummary() {
@@ -3320,9 +3311,11 @@ export function ExamDriveSession({
                   <ExamViewSwitcher view={driveView} onChange={handleDriveViewChange} />
                 )}
 
-                <button type="button" className="exam-finish-fab" onClick={finishSession}>
-                  დასრულება
-                </button>
+                {!routeComplete && (
+                  <button type="button" className="exam-finish-fab" onClick={finishSession}>
+                    დასრულება
+                  </button>
+                )}
               </div>
 
               {routeComplete && FIELD_TEST_SLUGS.has(route.slug) && (
@@ -3340,13 +3333,19 @@ export function ExamDriveSession({
                     onClick={() => {
                       // Same as routes 1/2/4 preview complete: clear progress so
                       // 0.0 კმ + „ყველა PIN გავლილია“ cannot stick (esp. R3 loop).
+                      // დასრულება never plays გილოცავთ.
                       void restartPreview()
                     }}
                   >
-                    გამოცდის დასრულება
+                    დასრულება
                   </button>
-                  <button type="button" className="nav-start-btn" onClick={() => void restartPreview()}>
-                    თავიდან დაწყება
+                  <button
+                    type="button"
+                    className="nav-start-btn"
+                    data-testid="route-complete-celebrate"
+                    onClick={playCelebrateSuccess}
+                  >
+                    გილოცავთ
                   </button>
                 </div>
               )}
@@ -3462,10 +3461,19 @@ export function ExamDriveSession({
                   className="exam-route-complete__finish"
                   onClick={() => {
                     // Preview has no live session — clear progress so menu/start is fresh.
+                    // დასრულება never plays გილოცავთ.
                     restartPreview()
                   }}
                 >
-                  გამოცდის დასრულება
+                  დასრულება
+                </button>
+                <button
+                  type="button"
+                  className="nav-start-btn"
+                  data-testid="route-complete-celebrate"
+                  onClick={playCelebrateSuccess}
+                >
+                  გილოცავთ
                 </button>
               </div>
             )}
@@ -3584,6 +3592,9 @@ export function ExamDriveSession({
           onRestart={restartPreview}
           onFinish={finalizeSession}
           onContinue={summaryCanContinue ? continueFromSummary : undefined}
+          onCelebrate={
+            !summaryCanContinue && !isExamFailed(exam) ? playCelebrateSuccess : undefined
+          }
           onReturnToMenu={
             onReturnToMenu
               ? () => {

@@ -10,6 +10,7 @@ type Props = {
   onRestart: () => void
   onFinish?: () => void
   onContinue?: () => void
+  onCelebrate?: () => void
   onReturnToMenu?: () => void
   finalized?: boolean
   error?: string | null
@@ -20,6 +21,7 @@ export function ExamSummary({
   onRestart,
   onFinish,
   onContinue,
+  onCelebrate,
   onReturnToMenu,
   finalized = false,
   error,
@@ -27,6 +29,7 @@ export function ExamSummary({
   const lines = examSummaryLines(summary)
   const failed = summary.failedMinor || summary.severeTotal > 0
   const leaveExam = onReturnToMenu ?? onRestart
+  const showCelebrate = !failed && Boolean(onCelebrate)
 
   return (
     <div className="exam-summary-overlay" data-testid="exam-summary">
@@ -41,7 +44,9 @@ export function ExamSummary({
             {failed ? '!' : '✓'}
           </span>
           <div>
-            <h2 id="exam-summary-title">{finalized ? 'გამოცდა დასრულებულია' : 'გამოცდა შეჩერებულია'}</h2>
+            <h2 id="exam-summary-title">
+              {finalized ? 'გამოცდა დასრულებულია' : onContinue ? 'გამოცდა შეჩერებულია' : 'დასრულება'}
+            </h2>
             <p className="exam-summary__route">{summary.routeName}</p>
           </div>
         </header>
@@ -114,8 +119,18 @@ export function ExamSummary({
               className="exam-summary__action exam-summary__action--primary exam-summary__action--emphasis"
               onClick={onFinish}
             >
-              გამოცდის დასრულება
+              დასრულება
               <span aria-hidden="true">→</span>
+            </button>
+          )}
+          {showCelebrate && (
+            <button
+              type="button"
+              className="exam-summary__action exam-summary__action--secondary"
+              data-testid="exam-celebrate"
+              onClick={onCelebrate}
+            >
+              გილოცავთ
             </button>
           )}
         </div>

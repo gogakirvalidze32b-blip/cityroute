@@ -149,7 +149,7 @@ vi.mock('@/components/ExamSummary', () => ({
       )}
       {!finalized && (
         <button type="button" onClick={onFinish}>
-          გამოცდის დასრულება
+          დასრულება
         </button>
       )}
       {finalized && (
@@ -618,7 +618,6 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.pendingPinSortOrder).not.toBe(12)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.queuedPinSortOrders).not.toContain(12)
   })
-
   it('shows automatic and manual PIN choices above the start button and defaults to automatic', () => {
     const route = routeBySlug('route-1')
     render(<ExamDriveSession route={route} />)
@@ -822,7 +821,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(loadRoutePinProgress(route.slug)).toEqual(sorted(route).map((pin) => pin.sort_order))
 
     await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
     })
     await pressStart()
 
@@ -1536,7 +1535,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     })
     await settle()
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+      fireEvent.click(screen.getByRole('button', { name: 'დასრულება' }))
     })
     await settle()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
@@ -1626,7 +1625,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
       await settle()
       expect(loadActiveExam(route.id, route.slug, route.name_ka)).not.toBeNull()
       await act(async () => {
-        await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
       })
       await settle()
       expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
@@ -1682,7 +1681,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
       expect(loadActiveExam(route.id, route.slug, route.name_ka)).not.toBeNull()
       expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
       await act(async () => {
-        await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+        await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
       })
       await settle()
       await act(async () => {
@@ -1750,7 +1749,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
         expect(loadActiveExam(route.id, route.slug, route.name_ka)).not.toBeNull()
       expect(loadRoutePinProgress(route.slug)).toEqual(completedOrders)
       await act(async () => {
-          await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+          await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
       })
         await settle()
         await act(async () => {
@@ -1815,7 +1814,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     })
     await settle()
     await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
     })
     await settle()
     await act(async () => {
@@ -1908,7 +1907,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(screen.getByTestId('route-complete').textContent).toContain('მარშრუტი დასრულებულია')
     // Same as preview complete on routes 1/2/4: overlay clears progress for a fresh start.
     await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
     })
     await settle()
     expect(loadRoutePinProgress(route.slug)).toBeNull()
@@ -2409,7 +2408,7 @@ describe('GPS resume / Manual Start / Finish Summary targeted FIXES', () => {
     expect(screen.getByTestId('exam-summary')).toBeTruthy()
 
     await act(async () => {
-      await userEvent.setup().click(screen.getByRole('button', { name: 'გამოცდის დასრულება' }))
+      await userEvent.setup().click(screen.getByRole('button', { name: 'დასრულება' }))
     })
     await settle()
     expect(loadActiveExam(route.id, route.slug, route.name_ka)).toBeNull()
