@@ -36,17 +36,25 @@ export function RoutePolyline({ positions, variant = 'preview' }: Props) {
       <Polyline
         positions={positions}
         interactive={false}
-        pathOptions={{ color: 'rgba(15, 23, 42, 0.22)', weight: w.shadow, opacity: 1, ...ROUND }}
+        // Keep every rounded-corner sample — Leaflet's default smoothFactor (1)
+        // simplifies hairpin arcs back into a sharp V at navigation zoom.
+        smoothFactor={0}
+        noClip={true}
+        pathOptions={{ color: 'rgba(15, 23, 42, 0.22)', weight: w.shadow, opacity: 1, smoothFactor: 0, ...ROUND }}
       />
       <Polyline
         positions={positions}
         interactive={false}
-        pathOptions={{ color: casing, weight: w.casing, opacity: 0.98, ...ROUND }}
+        smoothFactor={0}
+        noClip={true}
+        pathOptions={{ color: casing, weight: w.casing, opacity: 0.98, smoothFactor: 0, ...ROUND }}
       />
       <Polyline
         positions={positions}
         interactive={false}
-        pathOptions={{ color: fill, weight: w.fill, opacity: 0.98, ...ROUND }}
+        smoothFactor={0}
+        noClip={true}
+        pathOptions={{ color: fill, weight: w.fill, opacity: 0.98, smoothFactor: 0, ...ROUND }}
       />
     </>
   )

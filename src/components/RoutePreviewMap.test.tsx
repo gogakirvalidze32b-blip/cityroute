@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import L from 'leaflet'
 import { RoutePreviewMap } from './RoutePreviewMap'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
-import { examRouteLine } from '@/lib/pin-route-line'
+import { examMapRouteLine } from '@/lib/pin-route-line'
 
 const { fitBounds, mapContainer } = vi.hoisted(() => ({
   fitBounds: vi.fn(),
@@ -97,7 +97,7 @@ describe('RoutePreviewMap for routes 1–4', () => {
     const line = screen.getByTestId('route-line')
     expect(line.dataset.variant).toBe('pins')
     const linePoints = JSON.parse(line.dataset.points!) as [number, number][]
-    expect(linePoints).toEqual(examRouteLine(route.slug, pins))
+    expect(linePoints).toEqual(examMapRouteLine(route.slug, pins))
     expect(linePoints.length).toBeGreaterThan(pins.length)
     const [bounds, fitOptions] = fitBounds.mock.calls.at(-1)!
     expect(fitOptions).toEqual(

@@ -192,9 +192,63 @@ export function positionAtChainageMeters(
   ]
 }
 
+/** Shortest signed turn in (-180, 180] — local copy so geometry stays free of route-nav imports. */
+function shortestTurnDegrees(fromDeg: number, toDeg: number): number {
+  return ((toDeg - fromDeg + 540) % 360) - 180
+}
+
+function circularLerpDegrees(fromDeg: number, toDeg: number, t: number): number {
+  const clamped = Math.max(0, Math.min(1, t))
+  const turn = shortestTurnDegrees(fromDeg, toDeg)
+  return ((fromDeg + turn * clamped) % 360 + 360) % 360
+}
+
+function smoothstep01(t: number): number {
+  const x = Math.max(0, Math.min(1, t))
+  return x * x * (3 - 2 * x)
+}
+
 /**
- * Maps-style nav arrow: bearing looking a few meters ahead along the route
- * from `chainageMeters` (increasing chainage = toward next PIN).
+ * Next polyline vertex where consecutive segment bearings turn sharply
+ * (finish-corridor U-tips). Used only for arrow heading rounding — not PIN logic.
+ */
+function findNextSharpBearingVertex(
+  route: PreparedRouteGeometry,
+  chainageMeters: number,
+  searchAheadMeters: number,
+  minTurnDeg: number,
+): {
+  readonly vertexChainageMeters: number
+  readonly entryBearingDegrees: number
+  readonly exitBearingDegrees: number
+} | null {
+  const searchEnd = Math.min(route.totalLengthMeters, chainageMeters + searchAheadMeters)
+  for (let index = 0; index < route.coordinates.length - 2; index++) {
+    const vertexChainage = route.cumulativeMeters[index + 1]
+    // Include a short window behind so mid-corner rounding still applies.
+    if (vertexChainage < chainageMeters - 20) continue
+    if (vertexChainage > searchEnd) break
+    const entry = bearingDegrees(route.coordinates[index], route.coordinates[index + 1])
+    const exit = bearingDegrees(route.coordinates[index + 1], route.coordinates[index + 2])
+    if (Math.abs(shortestTurnDegrees(entry, exit)) < minTurnDeg) continue
+    return {
+      vertexChainageMeters: vertexChainage,
+      entryBearingDegrees: entry,
+      exitBearingDegrees: exit,
+    }
+  }
+  return null
+}
+
+/**
+ * Maps-style nav arrow: forward bearing from `chainageMeters` along increasing chainage.
+ *
+ * A single geographic chord (`chainage` → `chainage+lookAhead`) cuts across sharp
+ * U-tips (R1 PIN32 / R2#26 / R3#28 / R4#29) and can flip the arrow ~180°.
+ *
+ * Instead:
+ * 1. Round heading through sharp polyline vertices with circular lerp (0°/360° safe).
+ * 2. Otherwise use a short path-following circular mean that stops before a hairpin tip.
  */
 export function forwardBearingAlongRoute(
   route: PreparedRouteGeometry,
@@ -205,15 +259,72 @@ export function forwardBearingAlongRoute(
     return null
   }
   const from = positionAtChainageMeters(route, chainageMeters)
-  const to = positionAtChainageMeters(
+  if (!from) return null
+  const localBearing = bearingAtChainageMeters(route, chainageMeters)
+  if (localBearing == null) return null
+
+  // Round the displayed heading through V-shaped U-tips so the arrow turns
+  // smoothly instead of snapping with the raw segment tangent.
+  const SHARP_TURN_DEG = 70
+  const BLEND_HALF_WINDOW_M = 18
+  const sharp = findNextSharpBearingVertex(
     route,
-    Math.min(route.totalLengthMeters, chainageMeters + lookAheadMeters),
+    chainageMeters,
+    Math.max(lookAheadMeters * 2, BLEND_HALF_WINDOW_M + 5),
+    SHARP_TURN_DEG,
   )
-  if (!from || !to) return null
-  if (distanceMeters(from, to) < 0.5) {
-    return bearingAtChainageMeters(route, chainageMeters)
+  if (sharp) {
+    const distToVertex = sharp.vertexChainageMeters - chainageMeters
+    if (Math.abs(distToVertex) <= BLEND_HALF_WINDOW_M) {
+      const t = smoothstep01((BLEND_HALF_WINDOW_M - distToVertex) / (2 * BLEND_HALF_WINDOW_M))
+      return circularLerpDegrees(
+        sharp.entryBearingDegrees,
+        sharp.exitBearingDegrees,
+        t,
+      )
+    }
   }
-  return bearingDegrees(from, to)
+
+  const maxAlong = Math.min(lookAheadMeters, Math.max(0, route.totalLengthMeters - chainageMeters))
+  if (maxAlong < 0.5) return localBearing
+
+  // Gentle curves: distance-weighted circular mean along the polyline; stop before
+  // a hairpin so the chord never cuts across the tip onto the return leg.
+  const MAX_STEP_TURN_FROM_PATH_START_DEG = 70
+  const SAMPLE_STEP_M = 1
+  let sinAcc = 0
+  let cosAcc = 0
+  let weightSum = 0
+  let prev = from
+  let pathStartBearing: number | null = null
+  const decayTauM = Math.max(3, lookAheadMeters * 0.35)
+
+  for (let along = SAMPLE_STEP_M; along <= maxAlong + 1e-6; along += SAMPLE_STEP_M) {
+    const sampleAt = Math.min(route.totalLengthMeters, chainageMeters + along)
+    const point = positionAtChainageMeters(route, sampleAt)
+    if (!point) break
+    const stepDist = distanceMeters(prev, point)
+    if (stepDist < 0.15) {
+      prev = point
+      continue
+    }
+    const stepBearing = bearingDegrees(prev, point)
+    if (pathStartBearing == null) pathStartBearing = stepBearing
+    if (
+      Math.abs(shortestTurnDegrees(pathStartBearing, stepBearing)) > MAX_STEP_TURN_FROM_PATH_START_DEG
+    ) {
+      break
+    }
+    const weight = Math.exp(-along / decayTauM)
+    const rad = stepBearing * DEGREES_TO_RADIANS
+    sinAcc += weight * Math.sin(rad)
+    cosAcc += weight * Math.cos(rad)
+    weightSum += weight
+    prev = point
+  }
+
+  if (weightSum < 1e-6) return localBearing
+  return ((Math.atan2(sinAcc, cosAcc) / DEGREES_TO_RADIANS) + 360) % 360
 }
 
 function localMeters(origin: LatLng, point: LatLng): readonly [number, number] {

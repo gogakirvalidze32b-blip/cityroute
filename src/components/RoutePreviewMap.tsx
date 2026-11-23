@@ -7,7 +7,7 @@ import { RoutePolyline } from '@/components/RoutePolyline'
 import { getRouteOfficialPreviewMap } from '@/data/route-preview-maps'
 import { OfficialRoutePreviewZoom } from '@/components/OfficialRoutePreviewZoom'
 import { MAP_TILES } from '@/lib/map-tiles'
-import { examRouteLine } from '@/lib/pin-route-line'
+import { examMapRouteLine } from '@/lib/pin-route-line'
 import type { LatLng } from '@/lib/gps'
 import type { RouteWithPins } from '@/types/database'
 
@@ -128,7 +128,7 @@ function InteractiveRoutePreviewMap({
   offlineMaps?: boolean
 }) {
   const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
-  const line = examRouteLine(route.slug, pins)
+  const line = examMapRouteLine(route.slug, pins)
   const startPin = pins[0]
   const finishPin = pins[pins.length - 1]
   if (!startPin || !finishPin || line.length < 2) {

@@ -429,7 +429,7 @@ export function PreviewGpsDemoPanel({
       liveSpeedRef.current = DEMO_NEAR_PIN_SPEED_KMH
       setLiveSpeedKmh(DEMO_NEAR_PIN_SPEED_KMH)
       source.publish(gpsPosition(geometry, startProjection, DEMO_NEAR_PIN_SPEED_KMH))
-      await api.startAtPin(playPinOrder)
+      await api.startAtPin(playPinOrder, { hintChainageMeters: startChainage })
       setNextPinOrder(playPinOrder)
       setStatus(
         kmLabel !== null

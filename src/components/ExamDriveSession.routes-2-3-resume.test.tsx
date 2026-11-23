@@ -1833,7 +1833,10 @@ describe('Telavi field-test routes keep strict progress and resume on production
   it.each(cases)('%s uses its street trace', (slug, count) => {
     const route = routeBySlug(slug)
     expect(sorted(route)).toHaveLength(count)
-    expect(examRouteLine(slug, route.pins)).toEqual(examRoadTrace(slug, route.pins))
+    expect(examRouteLine(slug, route.pins)).not.toEqual(examRoadTrace(slug, route.pins))
+    expect(examRouteLine(slug, route.pins).length).toBeGreaterThanOrEqual(
+      examRoadTrace(slug, route.pins)!.length,
+    )
   })
 
   it.each(cases)('%s: closing the page resumes from the current pin', async (slug) => {

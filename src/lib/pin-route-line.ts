@@ -3,6 +3,7 @@ import route1Road from '@/data/route-1-road.json'
 import route2Road from '@/data/route-2-road.json'
 import route3Road from '@/data/route-3-road.json'
 import route4Road from '@/data/route-4-road.json'
+import { roundSharpRouteCorners } from '@/lib/round-route-corners'
 
 export type PinRoutePoint = {
   lat: number
@@ -86,9 +87,19 @@ export function examRoadTrace(slug: string, pins: readonly PinRoutePoint[]): Lat
 }
 
 /**
- * Visual route line only. Pin order, coordinates, and triggers stay unchanged.
- * Only routes 2 and 3 have a bundled street trace on this production patch.
+ * Exam blue route line (map + matching). Pin coordinates / order / triggers stay
+ * unchanged. Only true hairpin / U-tip vertices are filleted (finish corridors);
+ * ordinary street corners and the agency start T-junction stay as straight lines.
  */
 export function examRouteLine(slug: string, pins: readonly PinRoutePoint[]): LatLng[] {
-  return examRoadTrace(slug, pins) ?? pinRouteLine(pins)
+  const raw = examRoadTrace(slug, pins) ?? pinRouteLine(pins)
+  return roundSharpRouteCorners(raw)
+}
+
+/**
+ * Map-drawn route line — same full exam geometry (rounded hairpins, straight
+ * start T). Do not trim the finish approach; that cut the bottom of the route.
+ */
+export function examMapRouteLine(slug: string, pins: readonly PinRoutePoint[]): LatLng[] {
+  return examRouteLine(slug, pins)
 }

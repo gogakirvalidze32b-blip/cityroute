@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
-import { examRoadTrace, examRouteLine, maxPinOffsetFromLineM, pinRouteLine } from '@/lib/pin-route-line'
+import {
+  examMapRouteLine,
+  examRoadTrace,
+  examRouteLine,
+  maxPinOffsetFromLineM,
+  pinRouteLine,
+} from '@/lib/pin-route-line'
+import { measureSharpCorners, roundSharpRouteCorners } from '@/lib/round-route-corners'
 
 describe('production street line for Telavi routes 1–4', () => {
   it('keeps route 1 official pins and route 4 audited pins', () => {
@@ -23,7 +30,7 @@ describe('production street line for Telavi routes 1–4', () => {
         ? [...Array.from({ length: 11 }, (_, index) => index + 1), ...Array.from({ length: 19 }, (_, index) => index + 13)]
         : Array.from({ length: count }, (_, index) => index + 1),
     )
-    expect(line).toEqual(examRoadTrace(slug, pins))
+    expect(line).toEqual(roundSharpRouteCorners(examRoadTrace(slug, pins)!))
     expect(line.length).toBeGreaterThan(pinRouteLine(pins).length)
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
@@ -150,6 +157,8 @@ describe('production street line for Telavi routes 1–4', () => {
   it('has no U-turn spur on route 2 between #2 and #3', () => {
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
     const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+    // Spur removal lives in the raw road trace; rounding only fillets corners on top.
+    const raw = examRoadTrace('route-2', pins)!
     const line = examRouteLine('route-2', pins)
     const expectedSegment = [
       [41.93107, 45.476158],
@@ -166,11 +175,11 @@ describe('production street line for Telavi routes 1–4', () => {
       [41.93187, 45.476875],
       [41.93194, 45.47692],
     ]
-    const near = (pin: { lat: number; lng: number }) => {
+    const near = (path: readonly [number, number][], pin: { lat: number; lng: number }) => {
       let best = 0
       let bestD = Infinity
-      for (let i = 0; i < line.length; i++) {
-        const d = Math.hypot((line[i][0] - pin.lat) * 110540, (line[i][1] - pin.lng) * 82000)
+      for (let i = 0; i < path.length; i++) {
+        const d = Math.hypot((path[i]![0] - pin.lat) * 110540, (path[i]![1] - pin.lng) * 82000)
         if (d < bestD) {
           bestD = d
           best = i
@@ -180,8 +189,8 @@ describe('production street line for Telavi routes 1–4', () => {
     }
     const p2 = pins.find((p) => p.sort_order === 2)!
     const p3 = pins.find((p) => p.sort_order === 3)!
-    const start = Math.max(0, near(p2) - 1)
-    const segment = line.slice(start, start + expectedSegment.length)
+    const start = Math.max(0, near(raw as [number, number][], p2) - 1)
+    const segment = raw.slice(start, start + expectedSegment.length)
     expect(segment).toEqual(expectedSegment)
     expect(
       maxPinOffsetFromLineM(
@@ -189,9 +198,43 @@ describe('production street line for Telavi routes 1–4', () => {
           [p2.lat, p2.lng],
           [p3.lat, p3.lng],
         ],
-        segment,
+        line,
       ),
     ).toBeLessThanOrEqual(10)
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
+  })
+
+  it('map line keeps the full exam geometry (no finish trim)', () => {
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4'] as const) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+      expect(examMapRouteLine(slug, pins)).toEqual(examRouteLine(slug, pins))
+    }
+  })
+
+  it('rounds the shared finish-corridor U-tip on all four routes', () => {
+    const tip = { lat: 41.934319, lng: 45.478401 }
+    const distTip = (p: readonly [number, number]) =>
+      Math.hypot((p[0] - tip.lat) * 110540, (p[1] - tip.lng) * 82000)
+    /** Finish-corridor pass only (outbound may still traverse the same plaza point). */
+    const nearTipInTail = (line: readonly [number, number][]) => {
+      const start = Math.floor(line.length * 0.82)
+      let best = Infinity
+      for (let i = start; i < line.length; i++) best = Math.min(best, distTip(line[i]!))
+      return best
+    }
+    for (const slug of ['route-1', 'route-2', 'route-3', 'route-4'] as const) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+      const raw = examRoadTrace(slug, pins)!
+      const rounded = examRouteLine(slug, pins)
+      expect(nearTipInTail(raw as [number, number][])).toBeLessThan(3)
+      expect(nearTipInTail(rounded as [number, number][])).toBeGreaterThan(45)
+      // Finish tip must not remain an ultra-sharp V (≥140°) after rounding.
+      const tipSharps = measureSharpCorners(rounded, 140).filter(
+        (c) => Math.hypot((c.lat - tip.lat) * 110540, (c.lng - tip.lng) * 82000) < 40,
+      )
+      expect(tipSharps.length).toBe(0)
+    }
   })
 })

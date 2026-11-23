@@ -6,7 +6,7 @@ import '@/screen-fit-map.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
 import { RoutePolyline } from '@/components/RoutePolyline'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
-import { examRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
+import { examMapRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
@@ -511,7 +511,7 @@ export function ExamLiveMapLeaflet({
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
   const pinLine = useMemo(
-    () => (EXAM_STREET_LINE_SLUGS.has(route.slug) ? examRouteLine(route.slug, pins) : []),
+    () => (EXAM_STREET_LINE_SLUGS.has(route.slug) ? examMapRouteLine(route.slug, pins) : []),
     [route.slug, pins],
   )
   

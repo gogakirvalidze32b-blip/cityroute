@@ -86,11 +86,17 @@ import {
 } from '@/lib/route-nav'
 import { createGpsFilter, type GpsReading } from '@/lib/gps-filter'
 import { createRouteOdometer, distanceKmTenths } from '@/lib/route-odometer'
+import {
+  decideChainageFromMatch,
+  decideChainageFromPinAnchor,
+  resolveGpsSeedChainageMeters,
+} from '@/lib/route-chainage-progress'
 import { resolveAutoStart } from '@/lib/auto-start-pin'
 import {
   evaluatePinRouteCompletion,
   forwardBearingAlongRoute,
   matchGpsPosition,
+  positionAtChainageMeters,
   prepareRouteGeometry,
   projectOrderedPointsToRoute,
   projectPointToRoute,
@@ -282,8 +288,13 @@ type Props = {
   debugPanels?: boolean
 }
 
+export type PreviewDemoStartOptions = {
+  /** Known along-route chainage (demo km-seek / approach). Preserved when projections are ambiguous. */
+  readonly hintChainageMeters?: number
+}
+
 export type PreviewDemoControls = {
-  startAtPin: (sortOrder: number) => Promise<void>
+  startAtPin: (sortOrder: number, options?: PreviewDemoStartOptions) => Promise<void>
   reset: () => void
   nextPinOrder: () => number | null
   isActive: () => boolean
@@ -680,6 +691,8 @@ export function ExamDriveSession({
   const distanceMetersRef = useRef(distanceMeters)
   distanceMetersRef.current = distanceMeters
   const routeMatchStateRef = useRef<RouteMatchState | null>(null)
+  /** Demo km-seek / approach chainage — consumed once by the next startSession seed. */
+  const seedHintChainageRef = useRef<number | null>(null)
   const gpsAutoStartBlockedRef = useRef(false)
   const roundaboutGateRef = useRef<RoundaboutReturnGateState | null>(null)
 
@@ -697,8 +710,10 @@ export function ExamDriveSession({
   const routeGeometry = useMemo(() => {
     if (!FIELD_TEST_SLUGS.has(route.slug)) return null
     try {
-      const streetTrace = examRoadTrace(route.slug, route.pins)
-      return prepareRouteGeometry(route.slug as ActiveRouteId, streetTrace ?? polyline)
+      // Same rounded street line as the blue map polyline (examRouteLine), so the
+      // arrow follows the visible curve — not a sharp raw tip chord.
+      const streetTrace = examRouteLine(route.slug, route.pins)
+      return prepareRouteGeometry(route.slug as ActiveRouteId, streetTrace.length >= 2 ? streetTrace : polyline)
     } catch (error) {
       console.error('Failed to prepare route geometry:', route.slug, error)
       return null
@@ -706,10 +721,8 @@ export function ExamDriveSession({
   }, [route.slug, route.pins, polyline])
   const routeGeometryRef = useRef(routeGeometry)
   routeGeometryRef.current = routeGeometry
-  /** Full street-road length (measured polyline), not pin-to-pin shortcuts. */
+  /** Full street-road length (rounded exam line), not pin-to-pin shortcuts. */
   const routeLengthM = useMemo(() => {
-    const street = examStreetRoad(route.slug)
-    if (street) return routeLengthMeters(street)
     const line =
       (routeGeometry?.coordinates as LatLng[] | undefined)?.length && routeGeometry
         ? ([...routeGeometry.coordinates] as LatLng[])
@@ -717,7 +730,7 @@ export function ExamDriveSession({
           ? autoStartPolyline
           : polyline
     return routeLengthMeters(line)
-  }, [route.slug, routeGeometry, autoStartPolyline, polyline])
+  }, [routeGeometry, autoStartPolyline, polyline])
   const distanceProgressPct =
     routeLengthM > 0 ? Math.min(100, Math.max(0, (distanceMeters / routeLengthM) * 100)) : 0
   const routeLengthKmLabel = routeLengthM > 0 ? distanceKmTenths(routeLengthM).toFixed(1) : '—'
@@ -729,7 +742,11 @@ export function ExamDriveSession({
     return polyline
   }, [route.slug, autoStartPolyline, polyline])
 
-  function seedLiveDistanceMeters(startSortOrder: number, gpsPos?: LatLng | null): number {
+  function seedLiveDistanceMeters(
+    startSortOrder: number,
+    gpsPos?: LatLng | null,
+    hintChainageMeters?: number | null,
+  ): number {
     // PIN 1 sits on the agency loop (start ≈ finish). Nearest-on-line hits the end of
     // the road (~full route km). Starting from PIN 1 must always show 0.0 კმ.
     if (startSortOrder <= 1) return 0
@@ -741,21 +758,50 @@ export function ExamDriveSession({
     const position =
       (gpsPos !== undefined ? gpsPos : currentPositionRef.current) ?? pinPos
     if (!position) return 0
-    // Mid/late starts: anchor near the start PIN's chainage so a resume does not
-    // snap to the wrong loop occurrence.
+    // Mid/late starts: GPS nearest + continuity with seek/previous hint.
+    // Never let a distant expected-PIN window pull onto a parallel section
+    // (R1 ~2.25 km vs PIN12 ≈2.69 km ambiguity → false 2.57 km seed).
     if (routeGeometry) {
-      const pinProjection = pinPos ? projectPointToRoute(routeGeometry, pinPos) : null
-      const expectedChainage = pinProjection?.chainageMeters ?? 0
-      const anchored = projectPointToRouteNearChainage(
-        routeGeometry,
-        position,
-        expectedChainage,
-        150,
-      )
-      if (anchored && Number.isFinite(anchored.chainageMeters)) {
-        return Math.max(0, anchored.chainageMeters)
-      }
+      const exactPinChainage = resolveExactPinChainageMeters(startSortOrder)
       const nearest = projectPointToRoute(routeGeometry, position)
+      const hint =
+        hintChainageMeters != null && Number.isFinite(hintChainageMeters)
+          ? Math.max(0, hintChainageMeters)
+          : null
+      const hintAnchored =
+        hint != null
+          ? projectPointToRouteNearChainage(routeGeometry, position, hint, 80)
+          : null
+      const pinAnchored =
+        exactPinChainage != null
+          ? projectPointToRouteNearChainage(routeGeometry, position, exactPinChainage, 150)
+          : null
+      const decision = resolveGpsSeedChainageMeters({
+        nearest: nearest
+          ? {
+              chainageMeters: nearest.chainageMeters,
+              crossTrackMeters: nearest.crossTrackMeters,
+            }
+          : null,
+        pinAnchored: pinAnchored
+          ? {
+              chainageMeters: pinAnchored.chainageMeters,
+              crossTrackMeters: pinAnchored.crossTrackMeters,
+            }
+          : null,
+        hintAnchored: hintAnchored
+          ? {
+              chainageMeters: hintAnchored.chainageMeters,
+              crossTrackMeters: hintAnchored.crossTrackMeters,
+            }
+          : null,
+        exactPinChainageMeters: exactPinChainage,
+        distanceToPinMeters: pinPos ? distanceToPinMeters(position, pinPos) : null,
+        hintChainageMeters: hint,
+      })
+      if (decision.action !== 'none') {
+        return decision.chainageMeters
+      }
       if (nearest && Number.isFinite(nearest.chainageMeters)) {
         return Math.max(0, nearest.chainageMeters)
       }
@@ -768,6 +814,49 @@ export function ExamDriveSession({
     routeOdometerRef.current.restore(safe)
     distanceMetersRef.current = safe
     setDistanceMeters(safe)
+  }
+
+  /** Exact along-route chainage for a confirmed PIN (no 0.1 km rounding). */
+  function resolveExactPinChainageMeters(sortOrder: number): number | null {
+    const geometry = routeGeometryRef.current
+    if (!geometry) return null
+    const pins = voicePinsRef.current
+    const prior = [...pins]
+      .map((pin) => pin.sort_order)
+      .filter((order) => order < sortOrder)
+      .sort((a, b) => b - a)[0]
+    const after =
+      prior !== undefined ? resolveDemoPinChainage(geometry, pins, prior, 0) ?? 0 : 0
+    return resolveDemoPinChainage(geometry, pins, sortOrder, after)
+  }
+
+  /**
+   * Keep HUD კმ / speed bands / saved progress on the same route-chainage source.
+   * Optionally re-lock match state so recovery continues from this chainage.
+   */
+  function applyRouteChainageMeters(
+    meters: number,
+    options?: { readonly syncMatchState?: boolean; readonly timestampMs?: number },
+  ) {
+    const safe = Number.isFinite(meters) && meters > 0 ? meters : 0
+    applySeededDistance(safe)
+    if (!options?.syncMatchState) return
+    const geometry = routeGeometryRef.current
+    if (!geometry) return
+    const position = positionAtChainageMeters(geometry, safe)
+    if (!position) return
+    const snapped =
+      projectPointToRouteNearChainage(geometry, position, safe, 5) ??
+      projectPointToRoute(geometry, position)
+    if (!snapped) return
+    routeMatchStateRef.current = {
+      routeId: geometry.routeId,
+      chainageMeters: snapped.chainageMeters,
+      segmentIndex: snapped.segmentIndex,
+      position: snapped.position,
+      timestampMs: options.timestampMs ?? Date.now(),
+      accuracyMeters: 5,
+    }
   }
   const sortedPins = useMemo(
     // CRITICAL: Pins must be sorted by sort_order to enforce STRICT SEQUENTIAL triggering
@@ -1431,10 +1520,14 @@ export function ExamDriveSession({
         }
         if (phaseRef.current === 'active') {
           setSpeedKmh(resolveExamSpeedKmh(pos, prevGpsRef.current, speedTrackerRef.current))
-          const odo = routeOdometerRef.current.observe(raw, pos.timestamp)
-          if (odo.accepted || odo.reason === 'anchor') {
-            distanceMetersRef.current = odo.totalMeters
-            setDistanceMeters(odo.totalMeters)
+          // With exam route geometry, HUD კმ is route chainage (updated after match
+          // below). Do not accumulate raw GPS path length — jumps corrupt km.
+          if (!routeGeometryRef.current) {
+            const odo = routeOdometerRef.current.observe(raw, pos.timestamp)
+            if (odo.accepted || odo.reason === 'anchor') {
+              distanceMetersRef.current = odo.totalMeters
+              setDistanceMeters(odo.totalMeters)
+            }
           }
         } else {
           setSpeedKmh(0)
@@ -1676,13 +1769,34 @@ export function ExamDriveSession({
         // look-ahead) — never raw segment bearing or reverse+180 (those spin /
         // face previous points on short zig-zags and reject gaps).
         const ARROW_LOOK_AHEAD_M = 14
-        if (!routeMatch.accepted || !routeMatch.nextState) {
+        const chainageDecision = decideChainageFromMatch({
+          previousChainageMeters:
+            previousRouteMatch?.chainageMeters ??
+            (distanceMetersRef.current > 0 ? distanceMetersRef.current : null),
+          candidateChainageMeters: routeMatch.nextState?.chainageMeters,
+          matchAccepted: Boolean(routeMatch.accepted && routeMatch.nextState),
+          elapsedMs: previousRouteMatch
+            ? Math.max(0, pos.timestamp - previousRouteMatch.timestampMs)
+            : 0,
+        })
+        const matchUsableForProgress =
+          chainageDecision.action === 'adopt' &&
+          routeMatch.accepted &&
+          routeMatch.nextState != null
+
+        if (!matchUsableForProgress) {
+          // Priority 2: preserve last valid chainage while recovery continues.
+          // Do not adopt an implausible / rejected match into HUD კმ or match lock.
+          if (chainageDecision.action === 'freeze') {
+            applySeededDistance(chainageDecision.chainageMeters)
+          }
           // Never chase a rejected nearest projection on the opposing pass
           // (same plaza / out-and-back ~+180°). Keep/advance along the locked pass.
           // Cold start on dual-pass plazas (R3 PIN15): prefer the lit-PIN chainage
           // over a finish-loop / opposing-pass nearest snap.
           let rejectChainage: number | null =
             previousRouteMatch?.chainageMeters ??
+            (distanceMetersRef.current > 0 ? distanceMetersRef.current : null) ??
             (expectedForwardChainageMeters != null &&
             Number.isFinite(expectedForwardChainageMeters)
               ? expectedForwardChainageMeters
@@ -1720,6 +1834,8 @@ export function ExamDriveSession({
           }
           return
         }
+        // Priority 1: recovered / plausible match — HUD კმ = route chainage.
+        applySeededDistance(chainageDecision.chainageMeters)
         // Arrow = forward look-ahead from matched chainage, slewed on every route.
         routeMatchStateRef.current = routeMatch.nextState
         const matchedPosition: LatLng = [
@@ -2221,6 +2337,7 @@ export function ExamDriveSession({
     startSortOrder = 1,
     startMode: 'automatic' | 'manual' = 'automatic',
     sessionVoicePosition?: LatLng | null,
+    hintChainageMeters?: number | null,
   ) {
     const isFieldTest = FIELD_TEST_SLUGS.has(route.slug)
     const progressRead = isFieldTest ? readRoutePinProgress(route.slug, persistenceScope) : null
@@ -2316,7 +2433,26 @@ export function ExamDriveSession({
     setElapsedMs(0)
     const voicePos = sessionVoicePosition ?? currentPositionRef.current
     if (voicePos) currentPositionRef.current = voicePos
-    applySeededDistance(seedLiveDistanceMeters(startSortOrder, currentPositionRef.current))
+    const hint =
+      hintChainageMeters != null && Number.isFinite(hintChainageMeters)
+        ? Math.max(0, hintChainageMeters)
+        : seedHintChainageRef.current
+    seedHintChainageRef.current = null
+    const seededMeters = seedLiveDistanceMeters(
+      startSortOrder,
+      currentPositionRef.current,
+      hint,
+    )
+    // Lock match state to the seeded chainage so live matching continues from the
+    // same pass (do not cold-start toward a distant lit PIN on an ambiguous plaza).
+    if (seededMeters > 0 && routeGeometryRef.current) {
+      applyRouteChainageMeters(seededMeters, {
+        syncMatchState: true,
+        timestampMs: Date.now(),
+      })
+    } else {
+      applySeededDistance(seededMeters)
+    }
     setLastSpoken(null)
     
     const nextOrder = resolution?.status === 'resume'
@@ -2344,11 +2480,20 @@ export function ExamDriveSession({
     if (startAudioPendingRef.current) playSessionStartAudio(sessionGeneration)
   }
 
-  async function handleStartSession(startAtSortOrder?: number) {
+  async function handleStartSession(
+    startAtSortOrder?: number,
+    startOptions?: PreviewDemoStartOptions,
+  ) {
     // Must run synchronously inside the click, before any await (GPS prompt would lose the gesture).
     audioEngine.unlock()
     if (gpsStarting) return
     if (remoteSessionLoading || remoteSessionCreating || remotePersistenceError) return
+    if (
+      startOptions?.hintChainageMeters != null &&
+      Number.isFinite(startOptions.hintChainageMeters)
+    ) {
+      seedHintChainageRef.current = Math.max(0, startOptions.hintChainageMeters)
+    }
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       const progressRead = readRoutePinProgress(route.slug, persistenceScope)
       if (progressRead.status === 'invalid' || progressRead.status === 'unavailable') {
@@ -2513,10 +2658,12 @@ export function ExamDriveSession({
       setRemotePersistenceError(`გამოცდის სერვერული სესია ვერ შეიქმნა: ${detail}`)
       return
     }
+    const hintForStart = seedHintChainageRef.current
     startSession(
       selectedSortOrder,
       startAtSortOrder === undefined ? previewSelectionMode : 'manual',
       gpsResult.position ?? currentPositionRef.current,
+      hintForStart,
     )
   }
 
@@ -2562,7 +2709,20 @@ export function ExamDriveSession({
     return orders
   }
 
+  function anchorDistanceAtConfirmedPin(pin: PinRow) {
+    // Priority 3: confirmed PIN restores exact predefined route chainage.
+    const pinChainage = resolveExactPinChainageMeters(pin.sort_order)
+    if (pinChainage == null) return
+    const decision = decideChainageFromPinAnchor(pinChainage)
+    if (decision.action !== 'pin-anchor') return
+    applyRouteChainageMeters(decision.chainageMeters, {
+      syncMatchState: true,
+      timestampMs: Date.now(),
+    })
+  }
+
   function markPinHandled(pin: PinRow) {
+    anchorDistanceAtConfirmedPin(pin)
     if (FIELD_TEST_SLUGS.has(route.slug)) {
       const orders = handledOrdersRef.current ?? new Set<number>()
       orders.add(pin.sort_order)
@@ -2589,10 +2749,13 @@ export function ExamDriveSession({
 
   function markPinTriggered(pin: PinRow) {
     if (!FIELD_TEST_SLUGS.has(route.slug)) {
+      // Non-field: handled immediately (anchor runs inside markPinHandled).
       markPinHandled(pin)
       return
     }
-
+    // Field-test: anchor as soon as the PIN is confirmed on-route (before audio
+    // finishes), so HUD კმ / speed bands recover even if matching is unstable.
+    anchorDistanceAtConfirmedPin(pin)
     triggeredRef.current.add(pin.id)
     setNextPin(pinsRef.current.find((item) => !triggeredRef.current.has(item.id)) ?? null)
   }
@@ -3170,6 +3333,7 @@ export function ExamDriveSession({
     triggeredRef.current = pinIdsForOrders(sortedPins, handled)
     pinApproachRef.current = new Map()
     routeMatchStateRef.current = null
+    seedHintChainageRef.current = null
     setPendingPinSortOrder(null)
     if (FIELD_TEST_SLUGS.has(route.slug)) handledOrdersRef.current = handled
     resumedSlugRef.current = null
@@ -3188,7 +3352,7 @@ export function ExamDriveSession({
 
   const previewDemoActionsRef = useRef<PreviewDemoControls | null>(null)
   previewDemoActionsRef.current = {
-    startAtPin: (sortOrder) => handleStartSession(sortOrder),
+    startAtPin: (sortOrder, options) => handleStartSession(sortOrder, options),
     reset: restartPreview,
     nextPinOrder: () => nextPinRef.current?.sort_order ?? null,
     isActive: () => phaseRef.current === 'active',
@@ -3208,7 +3372,7 @@ export function ExamDriveSession({
       return previewDemoActionsRef.current
     }
     previewDemoControlsRef.current = {
-      startAtPin: (sortOrder) => currentActions().startAtPin(sortOrder),
+      startAtPin: (sortOrder, options) => currentActions().startAtPin(sortOrder, options),
       reset: () => currentActions().reset(),
       nextPinOrder: () => currentActions().nextPinOrder(),
       isActive: () => currentActions().isActive(),
