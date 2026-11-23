@@ -71,6 +71,17 @@ describe('decideChainageFromMatch', () => {
     ).toEqual({ action: 'freeze', chainageMeters: 3_300, reason: 'no-match' })
   })
 
+  it('keeps 0.0 კმ locked when finish-plaza snap jumps from a PIN-1 start', () => {
+    expect(
+      decideChainageFromMatch({
+        previousChainageMeters: 0,
+        candidateChainageMeters: 8_400,
+        matchAccepted: true,
+        elapsedMs: 500,
+      }),
+    ).toEqual({ action: 'freeze', chainageMeters: 0, reason: 'implausible-jump' })
+  })
+
   it('freezes on implausible accepted jump', () => {
     expect(
       decideChainageFromMatch({
