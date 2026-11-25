@@ -251,7 +251,9 @@ describe('ExamLiveMapLeaflet camera', () => {
         nextPin={null}
       />,
     )
-    for (let frame = 0; frame < 10 && frames.length > 0; frame++) runNextFrame()
+    // Arrow rotation is capped at 240°/s (limitHeadingStep), so an ~86° turn
+    // takes ~20 frames instead of snapping within 10.
+    for (let frame = 0; frame < 60 && frames.length > 0; frame++) runNextFrame()
 
     const turnedHeading = Number.parseFloat(
       world.style.getPropertyValue('--exam-live-map-heading'),

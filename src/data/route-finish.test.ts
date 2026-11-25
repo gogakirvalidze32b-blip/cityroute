@@ -360,7 +360,7 @@ describe('shared finish sequence', () => {
     const pin12 = route4.pins.find((pin) => pin.sort_order === 12)!
     expect(pin7.instruction_ka).toBe('500 მეტრში, წრიული მოძრაობისას, გთხოვთ იმოძრაოთ პირდაპირ')
     expect(resolvePinAudioUrl('route-4', pin7)).not.toBeNull()
-    expect([pin12.lat, pin12.lng]).toEqual([41.919276, 45.49935])
+    expect([pin12.lat, pin12.lng]).toEqual([41.9193147, 45.4996711])
     const pin15 = route4.pins.find((pin) => pin.sort_order === 15)!
     expect([pin15.lat, pin15.lng]).toEqual([41.919466, 45.499243])
     expect(pinVoicePlaybackRate('route-4', 7)).toBe(0.9)

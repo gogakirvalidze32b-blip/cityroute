@@ -85,6 +85,22 @@ describe('eight corrected Telavi pin coordinates', () => {
     expect(pin).toEqual({ lat: 41.924423, lng: 45.46041, instruction_ka: 'უცვლელი', sort_order: 10 })
   })
 
+  it('uses the requested coordinates for the four updated pins', () => {
+    const routes = applyRelocatedPin(TELAVI_ROUTES_FALLBACK)
+    const targets = [
+      ['route-4', 12, 41.9193147, 45.4996711],
+      ['route-3', 15, 41.9244352, 45.4748680],
+      ['route-3', 10, 41.9188235, 45.4849494],
+      ['route-2', 25, 41.9325028, 45.4773712],
+    ] as const
+
+    for (const [slug, order, lat, lng] of targets) {
+      const route = routes.find((item) => item.slug === slug)!
+      const pin = route.pins.find((item) => item.sort_order === order)!
+      expect([pin.lat, pin.lng]).toEqual([lat, lng])
+    }
+  })
+
   it('prefers bundled local pins over stale Supabase pins so new Route 1 PINs stay on the map', () => {
     const local = applyRelocatedPin(TELAVI_ROUTES_FALLBACK).find((route) => route.slug === 'route-1')!
     expect(local.pins).toHaveLength(35)

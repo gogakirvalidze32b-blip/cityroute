@@ -46,9 +46,13 @@ const ROUTE_CONTEXT_TRIGGER_ORDERS: Readonly<Record<string, number>> = {
 export const ROUTE_3_RELIABLE_SPEAK_ORDERS = new Set([
   6, 7, 10, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27,
 ])
+const ROUTE_4_RELIABLE_SPEAK_ORDERS = new Set([21])
 
 export function pinAudioTriggerDistanceMeters(route: string, sortOrder: number): number {
   if (route === 'route-3' && ROUTE_3_RELIABLE_SPEAK_ORDERS.has(sortOrder)) {
+    return AUDIO_RELIABLE_TRIGGER_DISTANCE_M
+  }
+  if (route === 'route-4' && ROUTE_4_RELIABLE_SPEAK_ORDERS.has(sortOrder)) {
     return AUDIO_RELIABLE_TRIGGER_DISTANCE_M
   }
   if (

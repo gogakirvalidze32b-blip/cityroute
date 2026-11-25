@@ -212,6 +212,13 @@ describe('final 300 m right-turn PIN audio', () => {
     expect(pinAudioTriggerDistanceMeters('route-2', 27)).toBe(AUDIO_TRIGGER_DISTANCE_M)
   })
 
+  it('widens only Route 4 PIN 21 to the reliable trigger distance', () => {
+    expect(pinAudioTriggerDistanceMeters('route-4', 21)).toBe(AUDIO_RELIABLE_TRIGGER_DISTANCE_M)
+    expect(pinAudioApproachWindowMeters('route-4', 21)).toBe(AUDIO_RELIABLE_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-4', 20)).toBe(AUDIO_TRIGGER_DISTANCE_M)
+    expect(pinAudioTriggerDistanceMeters('route-4', 22)).toBe(AUDIO_TRIGGER_DISTANCE_M)
+  })
+
   it('slows Route 4 PIN 7 and 8 voices to 0.9x and keeps other voices at 1.0x', () => {
     expect(pinVoicePlaybackRate('route-4', 8)).toBe(0.9)
     expect(pinVoicePlaybackRate('route-4', 7)).toBe(0.9)

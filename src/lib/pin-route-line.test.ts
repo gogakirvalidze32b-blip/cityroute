@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
+import type { LatLng } from '@/lib/gps'
 import {
-  examMapRouteLine,
+  examMapRouteLines,
   examRoadTrace,
   examRouteLine,
   maxPinOffsetFromLineM,
@@ -30,7 +31,11 @@ describe('production street line for Telavi routes 1–4', () => {
         ? [...Array.from({ length: 11 }, (_, index) => index + 1), ...Array.from({ length: 19 }, (_, index) => index + 13)]
         : Array.from({ length: count }, (_, index) => index + 1),
     )
-    expect(line).toEqual(roundSharpRouteCorners(examRoadTrace(slug, pins)!))
+    expect(line).toEqual(
+      slug === 'route-4'
+        ? examMapRouteLines(slug, pins)[0]
+        : roundSharpRouteCorners(examRoadTrace(slug, pins)!),
+    )
     expect(line.length).toBeGreaterThan(pinRouteLine(pins).length)
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
@@ -204,11 +209,67 @@ describe('production street line for Telavi routes 1–4', () => {
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
 
-  it('map line keeps the full exam geometry (no finish trim)', () => {
+  it('keeps other map lines unchanged and separates the Route 3 Alazani carriageways', () => {
+    for (const slug of ['route-1', 'route-2'] as const) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+      expect(examMapRouteLines(slug, pins)).toEqual([examRouteLine(slug, pins)])
+    }
+
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
+    const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+    const raw = examRoadTrace('route-3', pins)!
+    const mapLines = examMapRouteLines('route-3', pins)
+    const pin6 = pins.find((pin) => pin.sort_order === 6)!
+
+    expect(mapLines).toHaveLength(2)
+    expect(raw[38]).toEqual([41.924773, 45.472255])
+    expect(raw[39]).toEqual([41.924748, 45.472457])
+    expect(mapLines[0]!.slice(-2)).toEqual(raw.slice(37, 39))
+    expect(mapLines[1]!.slice(0, 2)).toEqual(raw.slice(39, 41))
+    expect(examRouteLine('route-3', pins)).toEqual(roundSharpRouteCorners(raw))
+    expect(
+      maxPinOffsetFromLineM(
+        [[pin6.lat, pin6.lng]],
+        examRouteLine('route-3', pins),
+      ),
+    ).toBeLessThanOrEqual(1)
+
+    const bearing = (from: LatLng, to: LatLng) => {
+      const meanLat = ((from[0] + to[0]) / 2) * (Math.PI / 180)
+      const east = (to[1] - from[1]) * Math.cos(meanLat)
+      const north = to[0] - from[0]
+      return (Math.atan2(east, north) * 180) / Math.PI
+    }
+    const firstBearing = bearing(raw[37]!, raw[38]!)
+    const secondBearing = bearing(raw[39]!, raw[40]!)
+    const bearingDifference = Math.abs(((firstBearing - secondBearing + 540) % 360) - 180)
+    expect(bearingDifference).toBeLessThan(20)
+  })
+
+  it('aligns the Route 4 PIN 13 curve across map and navigation', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-4')!
+    const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+    const raw = examRoadTrace('route-4', pins)!
+    const pin13 = pins.find((pin) => pin.sort_order === 13)!
+    const mapLine = examMapRouteLines('route-4', pins)[0]!
+    const navigationLine = examRouteLine('route-4', pins)
+
+    expect(mapLine).toEqual(navigationLine)
+    expect(mapLine[0]).toEqual(raw[0])
+    expect(mapLine.at(-1)).toEqual(raw.at(-1))
+    expect(mapLine).toContainEqual([pin13.lat, pin13.lng])
+    expect(maxPinOffsetFromLineM([[pin13.lat, pin13.lng]], mapLine)).toBe(0)
+  })
+
+  it('map lines keep the full exam geometry (no finish trim)', () => {
     for (const slug of ['route-1', 'route-2', 'route-3', 'route-4'] as const) {
       const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
       const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
-      expect(examMapRouteLine(slug, pins)).toEqual(examRouteLine(slug, pins))
+      const lines = examMapRouteLines(slug, pins)
+      expect(lines).toHaveLength(slug === 'route-3' ? 2 : 1)
+      expect(lines[0]![0]).toEqual(examRouteLine(slug, pins)[0])
+      expect(lines.at(-1)?.at(-1)).toEqual(examRouteLine(slug, pins).at(-1))
     }
   })
 

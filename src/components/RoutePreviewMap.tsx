@@ -7,7 +7,7 @@ import { RoutePolyline } from '@/components/RoutePolyline'
 import { getRouteOfficialPreviewMap } from '@/data/route-preview-maps'
 import { OfficialRoutePreviewZoom } from '@/components/OfficialRoutePreviewZoom'
 import { MAP_TILES } from '@/lib/map-tiles'
-import { examMapRouteLine } from '@/lib/pin-route-line'
+import { examMapRouteLines } from '@/lib/pin-route-line'
 import type { LatLng } from '@/lib/gps'
 import type { RouteWithPins } from '@/types/database'
 
@@ -128,10 +128,10 @@ function InteractiveRoutePreviewMap({
   offlineMaps?: boolean
 }) {
   const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
-  const line = examMapRouteLine(route.slug, pins)
+  const lines = examMapRouteLines(route.slug, pins)
   const startPin = pins[0]
   const finishPin = pins[pins.length - 1]
-  if (!startPin || !finishPin || line.length < 2) {
+  if (!startPin || !finishPin || !lines.some((line) => line.length >= 2)) {
     return (
       <div className="exam-preview__map" role="alert">
         მარშრუტის რუკის მონაცემები ხელმისაწვდომი არ არის.
@@ -141,7 +141,7 @@ function InteractiveRoutePreviewMap({
 
   const start: LatLng = [startPin.lat, startPin.lng]
   const finish: LatLng = [finishPin.lat, finishPin.lng]
-  const boundsPositions = [...line, ...pins.map((pin) => [pin.lat, pin.lng] as LatLng)]
+  const boundsPositions = [...lines.flat(), ...pins.map((pin) => [pin.lat, pin.lng] as LatLng)]
 
   return (
     <div
@@ -167,7 +167,11 @@ function InteractiveRoutePreviewMap({
         minZoom={10}
       >
         <MapBasemapLayers tiles={MAP_TILES} detectRetina enabled={!offlineMaps} />
-        <RoutePolyline positions={line} variant="pins" />
+        {lines.map((line, index) =>
+          line.length >= 2 ? (
+            <RoutePolyline key={index} positions={line} variant="pins" />
+          ) : null,
+        )}
         {pins.map((pin) => (
           <RoutePin
             key={pin.id}

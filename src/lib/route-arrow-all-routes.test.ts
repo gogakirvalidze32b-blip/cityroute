@@ -125,8 +125,8 @@ describe('Maps-style arrow forward on all routes', () => {
 
         const next = stabilizeRoadArrowHeading(heading, target, 10, 5, false)
         const step = Math.abs(shortestHeadingTurnDegrees(heading, next))
-        // Maps-style: no instant 180° snaps — only smooth slew.
-        expect(step).toBeLessThanOrEqual(10.01)
+        // Maps-style: adaptive slew (up to ~18° on large lag) — never a 180° flip.
+        expect(step).toBeLessThanOrEqual(18.01)
 
         heading = next
         samples += 1

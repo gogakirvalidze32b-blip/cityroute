@@ -6,11 +6,12 @@ import '@/screen-fit-map.css'
 import { MapBasemapLayers } from '@/components/MapBasemapLayers'
 import { RoutePolyline } from '@/components/RoutePolyline'
 import { distanceToPinMeters, type LatLng } from '@/lib/gps'
-import { examMapRouteLine, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
+import { examMapRouteLines, EXAM_STREET_LINE_SLUGS } from '@/lib/pin-route-line'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { mapRotationCssDeg } from '@/lib/map-rotation'
+import { limitHeadingStep } from '@/lib/arrow-heading'
 import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type CameraMode } from '@/lib/navigation-state'
 import { formatPinInstructionLabel } from '@/lib/pin-instruction-label'
 
@@ -331,10 +332,18 @@ function NavigationCameraController({
           currentDisplayHeading.current = courseRef.current
           applyBearing(currentDisplayHeading.current)
         }
-        const nextHeading = lerpAngle(
+        // Eased toward the road course, then capped in °/s so a new GPS fix at a
+        // corner turns the arrow smoothly instead of snapping (arrow-only).
+        const nextHeading = limitHeadingStep(
           currentDisplayHeading.current,
-          courseRef.current,
-          interpolationFactor,
+          lerpAngle(
+            currentDisplayHeading.current,
+            courseRef.current,
+            interpolationFactor,
+          ),
+          // First frame after an idle stretch reports a stale (up to 50 ms)
+          // elapsed time; cap it so the arrow never takes a one-frame jump.
+          Math.min(elapsed, 20),
         )
         if (angleDistance(currentDisplayHeading.current, nextHeading) >= 0.15) {
           currentDisplayHeading.current = nextHeading
@@ -510,8 +519,8 @@ export function ExamLiveMapLeaflet({
 
   const pins = route.pins
   const polyline = route.polyline as LatLng[]
-  const pinLine = useMemo(
-    () => (EXAM_STREET_LINE_SLUGS.has(route.slug) ? examMapRouteLine(route.slug, pins) : []),
+  const pinLines = useMemo(
+    () => (EXAM_STREET_LINE_SLUGS.has(route.slug) ? examMapRouteLines(route.slug, pins) : []),
     [route.slug, pins],
   )
   
@@ -683,7 +692,11 @@ export function ExamLiveMapLeaflet({
           <MapSizeFix />
           <MapBasemapLayers tiles={MAP_TILES} detectRetina enabled={!offlineMaps} />
 
-          {pinLine.length >= 2 && <RoutePolyline positions={pinLine} variant="pins" />}
+          {pinLines.map((line, index) =>
+            line.length >= 2 ? (
+              <RoutePolyline key={index} positions={line} variant="pins" />
+            ) : null,
+          )}
 
           {pins.map((pin) => {
             const isNext = nextPin?.id === pin.id

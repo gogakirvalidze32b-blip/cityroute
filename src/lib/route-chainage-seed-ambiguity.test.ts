@@ -7,6 +7,7 @@ import {
   positionAtChainageMeters,
   projectPointToRoute,
   projectPointToRouteNearChainage,
+  type ActiveRouteId,
 } from '@/lib/pure-route-geometry'
 import {
   decideChainageFromMatch,
@@ -14,7 +15,7 @@ import {
 } from '@/lib/route-chainage-progress'
 import { distanceKmTenths } from '@/lib/route-odometer'
 
-function loadRoute(slug: string) {
+function loadRoute(slug: ActiveRouteId) {
   const route = TELAVI_ROUTES_FALLBACK.find((row) => row.slug === slug)
   if (!route) throw new Error(`missing ${slug}`)
   const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
@@ -23,7 +24,7 @@ function loadRoute(slug: string) {
 }
 
 function seedAtChainage(
-  slug: string,
+  slug: ActiveRouteId,
   chainageMeters: number,
   nextPinOrder: number,
 ) {

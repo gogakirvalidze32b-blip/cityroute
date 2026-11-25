@@ -40,21 +40,21 @@ export function RoutePolyline({ positions, variant = 'preview' }: Props) {
         // simplifies hairpin arcs back into a sharp V at navigation zoom.
         smoothFactor={0}
         noClip={true}
-        pathOptions={{ color: 'rgba(15, 23, 42, 0.22)', weight: w.shadow, opacity: 1, smoothFactor: 0, ...ROUND }}
+        pathOptions={{ color: 'rgba(15, 23, 42, 0.22)', weight: w.shadow, opacity: 1, ...ROUND }}
       />
       <Polyline
         positions={positions}
         interactive={false}
         smoothFactor={0}
         noClip={true}
-        pathOptions={{ color: casing, weight: w.casing, opacity: 0.98, smoothFactor: 0, ...ROUND }}
+        pathOptions={{ color: casing, weight: w.casing, opacity: 0.98, ...ROUND }}
       />
       <Polyline
         positions={positions}
         interactive={false}
         smoothFactor={0}
         noClip={true}
-        pathOptions={{ color: fill, weight: w.fill, opacity: 0.98, smoothFactor: 0, ...ROUND }}
+        pathOptions={{ color: fill, weight: w.fill, opacity: 0.98, ...ROUND }}
       />
     </>
   )

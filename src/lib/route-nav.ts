@@ -120,6 +120,18 @@ export function shortestHeadingTurnDegrees(fromDeg: number, toDeg: number): numb
   return ((toDeg - fromDeg + 540) % 360) - 180
 }
 
+/** Prefer a trusted synthetic route course (Demo); otherwise use the matched route bearing. */
+export function resolveArrowHeading(
+  routeBearingDeg: number | null,
+  syntheticRouteBearingDeg: number | null,
+): number | null {
+  for (const heading of [syntheticRouteBearingDeg, routeBearingDeg]) {
+    if (heading == null || !Number.isFinite(heading) || heading < 0 || heading > 360) continue
+    return ((heading % 360) + 360) % 360
+  }
+  return null
+}
+
 /**
  * Exam map arrow only: follow the road bearing without GPS compass flips.
  * Tiny jitter is ignored; normal road turns slew. Instant snap is optional —
@@ -135,12 +147,22 @@ export function stabilizeRoadArrowHeading(
   if (!Number.isFinite(targetDeg)) return previousDeg
   if (!Number.isFinite(previousDeg)) return ((targetDeg % 360) + 360) % 360
   const turn = shortestHeadingTurnDegrees(previousDeg, targetDeg)
-  if (Math.abs(turn) < deadbandDeg) return previousDeg
+  const absTurn = Math.abs(turn)
+  if (absTurn < deadbandDeg) return previousDeg
   // Sharp geometry recovery: optional instant snap (off for Maps-style corridors).
-  if (allowInstantSnap && Math.abs(turn) >= 60) {
+  if (allowInstantSnap && absTurn >= 60) {
     return ((targetDeg % 360) + 360) % 360
   }
-  const step = Math.sign(turn) * Math.min(Math.abs(turn), Math.max(1, maxStepDeg))
+  // Maps-style corridors: raise the per-tick cap when lagging a real corner.
+  // Keep the boost modest — R2 PIN3 zig-zag is smoothed in forwardBearingAlongRoute
+  // (cluster blend); a 32°/tick world jump still reads as a spin on heading-up.
+  let stepCap = Math.max(1, maxStepDeg)
+  if (!allowInstantSnap) {
+    if (absTurn > 70) stepCap = Math.max(stepCap, 18)
+    else if (absTurn > 45) stepCap = Math.max(stepCap, 14)
+    else if (absTurn > 25) stepCap = Math.max(stepCap, 12)
+  }
+  const step = Math.sign(turn) * Math.min(absTurn, stepCap)
   return ((previousDeg + step) % 360 + 360) % 360
 }
 

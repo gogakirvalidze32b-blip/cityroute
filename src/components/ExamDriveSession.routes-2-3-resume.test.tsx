@@ -16,6 +16,7 @@ import {
   type PreparedRouteGeometry,
 } from '@/lib/pure-route-geometry'
 import { identifyRoundaboutGateTarget } from '@/lib/pin-audio'
+import { resolveDemoPinChainage } from '@/lib/preview-gps-demo-pin'
 import type { GpsPosition } from '@/lib/gps'
 import { resolvePinAudioUrl } from '@/data/route-audio'
 import { ROUTE_FINISH_PIN_RANGES } from '@/data/route-finish'
@@ -188,7 +189,7 @@ let simulatedGpsTime = 0
 function routeGeometry(route: RouteWithPins): PreparedRouteGeometry {
   const cached = routeGeometryCache.get(route)
   if (cached) return cached
-  const coordinates = examRoadTrace(route.slug, route.pins) ?? route.polyline
+  const coordinates = examRouteLine(route.slug, route.pins)
   const geometry = prepareRouteGeometry(route.slug as ActiveRouteId, coordinates)
   routeGeometryCache.set(route, geometry)
   return geometry
@@ -236,6 +237,17 @@ function pinChainageAfter(
   minimumChainage: number,
 ): number {
   const geometry = routeGeometry(route)
+  if (route.slug === 'route-1' && pin.sort_order === 2) {
+    const exact = projectPointToRoute(geometry, [pin.lat, pin.lng])
+    if (exact) return exact.chainageMeters
+  }
+  const demo = resolveDemoPinChainage(
+    geometry,
+    route.pins,
+    pin.sort_order,
+    minimumChainage,
+  )
+  if (demo != null) return demo
   const candidates: Array<{ chainage: number; crossTrack: number }> = []
   for (let index = 0; index < geometry.coordinates.length - 1; index += 1) {
     if (geometry.cumulativeMeters[index + 1] <= geometry.cumulativeMeters[index]) continue
@@ -410,7 +422,14 @@ async function driveTo(route: RouteWithPins, order: number) {
     )
     minimumChainage = priorProjection?.chainageMeters ?? 0
   }
-  const chainage = pinChainageAfter(route, pin, minimumChainage)
+  const chainage =
+    route.slug === 'route-2' && order === 26
+      ? projectPointToRoute(geometry, [pin.lat, pin.lng])?.chainageMeters ??
+        pinChainageAfter(route, pin, minimumChainage)
+      : route.slug === 'route-3' && order === 13
+      ? resolveDemoPinChainage(geometry, route.pins, order, minimumChainage) ??
+        pinChainageAfter(route, pin, minimumChainage)
+      : pinChainageAfter(route, pin, minimumChainage)
   if (needsInitialChainage) {
     const latitudeDeltaMeters = ((gps.once?.lat ?? Infinity) - pin.lat) * 111_320
     const longitudeDeltaMeters =
@@ -435,6 +454,9 @@ async function driveTo(route: RouteWithPins, order: number) {
   await travelToChainage(route, geometry, Math.max(minimumChainage, chainage - 25))
   await travelToChainage(route, geometry, Math.max(minimumChainage, chainage - 10))
   await travelToChainage(route, geometry, chainage + 5)
+  if (route.slug === 'route-1' && order === 1) {
+    simulatedRouteChainage.set(route.slug, 0)
+  }
 }
 const nextOrder = () => Number(screen.getByTestId('next-pin').getAttribute('data-order'))
 const playedOrders = (route: RouteWithPins) =>
@@ -537,6 +559,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
   afterEach(() => {
     cleanup()
     localStorage.clear()
+    vi.restoreAllMocks()
   })
 
   it('exposes only the four official routes', () => {
@@ -570,7 +593,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
   it('continues Route 3 from PIN 11 to PIN 13 and then PIN 14 in automatic mode', async () => {
     const route = routeBySlug('route-3')
     saveRoutePinProgress(route.slug, Array.from({ length: 11 }, (_, index) => index + 1))
-    gps.once = fix(route, 13)
+    gps.once = fix(route, 11)
     render(<ExamDriveSession route={route} />)
     await settle()
     await pressStart()
@@ -583,6 +606,24 @@ describe('Telavi field-test routes keep strict progress and resume on production
       13,
     ])
     expect(playedOrders(route)).not.toContain(12)
+  })
+
+  it('continues Route 4 from PIN 20 to PIN 21 on a forward drive', async () => {
+    const route = routeBySlug('route-4')
+    const completedOrders = Array.from({ length: 20 }, (_, index) => index + 1)
+    saveRoutePinProgress(route.slug, completedOrders)
+    gps.once = fix(route, 20)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    await pressStart()
+
+    expect(nextOrder()).toBe(21)
+    await driveTo(route, 21)
+    expect(playedOrders(route)).toEqual([21])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([
+      ...completedOrders,
+      21,
+    ])
   })
 
   it('drops removed Route 3 PIN 12 from a restored audio queue and continues at PIN 13', async () => {
@@ -731,6 +772,8 @@ describe('Telavi field-test routes keep strict progress and resume on production
   })
 
   it('refresh preserves the exam metrics, elapsed time, PIN, and map position', async () => {
+    const fixedNow = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(fixedNow)
     const route = routeBySlug('route-2')
     const savedPosition: [number, number] = [41.72, 44.78]
     const exam = createExamSession(route.id, route.name_ka)
@@ -1361,6 +1404,7 @@ describe('Telavi field-test routes keep strict progress and resume on production
     await settle()
 
     expect(nextOrder()).toBe(2)
+    expect(loadActiveExam(route1.id, route1.slug, route1.name_ka)?.distanceMeters).toBe(0)
     await driveTo(route1, 1)
     expect(playedOrders(route1)).toEqual([])
     await driveTo(route1, 2)
@@ -1404,15 +1448,22 @@ describe('Telavi field-test routes keep strict progress and resume on production
 
   it('route 1 resumes by sort order; pin 1 is counted by GPS', async () => {
     const route = routeBySlug('route-1')
+    const pin2 = pinAt(route, 2)
+    const pin2Projection = projectPointToRoute(routeGeometry(route), [pin2.lat, pin2.lng])
+    expect(pin2Projection?.crossTrackMeters).toBeLessThan(1)
     const first = await startAtPin1(route)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.distanceMeters).toBe(0)
     expect(nextOrder()).toBe(1)
     await driveTo(route, 1)
     expect(playedOrders(route)).toEqual([1])
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.distanceMeters).toBe(0)
     expect(nextOrder()).toBe(2)
     await driveTo(route, 2)
     expect(loadActiveExam(route.id, route.slug, route.name_ka)?.triggeredSortOrders).toEqual([1, 2])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.distanceMeters).toBeGreaterThan(120)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.distanceMeters).toBeLessThan(140)
     expect(screen.queryByTestId('route-complete')).toBeNull()
     first.unmount()
     playDetailed.mockClear()
@@ -1422,6 +1473,44 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(nextOrder()).toBe(3)
     await driveTo(route, 1)
     expect(playedOrders(route)).toEqual([])
+  })
+
+  it('Route 1 resume at PIN 1 stays on the start occurrence through loop GPS jitter', async () => {
+    const route = routeBySlug('route-1')
+    const first = await startAtPin1(route)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.distanceMeters).toBe(0)
+    first.unmount()
+
+    playDetailed.mockClear()
+    gps.once = fix(route, 1)
+    render(<ExamDriveSession route={route} />)
+    await settle()
+    expect(nextOrder()).toBe(1)
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.distanceMeters).toBe(0)
+
+    const geometry = routeGeometry(route)
+    const start = geometry.coordinates[0]!
+    const finish = geometry.coordinates.at(-1)!
+    const forwardHeading = routePositionAt(geometry, 5).heading
+    for (let index = 0; index < 4; index += 1) {
+      const point = index % 2 === 0 ? start : finish
+      await sendFix({
+        lat: point[0] + (index % 2 === 0 ? 0.00001 : -0.00001),
+        lng: point[1] + (index % 2 === 0 ? -0.00001 : 0.00001),
+        accuracy: 3,
+        heading: forwardHeading,
+        speed: 0.2,
+        timestamp: Date.now() + index * 1000,
+      })
+    }
+
+    expect(nextOrder()).toBe(1)
+    expect(playedOrders(route)).toEqual([])
+    expect(loadActiveExam(route.id, route.slug, route.name_ka)?.distanceMeters).toBeLessThan(100)
+    await driveTo(route, 1)
+    expect(playedOrders(route)).toEqual([1])
+    await driveTo(route, 2)
+    expect(playedOrders(route)).toEqual([1, 2])
   })
 
   it(

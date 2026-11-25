@@ -54,11 +54,53 @@ export function resolveDemoPinChainage(
   if (!target) return null
 
   const minChainage = Math.max(0, afterChainageMeters)
+  // These PINs can be closer to an earlier route segment than their true occurrence.
+  if (
+    geometry.routeId === 'route-3' &&
+    [6, 7, 14, 15, 16, 17].includes(sortOrder)
+  ) {
+    const pinProjection = projectPointToRoute(geometry, [target.lat, target.lng])
+    if (
+      pinProjection &&
+      pinProjection.chainageMeters >= minChainage - 5 &&
+      pinProjection.crossTrackMeters <= DEMO_PIN_CROSS_TRACK_M
+    ) {
+      return pinProjection.chainageMeters
+    }
+  }
+
   const ordered = projectOrderedPointsToRoute(
     geometry,
     sortedPinPoints(pins, sortOrder),
     DEMO_PIN_CROSS_TRACK_M,
+    geometry.routeId === 'route-3' && [13, 14, 15].includes(sortOrder),
   )
+  const isContextualFinishPin =
+    (geometry.routeId === 'route-2' && sortOrder === 26) ||
+    (geometry.routeId === 'route-4' && sortOrder === 29)
+  if (
+    ordered &&
+    (geometry.routeId === 'route-2' || geometry.routeId === 'route-4') &&
+    sortOrder !== 3 &&
+    !isContextualFinishPin
+  ) {
+    const nearest = projectPointToRouteNearChainage(
+      geometry,
+      [target.lat, target.lng],
+      ordered.chainageMeters,
+      40,
+    )
+    if (
+      nearest &&
+      nearest.chainageMeters >= minChainage - 5 &&
+      nearest.chainageMeters > ordered.chainageMeters + 15 &&
+      nearest.chainageMeters - ordered.chainageMeters <= 40 &&
+      nearest.crossTrackMeters <= DEMO_PIN_CROSS_TRACK_M &&
+      ordered.crossTrackMeters - nearest.crossTrackMeters >= 10
+    ) {
+      return nearest.chainageMeters
+    }
+  }
   if (ordered && ordered.chainageMeters >= minChainage - 5) {
     return ordered.chainageMeters
   }

@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { ExamDriveSession } from './ExamDriveSession'
-import { SPEED_ZONES } from '@/data/speed-limits'
+import { SPEED_KM_BANDS } from '@/data/speed-km-bands'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { examRoadTrace } from '@/lib/pin-route-line'
-import { roadPointAt } from '@/lib/speed-limit'
+import { positionAtChainageMeters, prepareRouteGeometry } from '@/lib/pure-route-geometry'
 import type { GpsPosition } from '@/lib/gps'
 import type { PinRow } from '@/types/database'
 
@@ -88,9 +88,15 @@ vi.mock('@/components/GpsAccuracyBadge', () => ({ GpsAccuracyBadge: () => null }
 vi.mock('@/components/RoutePreviewMap', () => ({ RoutePreviewMap: () => <div data-testid="preview" /> }))
 
 const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
-const speedZone = SPEED_ZONES['route-1']![0]!
 const road = examRoadTrace(route.slug, route.pins)!
-const zonePoint = roadPointAt(road, (speedZone.from + speedZone.to) / 2)
+const routeGeometry = prepareRouteGeometry('route-1', road)
+const testChainageMeters = 35
+const zonePoint = positionAtChainageMeters(routeGeometry, testChainageMeters)!
+const testSpeedBand = SPEED_KM_BANDS[route.slug]!.find(
+  (band) =>
+    testChainageMeters / 1000 >= band.fromKm &&
+    testChainageMeters / 1000 < band.toKm,
+)!
 
 async function settle(ms = 20) {
   if (vi.isFakeTimers()) {
@@ -136,9 +142,8 @@ async function sendZoneFix() {
 }
 
 async function driveToZone() {
-  const targetU = (speedZone.from + speedZone.to) / 2
-  for (let u = 8; u < targetU; u += 8) {
-    const point = roadPointAt(road, u)
+  for (let meters = 8; meters < testChainageMeters; meters += 8) {
+    const point = positionAtChainageMeters(routeGeometry, meters)!
     expect(gps.onFix).not.toBeNull()
     await act(async () => {
       gps.onFix!({
@@ -172,7 +177,7 @@ describe('Speed Limit stays on without fresh GPS', () => {
   it('keeps the posted limit on GPS error (km-based, always on)', async () => {
     await startSession()
     await driveToZone()
-    expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
+    expect(screen.getByTestId('speed-limit').textContent).toBe(String(testSpeedBand.limitKmh))
 
     await act(async () => {
       gps.onError?.({
@@ -183,23 +188,25 @@ describe('Speed Limit stays on without fresh GPS', () => {
         TIMEOUT: 3,
       } as GeolocationPositionError)
     })
-    expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
+    expect(screen.getByTestId('speed-limit').textContent).toBe(String(testSpeedBand.limitKmh))
   })
 
   it('keeps the posted limit after a long gap without GPS fixes', async () => {
     vi.useFakeTimers()
     await startSession()
     await driveToZone()
-    expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
+    expect(screen.getByTestId('speed-limit').textContent).toBe(String(testSpeedBand.limitKmh))
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(20_000)
     })
-    expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
+    expect(screen.getByTestId('speed-limit').textContent).toBe(String(testSpeedBand.limitKmh))
   })
 
   it('shows the first-zone limit from km 0 before any progress fixes', async () => {
     await startSession()
-    expect(screen.getByTestId('speed-limit').textContent).toBe(String(speedZone.limitKmh))
+    expect(screen.getByTestId('speed-limit').textContent).toBe(
+      String(SPEED_KM_BANDS[route.slug]![0]!.limitKmh),
+    )
   })
 })

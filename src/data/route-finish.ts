@@ -68,7 +68,10 @@ const MAX_FINISH_CROSS_TRACK_METERS = 20
 type LatLngLike = { readonly lat: number; readonly lng: number } | readonly [number, number]
 
 function asLatLng(point: LatLngLike): [number, number] {
-  return Array.isArray(point) ? [point[0], point[1]] : [point.lat, point.lng]
+  if (typeof point === 'object' && point !== null && 'lat' in point && 'lng' in point) {
+    return [point.lat, point.lng]
+  }
+  return [point[0], point[1]]
 }
 
 function distanceMeters(a: LatLngLike, b: LatLngLike): number {

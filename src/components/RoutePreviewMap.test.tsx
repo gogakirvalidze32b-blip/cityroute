@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import L from 'leaflet'
 import { RoutePreviewMap } from './RoutePreviewMap'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
-import { examMapRouteLine } from '@/lib/pin-route-line'
+import { examMapRouteLines } from '@/lib/pin-route-line'
 
 const { fitBounds, mapContainer } = vi.hoisted(() => ({
   fitBounds: vi.fn(),
@@ -94,16 +94,21 @@ describe('RoutePreviewMap for routes 1–4', () => {
     expect(ordinaryMarkers[pins.length].dataset.fill).toBe('#16a34a')
     expect(ordinaryMarkers[pins.length + 1].dataset.fill).toBe('#dc2626')
 
-    const line = screen.getByTestId('route-line')
-    expect(line.dataset.variant).toBe('pins')
-    const linePoints = JSON.parse(line.dataset.points!) as [number, number][]
-    expect(linePoints).toEqual(examMapRouteLine(route.slug, pins))
-    expect(linePoints.length).toBeGreaterThan(pins.length)
+    const renderedLines = screen.getAllByTestId('route-line')
+    const renderedLinePoints = renderedLines.map((line) => {
+      expect(line.dataset.variant).toBe('pins')
+      return JSON.parse(line.dataset.points!) as [number, number][]
+    })
+    expect(renderedLinePoints).toEqual(examMapRouteLines(route.slug, pins))
+    expect(renderedLinePoints.flat().length).toBeGreaterThan(pins.length)
     const [bounds, fitOptions] = fitBounds.mock.calls.at(-1)!
     expect(fitOptions).toEqual(
       expect.objectContaining({ padding: [36, 36], maxZoom: 16, animate: false }),
     )
-    for (const point of [...linePoints, ...pins.map((pin) => [pin.lat, pin.lng] as [number, number])]) {
+    for (const point of [
+      ...renderedLinePoints.flat(),
+      ...pins.map((pin) => [pin.lat, pin.lng] as [number, number]),
+    ]) {
       expect(bounds.contains(L.latLng(point))).toBe(true)
     }
   })

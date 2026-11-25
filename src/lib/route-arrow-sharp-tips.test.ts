@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
-import { examRouteLine } from '@/lib/pin-route-line'
+import { examRouteLine, type PinRoutePoint } from '@/lib/pin-route-line'
 import { resolveDemoPinChainage } from '@/lib/preview-gps-demo-pin'
 import {
   forwardBearingAlongRoute,
@@ -19,7 +19,7 @@ const SHARP_TIP_PINS = [
 
 function pinChainage(
   geometry: PreparedRouteGeometry,
-  pins: { sort_order: number }[],
+  pins: readonly PinRoutePoint[],
   pinOrder: number,
 ): number {
   const prior = pins
@@ -79,13 +79,50 @@ describe('forwardBearingAlongRoute at finish-corridor sharp tips', () => {
         const next = stabilizeRoadArrowHeading(heading, target, 10, 5, false)
         const step = Math.abs(shortestHeadingTurnDegrees(heading, next))
         maxSlew = Math.max(maxSlew, step)
-        // Maps-style: never instant-flip opposite.
-        expect(step).toBeLessThanOrEqual(10.01)
+        // Maps-style: adaptive slew may reach ~18° on large lag — never a 180° flip.
+        expect(step).toBeLessThanOrEqual(18.01)
         heading = next
       }
-      expect(maxSlew).toBeLessThanOrEqual(10.01)
+      expect(maxSlew).toBeLessThanOrEqual(18.01)
     },
   )
+
+  it('route-2 PIN 3 zig-zag: heading target stays monotonic (no reverse cliff)', () => {
+    const { geometry } = load('route-2')
+    // Sharp vertices at ~148 m and ~164 m (PIN 3 sits just before the corridor).
+    let prev: number | null = null
+    let maxStep = 0
+    let signedSum = 0
+    for (let ch = 100; ch <= 200; ch += 1) {
+      const bearing = forwardBearingAlongRoute(geometry, ch, 20)
+      expect(bearing).not.toBeNull()
+      if (prev != null && bearing != null) {
+        const turn = shortestHeadingTurnDegrees(prev, bearing)
+        maxStep = Math.max(maxStep, Math.abs(turn))
+        signedSum += turn
+      }
+      if (bearing != null) prev = bearing
+    }
+    // Cluster blend along road turn (−180°): no ~88° cliff / reverse handoff.
+    // The route-specific PIN 3 crossover is intentionally held on the entry leg,
+    // then turns onto the exit leg over the short zig-zag cluster.
+    expect(maxStep).toBeLessThanOrEqual(16)
+    expect(signedSum).toBeLessThan(-150)
+    expect(signedSum).toBeGreaterThan(-210)
+  })
+
+  it('route-2 PIN 3 keeps the entry carriageway bearing until the crossover', () => {
+    const { pins, geometry } = load('route-2')
+    const pin3 = resolveDemoPinChainage(geometry, pins, 3, 0)!
+    const before = forwardBearingAlongRoute(geometry, pin3 - 20, 20)!
+    const atCrossover = forwardBearingAlongRoute(geometry, pin3 + 16, 20)!
+    const after = forwardBearingAlongRoute(geometry, pin3 + 50, 20)!
+
+    // The entry leg is stable through PIN 3; turning starts only after the
+    // route reaches the second carriageway crossover.
+    expect(Math.abs(shortestHeadingTurnDegrees(before, atCrossover))).toBeLessThan(45)
+    expect(Math.abs(shortestHeadingTurnDegrees(atCrossover, after))).toBeGreaterThan(25)
+  })
 
   it('straight sections still anticipate gently (look-ahead ≠ pure segment only)', () => {
     const { geometry } = load('route-1')

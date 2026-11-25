@@ -8,7 +8,9 @@
  * to the vehicle: rotate(-heading). Check: heading 90 (East): the east side of the map is on the
  * right; turning the map 90° counter-clockwise carries it to the top.
  *
- * The vehicle arrow is NOT rotated — it always points up (screen forward).
+ * Visually the vehicle arrow points up (screen forward). When the glyph lives
+ * inside the rotated world, apply +heading on the arrow so it cancels
+ * rotate(-heading) and stays screen-up.
  */
 export function normalizeHeading(deg: number): number {
   if (!Number.isFinite(deg)) return 0

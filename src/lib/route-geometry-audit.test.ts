@@ -277,7 +277,7 @@ describe('isolated route geometry comparison audit', () => {
         expect(toMeters).toBeLessThanOrEqual(cumulativeDistances(road).at(-1)! + 0.01)
       }
     }
-    expect(zoneCount).toBe(25)
+    expect(zoneCount).toBe(29) // 5 + 8 + 7 + 9 explicit source spans by route.
   })
 
   it('identifies repeated-place ambiguity rather than choosing an arbitrary pass', () => {

@@ -129,7 +129,7 @@ describe('route-2 arrow finish corridor (PIN 25→26)', () => {
       if (stepDeg > maxStep) maxStep = stepDeg
     }
 
-    expect(maxStep).toBeLessThanOrEqual(12.5)
+    expect(maxStep).toBeLessThanOrEqual(18.01)
     // After crawling through the bend, heading must have left the NE approach (~26°).
     expect(Math.abs(((heading - 26 + 540) % 360) - 180)).toBeGreaterThan(40)
     expect(positionAtChainageMeters(geometry, displayCh)).not.toBeNull()

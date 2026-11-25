@@ -343,6 +343,14 @@ export function chooseStartPin(
     moving && roadTrace && roadTrace.length >= 2
       ? routeProgressAtFix(car, roadTrace, fix.headingDeg as number)
       : null
+  const atRouteStart =
+    roadTrace &&
+    roadTrace.length >= 2 &&
+    distanceToPinMeters(car, roadTrace[0]) <= 25 &&
+    (traceProgress === null || traceProgress <= ON_ROUTE_M)
+  if (atRouteStart) {
+    return { kind: 'start', sortOrder: ordered[0].sort_order, basis: 'agency' }
+  }
   const cueDistances =
     traceProgress !== null && roadTrace ? cachedCueDistances(pins, ordered, roadTrace) : null
   const cueOutOfPass = (index: number) => {

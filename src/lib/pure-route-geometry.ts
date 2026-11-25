@@ -208,36 +208,158 @@ function smoothstep01(t: number): number {
   return x * x * (3 - 2 * x)
 }
 
+type SharpBearingVertex = {
+  readonly vertexChainageMeters: number
+  readonly entryBearingDegrees: number
+  readonly exitBearingDegrees: number
+  readonly signedTurnDegrees: number
+}
+
+type SharpBearingCluster = {
+  readonly startChainageMeters: number
+  readonly endChainageMeters: number
+  readonly entryBearingDegrees: number
+  readonly exitBearingDegrees: number
+  /** Sum of vertex turns — keeps zig-zag lerp on the road side (~−180°, not +180°). */
+  readonly signedTurnDegrees: number
+}
+
 /**
- * Next polyline vertex where consecutive segment bearings turn sharply
- * (finish-corridor U-tips). Used only for arrow heading rounding — not PIN logic.
+ * Collect sharp polyline vertices near `chainageMeters` (finish-corridor U-tips /
+ * zig-zags). Used only for arrow heading rounding — not PIN logic.
  */
-function findNextSharpBearingVertex(
+function collectSharpBearingVertices(
   route: PreparedRouteGeometry,
   chainageMeters: number,
   searchAheadMeters: number,
   minTurnDeg: number,
-): {
-  readonly vertexChainageMeters: number
-  readonly entryBearingDegrees: number
-  readonly exitBearingDegrees: number
-} | null {
+  lookBehindMeters = 20,
+): SharpBearingVertex[] {
   const searchEnd = Math.min(route.totalLengthMeters, chainageMeters + searchAheadMeters)
+  const searchStart = Math.max(0, chainageMeters - lookBehindMeters)
+  const out: SharpBearingVertex[] = []
   for (let index = 0; index < route.coordinates.length - 2; index++) {
     const vertexChainage = route.cumulativeMeters[index + 1]
-    // Include a short window behind so mid-corner rounding still applies.
-    if (vertexChainage < chainageMeters - 20) continue
+    if (vertexChainage < searchStart) continue
     if (vertexChainage > searchEnd) break
     const entry = bearingDegrees(route.coordinates[index], route.coordinates[index + 1])
     const exit = bearingDegrees(route.coordinates[index + 1], route.coordinates[index + 2])
-    if (Math.abs(shortestTurnDegrees(entry, exit)) < minTurnDeg) continue
-    return {
+    const signedTurnDegrees = shortestTurnDegrees(entry, exit)
+    if (Math.abs(signedTurnDegrees) < minTurnDeg) continue
+    out.push({
       vertexChainageMeters: vertexChainage,
       entryBearingDegrees: entry,
       exitBearingDegrees: exit,
+      signedTurnDegrees,
+    })
+  }
+  return out
+}
+
+/**
+ * Merge consecutive sharp vertices within `clusterGapMeters` into one corridor
+ * (R2 PIN3: two ~90° turns ~16 m apart). Blend first.entry → last.exit along the
+ * summed road turn so the heading target stays monotonic — per-vertex handoff
+ * used to cliff ~88° then reverse and spin the heading-up map.
+ */
+function clusterSharpBearingVertices(
+  vertices: readonly SharpBearingVertex[],
+  clusterGapMeters: number,
+): SharpBearingCluster[] {
+  if (vertices.length === 0) return []
+  const clusters: SharpBearingCluster[] = []
+  let start = vertices[0]
+  let end = vertices[0]
+  let signedTurnDegrees = vertices[0].signedTurnDegrees
+  for (let i = 1; i < vertices.length; i++) {
+    const next = vertices[i]
+    if (next.vertexChainageMeters - end.vertexChainageMeters <= clusterGapMeters) {
+      end = next
+      signedTurnDegrees += next.signedTurnDegrees
+      continue
+    }
+    clusters.push({
+      startChainageMeters: start.vertexChainageMeters,
+      endChainageMeters: end.vertexChainageMeters,
+      entryBearingDegrees: start.entryBearingDegrees,
+      exitBearingDegrees: end.exitBearingDegrees,
+      signedTurnDegrees,
+    })
+    start = next
+    end = next
+    signedTurnDegrees = next.signedTurnDegrees
+  }
+  clusters.push({
+    startChainageMeters: start.vertexChainageMeters,
+    endChainageMeters: end.vertexChainageMeters,
+    entryBearingDegrees: start.entryBearingDegrees,
+    exitBearingDegrees: end.exitBearingDegrees,
+    signedTurnDegrees,
+  })
+  return clusters
+}
+
+/** Pick the ±360° unwrap of shortest(from→to) closest to the road's signed turn. */
+function turnAlongPreferred(
+  fromDeg: number,
+  toDeg: number,
+  preferredSignedTurnDeg: number,
+): number {
+  const shortest = shortestTurnDegrees(fromDeg, toDeg)
+  const candidates = [shortest, shortest + 360, shortest - 360]
+  let best = shortest
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const candidate of candidates) {
+    const dist = Math.abs(candidate - preferredSignedTurnDeg)
+    if (dist < bestDist) {
+      best = candidate
+      bestDist = dist
     }
   }
-  return null
+  return best
+}
+
+function circularLerpAlongPreferredTurn(
+  fromDeg: number,
+  toDeg: number,
+  t: number,
+  preferredSignedTurnDeg: number,
+): number {
+  const clamped = Math.max(0, Math.min(1, t))
+  const turn = turnAlongPreferred(fromDeg, toDeg, preferredSignedTurnDeg)
+  return ((fromDeg + turn * clamped) % 360 + 360) % 360
+}
+
+/** Prefer the cluster that overlaps the blend window; else the nearest ahead. */
+function pickSharpBearingCluster(
+  clusters: readonly SharpBearingCluster[],
+  chainageMeters: number,
+  blendHalfWindowMeters: number,
+): SharpBearingCluster | null {
+  if (clusters.length === 0) return null
+  let best: SharpBearingCluster | null = null
+  let bestScore = Number.POSITIVE_INFINITY
+  for (const cluster of clusters) {
+    const blendStart = cluster.startChainageMeters - blendHalfWindowMeters
+    const blendEnd = cluster.endChainageMeters + blendHalfWindowMeters
+    if (chainageMeters >= blendStart && chainageMeters <= blendEnd) {
+      // Inside blend: prefer the soonest-ending active corridor.
+      const score = cluster.endChainageMeters - chainageMeters
+      if (score < bestScore) {
+        best = cluster
+        bestScore = score
+      }
+      continue
+    }
+    if (chainageMeters < blendStart) {
+      const score = blendStart - chainageMeters + 1000
+      if (score < bestScore) {
+        best = cluster
+        bestScore = score
+      }
+    }
+  }
+  return best
 }
 
 /**
@@ -248,6 +370,7 @@ function findNextSharpBearingVertex(
  *
  * Instead:
  * 1. Round heading through sharp polyline vertices with circular lerp (0°/360° safe).
+ *    Back-to-back zig-zags (R2 PIN3) are clustered so the target stays monotonic.
  * 2. Otherwise use a short path-following circular mean that stops before a hairpin tip.
  */
 export function forwardBearingAlongRoute(
@@ -263,24 +386,50 @@ export function forwardBearingAlongRoute(
   const localBearing = bearingAtChainageMeters(route, chainageMeters)
   if (localBearing == null) return null
 
-  // Round the displayed heading through V-shaped U-tips so the arrow turns
-  // smoothly instead of snapping with the raw segment tangent.
+  // Round the displayed heading through V-shaped U-tips / zig-zag clusters so
+  // the arrow turns smoothly instead of snapping with the raw segment tangent.
   const SHARP_TURN_DEG = 70
   const BLEND_HALF_WINDOW_M = 18
-  const sharp = findNextSharpBearingVertex(
+  const CLUSTER_GAP_M = 45
+  // Keep the whole zig-zag cluster in view for the full blend window so the
+  // first vertex cannot age out mid-corridor (that caused a 40°+ handoff jump).
+  const lookBehindMeters = CLUSTER_GAP_M + BLEND_HALF_WINDOW_M + 5
+  const vertices = collectSharpBearingVertices(
     route,
     chainageMeters,
-    Math.max(lookAheadMeters * 2, BLEND_HALF_WINDOW_M + 5),
+    Math.max(lookAheadMeters * 2, BLEND_HALF_WINDOW_M + 5, CLUSTER_GAP_M),
     SHARP_TURN_DEG,
+    lookBehindMeters,
   )
-  if (sharp) {
-    const distToVertex = sharp.vertexChainageMeters - chainageMeters
-    if (Math.abs(distToVertex) <= BLEND_HALF_WINDOW_M) {
-      const t = smoothstep01((BLEND_HALF_WINDOW_M - distToVertex) / (2 * BLEND_HALF_WINDOW_M))
-      return circularLerpDegrees(
-        sharp.entryBearingDegrees,
-        sharp.exitBearingDegrees,
+  const cluster = pickSharpBearingCluster(
+    clusterSharpBearingVertices(vertices, CLUSTER_GAP_M),
+    chainageMeters,
+    BLEND_HALF_WINDOW_M,
+  )
+  if (cluster) {
+    const blendStart = cluster.startChainageMeters - BLEND_HALF_WINDOW_M
+    const blendEnd = cluster.endChainageMeters + BLEND_HALF_WINDOW_M
+    if (chainageMeters >= blendStart && chainageMeters <= blendEnd) {
+      // Route 2 PIN 3 crosses onto the second carriageway before following the
+      // exit leg. Holding the blend at the first vertex's entry bearing is the
+      // arrow's old "turn too early" behavior; delay this one corridor until the
+      // cluster has reached its exit vertex.
+      const routeSpecificBlendStart =
+        route.routeId === 'route-2'
+          ? cluster.endChainageMeters
+          : blendStart
+      const span = Math.max(1e-6, blendEnd - blendStart)
+      const t = chainageMeters < routeSpecificBlendStart
+        ? 0
+        : smoothstep01(
+            (chainageMeters - routeSpecificBlendStart) /
+            Math.max(1e-6, blendEnd - routeSpecificBlendStart),
+          )
+      return circularLerpAlongPreferredTurn(
+        cluster.entryBearingDegrees,
+        cluster.exitBearingDegrees,
         t,
+        cluster.signedTurnDegrees,
       )
     }
   }
@@ -447,11 +596,13 @@ export function projectOrderedPointsToRoute(
   route: PreparedRouteGeometry,
   positions: readonly LatLng[],
   maxCrossTrackMeters = 20,
+  preferLatestOccurrence = false,
 ): RouteProjection | null {
   let minimumChainageMeters = 0
   let lastProjection: RouteProjection | null = null
 
-  for (const position of positions) {
+  for (const [positionIndex, position] of positions.entries()) {
+    const isLastPosition = positionIndex === positions.length - 1
     const projection = getProjections(route, position)
       .filter(
         (candidate) =>
@@ -459,13 +610,26 @@ export function projectOrderedPointsToRoute(
           candidate.crossTrackMeters <= maxCrossTrackMeters,
       )
       .reduce<RouteProjection | null>(
-        (earliest, candidate) =>
-          earliest === null ||
-          candidate.chainageMeters < earliest.chainageMeters ||
-          (candidate.chainageMeters === earliest.chainageMeters &&
-            candidate.crossTrackMeters < earliest.crossTrackMeters)
+        (selected, candidate) => {
+          if (selected === null) return candidate
+          if (preferLatestOccurrence && isLastPosition) {
+            const occurrenceGapMeters = candidate.chainageMeters - selected.chainageMeters
+            if (occurrenceGapMeters >= 100) return candidate
+            if (candidate.crossTrackMeters < selected.crossTrackMeters) return candidate
+            if (
+              candidate.crossTrackMeters === selected.crossTrackMeters &&
+              candidate.chainageMeters > selected.chainageMeters
+            ) {
+              return candidate
+            }
+            return selected
+          }
+          return candidate.chainageMeters < selected.chainageMeters ||
+            (candidate.chainageMeters === selected.chainageMeters &&
+              candidate.crossTrackMeters < selected.crossTrackMeters)
             ? candidate
-            : earliest,
+            : selected
+        },
         null,
       )
 
@@ -653,12 +817,21 @@ export function matchGpsPosition(
   }
 
   const preferredForwardChainageMeters = options.expectedForwardChainageMeters
+  const forwardPinDistanceMeters =
+    previous != null && preferredForwardChainageMeters !== undefined
+      ? preferredForwardChainageMeters - previous.chainageMeters
+      : null
+  const distantRoute3Pin =
+    route.routeId === 'route-3' &&
+    forwardPinDistanceMeters != null &&
+    forwardPinDistanceMeters > 80
   // Corridor / opposite-carriage bearing must follow the road just ahead of the
   // vehicle — NOT the bearing at a distant lit PIN past a corner. Using the PIN
   // bearing (e.g. R4 #25 after a right turn) wrongly treated the approach road
   // as the opposite carriageway, froze the demo arrow at #24, then snapped/spun.
   const litPinBearingDegrees =
-    preferredForwardChainageMeters !== undefined
+    preferredForwardChainageMeters !== undefined &&
+    !distantRoute3Pin
       ? bearingAtChainageMeters(
           route,
           previous != null
@@ -734,6 +907,16 @@ export function matchGpsPosition(
       })
       .filter(({ deltaMeters, projection }) => {
         if (Math.abs(deltaMeters) <= allowedTravelMeters) return true
+        if (
+          route.routeId === 'route-3' &&
+          preferredForwardChainageMeters !== undefined &&
+          deltaMeters > stationaryThresholdMeters &&
+          Math.abs(
+            projection.chainageMeters - preferredForwardChainageMeters,
+          ) <= 40
+        ) {
+          return true
+        }
         // Escape hatch: if we are stuck on the opposite Alazani carriageway, allow a
         // one-shot snap back onto the lit-PIN road near its expected chainage.
         return (

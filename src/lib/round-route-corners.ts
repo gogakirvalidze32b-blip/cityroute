@@ -7,6 +7,10 @@ export type RoundRouteCornersOptions = {
    * (agency start on all four Telavi routes) stay as straight polyline corners.
    */
   readonly minTurnDegrees?: number
+  /** Additional interior vertex indexes to fillet below the minimum turn threshold. */
+  readonly forceTurnIndices?: readonly number[]
+  /** Optional inset cap for clusters containing a forced turn. */
+  readonly maxForcedTurnInsetMeters?: number
   /** Max inset from the tip along each leg (meters) for ordinary sharp turns. Default 28. */
   readonly maxInsetMeters?: number
   /** Leave at least this much of each adjacent segment beyond the fillet. Default 3.5. */
@@ -173,6 +177,8 @@ export function roundSharpRouteCorners(
   const minRemain = options.minRemainingLegMeters ?? 3.5
   const interiorDefault = Math.max(3, options.curveInteriorPoints ?? 18)
   const protectStartM = options.protectStartMeters ?? 200
+  const forceTurnIndices = new Set(options.forceTurnIndices ?? [])
+  const maxForcedTurnInset = options.maxForcedTurnInsetMeters ?? Infinity
 
   // Along-route chainage at each vertex (for start-zone protection).
   const vertexChainageM: number[] = [0]
@@ -200,7 +206,7 @@ export function roundSharpRouteCorners(
     const turn = Math.abs(
       shortestTurnDegrees(bearingDegrees(prev, vertex), bearingDegrees(vertex, next)),
     )
-    if (turn < minTurn) continue
+    if (turn < minTurn && !forceTurnIndices.has(i)) continue
     // Agency start T-junction (~97° at ~76–111 m) must stay as straight street lines.
     if (vertexChainageM[i]! < protectStartM) continue
     // Need enough path length on both sides — checked when walking.
@@ -267,7 +273,13 @@ export function roundSharpRouteCorners(
     }
     maxFwd = Math.max(0, maxFwd - minRemain)
 
-    const inset = Math.min(tipCorner.inset, maxBack, maxFwd)
+    const forcedCluster = cluster.corners.some((corner) => forceTurnIndices.has(corner.index))
+    const inset = Math.min(
+      tipCorner.inset,
+      forcedCluster ? maxForcedTurnInset : Infinity,
+      maxBack,
+      maxFwd,
+    )
     if (inset < 8) continue
 
     const back = pointAlongPathBack(coordinates, cluster.firstIdx, inset)

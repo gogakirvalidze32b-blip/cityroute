@@ -202,7 +202,11 @@ export function resolveSpeedLimit(
   road: readonly LatLng[] | null | undefined,
   roadU?: number | null,
 ): number | null {
-  return resolveSpeedZone(slug, position, road, roadU)?.zone.limitKmh ?? null
+  if (!position || !road) return null
+  if (roadU != null && Number.isFinite(roadU)) {
+    return resolveSpeedLimitByRoadU(slug, roadU, road)
+  }
+  return null
 }
 
 function haversineMeters(a: LatLng, b: LatLng): number {

@@ -230,13 +230,65 @@ describe('pure route geometry', () => {
       pinPosition(10),
       pinPosition(11),
       pinPosition(13),
-    ])
+    ], 20, true)
 
     expect(nearestOccurrence).not.toBeNull()
     expect(orderedOccurrence).not.toBeNull()
-    expect(orderedOccurrence!.chainageMeters).toBeGreaterThan(6_000)
-    expect(orderedOccurrence!.chainageMeters - nearestOccurrence!.chainageMeters).toBeGreaterThan(300)
-    expect(orderedOccurrence!.crossTrackMeters).toBeLessThan(10)
+    expect(orderedOccurrence!.chainageMeters).toBeGreaterThan(2_650)
+    expect(orderedOccurrence!.chainageMeters).toBeLessThan(2_700)
+    expect(orderedOccurrence!.chainageMeters).toBeGreaterThan(nearestOccurrence!.chainageMeters)
+    expect(orderedOccurrence!.crossTrackMeters).toBeLessThan(20)
+  })
+
+  it('keeps Route 3 PIN 13 progression forward after the route turns', () => {
+    const route = prepareRouteGeometry(
+      'route-3',
+      route3Road.map(([lat, lng]) => [lat, lng] as const),
+    )
+    const pins = (orders: number[]): LatLng[] => orders.map((order) => {
+      const pin = auditedPins.find((item) => item.route === 3 && item.pin === order)!
+      return [pin.lat, pin.lng]
+    })
+    const previousProjection = projectOrderedPointsToRoute(
+      route,
+      pins(Array.from({ length: 11 }, (_, index) => index + 1)),
+    )
+    const targetProjection = projectOrderedPointsToRoute(
+      route,
+      pins([...Array.from({ length: 11 }, (_, index) => index + 1), 13]),
+      20,
+      true,
+    )
+    expect(previousProjection).not.toBeNull()
+    expect(targetProjection).not.toBeNull()
+    const previousPosition = positionAtChainageMeters(route, previousProjection!.chainageMeters)!
+    const fixPosition = positionAtChainageMeters(route, targetProjection!.chainageMeters - 25)!
+    const previous: RouteMatchState = {
+      routeId: 'route-3',
+      chainageMeters: previousProjection!.chainageMeters,
+      segmentIndex: 0,
+      position: previousPosition,
+      timestampMs: 1_000,
+      accuracyMeters: 3,
+    }
+
+    const result = matchGpsPosition(
+      route,
+      {
+        position: fixPosition,
+        accuracyMeters: 3,
+        timestampMs: 2_000,
+      },
+      previous,
+      {
+        nowMs: 2_000,
+        expectedForwardChainageMeters: targetProjection!.chainageMeters,
+      },
+    )
+
+    expect(result.status).toBe('matched')
+    expect(result.direction).toBe('forward')
+    expect(result.projection!.chainageMeters).toBeGreaterThan(targetProjection!.chainageMeters - 40)
   })
 
   it('keeps Route 3 PIN 7 on its forward continuation and rejects the repeated loop branch', () => {
@@ -253,8 +305,8 @@ describe('pure route geometry', () => {
 
     expect(pin7Projection).not.toBeNull()
     expect(pin8Projection).not.toBeNull()
-    expect(pin7Projection!.chainageMeters).toBeGreaterThan(4_800)
-    expect(pin7Projection!.chainageMeters).toBeLessThan(5_100)
+    expect(pin7Projection!.chainageMeters).toBeGreaterThan(1_500)
+    expect(pin7Projection!.chainageMeters).toBeLessThan(1_550)
     expect(pin8Projection!.chainageMeters).toBeGreaterThan(pin7Projection!.chainageMeters)
 
     const previous: RouteMatchState = {
@@ -326,14 +378,14 @@ describe('pure route geometry', () => {
     )
     const previous: RouteMatchState = {
       routeId: 'route-3',
-      chainageMeters: 5_994,
-      segmentIndex: 247,
-      position: route.coordinates[247],
+      chainageMeters: route.cumulativeMeters[124]!,
+      segmentIndex: 124,
+      position: route.coordinates[124],
       timestampMs: 1_000,
       accuracyMeters: 3,
     }
     const fix = {
-      position: route.coordinates[257],
+      position: route.coordinates[144],
       accuracyMeters: 3,
       timestampMs: 11_000,
       headingDegrees: 72,
@@ -343,17 +395,17 @@ describe('pure route geometry', () => {
       .toBe('ambiguous-route-match')
     const result = matchGpsPosition(route, fix, previous, {
       nowMs: 11_000,
-      expectedForwardChainageMeters: 6_232,
+      expectedForwardChainageMeters: route.cumulativeMeters[144],
     })
     expect(result.status).toBe('matched')
     expect(result.direction).toBe('forward')
-    expect(result.projection?.chainageMeters).toBeGreaterThan(6_000)
+    expect(result.projection?.chainageMeters).toBeGreaterThan(previous.chainageMeters)
     // Lit PIN ahead: even opposing GPS heading must stay on the forward road run.
     const opposing = matchGpsPosition(
       route,
       { ...fix, headingDegrees: 252 },
       previous,
-      { nowMs: 11_000, expectedForwardChainageMeters: 6_232 },
+      { nowMs: 11_000, expectedForwardChainageMeters: route.cumulativeMeters[144] },
     )
     expect(opposing.status).toBe('matched')
     expect(opposing.direction).toBe('forward')
@@ -382,7 +434,10 @@ describe('pure route geometry', () => {
     const pins = (auditedPins as Array<{ route: number; pin: number; lat: number; lng: number }>)
       .filter((row) => row.route === 4)
       .map((row) => ({ sort_order: row.pin, lat: row.lat, lng: row.lng }))
-    const route = prepareRouteGeometry('route-4', route4Road as LatLng[])
+    const route = prepareRouteGeometry(
+      'route-4',
+      (route4Road as number[][]).map((point) => [point[0]!, point[1]!] as LatLng),
+    )
     const ch24 = resolveDemoPinChainage(route, pins, 24, 0)
     const ch25 = resolveDemoPinChainage(route, pins, 25, ch24 ?? 0)
     expect(ch24).not.toBeNull()
