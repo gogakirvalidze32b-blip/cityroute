@@ -3528,6 +3528,7 @@ export function ExamDriveSession({
     setUserPos(null)
     currentPositionRef.current = null
     setGpsStarted(false)
+    setPreviewSelectionMode('automatic')
     setPreviewPinSelection(
       sortedPins[0] ? { routeId: route.id, sortOrder: sortedPins[0].sort_order } : null,
     )

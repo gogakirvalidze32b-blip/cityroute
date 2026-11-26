@@ -13,6 +13,9 @@ import {
 
 /** Along-route slack: a PIN this far behind the live GPS fix is already passed. */
 export const PASSED_PIN_SKIP_M = 20
+const AT_PIN_M = 20
+const AT_PIN_CHAINAGE_WINDOW_M = 40
+const START_PROJECTION_WINDOW_M = 500
 
 function distanceMeters(a: LatLng, b: LatLng): number {
   const earthRadiusMeters = 6371000
@@ -94,6 +97,9 @@ export function resolveAutoStart<T extends StartPinInput & { id: string }>(
     if (chainage != null && chainage > floorChainage) floorChainage = chainage
   }
 
+  const start = routePolyline[0]
+  const routeEnd = routePolyline[routePolyline.length - 1]
+  const nearStart = Boolean(start && distanceMeters(currentPosition, start) <= 250)
   let gpsChainage: number
   try {
     const geometry = prepareDemoRouteGeometry(routeId, routePolyline)
@@ -116,30 +122,59 @@ export function resolveAutoStart<T extends StartPinInput & { id: string }>(
       return { pin: savedPin, aheadSuggestion: null }
     }
     gpsChainage = Math.max(floorChainage, gpsProjection.chainageMeters)
+    if (nearStart && completed.size === 0) {
+      const startProjection = projectPointToRouteNearChainage(
+        geometry,
+        currentPosition,
+        0,
+        Math.min(START_PROJECTION_WINDOW_M, geometry.totalLengthMeters),
+      )
+      if (
+        startProjection &&
+        startProjection.crossTrackMeters <= gpsProjection.crossTrackMeters + 5
+      ) {
+        gpsChainage = startProjection.chainageMeters
+      }
+    }
   } catch {
     return { pin: savedPin, aheadSuggestion: null }
   }
 
-  const start = routePolyline[0]
-  const routeEnd = routePolyline[routePolyline.length - 1]
-  const nearStart = Boolean(start && distanceMeters(currentPosition, start) <= 250)
+  const atPin = ordered
+    .filter((pin) => !completed.has(pin.sort_order))
+    .map((pin) => ({
+      pin,
+      distance: distanceMeters(currentPosition, [pin.lat, pin.lng]),
+      chainage: chainages.get(pin.sort_order),
+    }))
+    .filter(
+      (candidate) =>
+        candidate.distance <= AT_PIN_M &&
+        (candidate.chainage == null ||
+          Math.abs(candidate.chainage - gpsChainage) <= AT_PIN_CHAINAGE_WINDOW_M),
+    )
+    .sort(
+      (first, second) =>
+        Math.abs((first.chainage ?? gpsChainage) - gpsChainage) -
+          Math.abs((second.chainage ?? gpsChainage) - gpsChainage) ||
+        first.distance - second.distance ||
+        first.pin.sort_order - second.pin.sort_order,
+    )[0]
+  if (atPin) return { pin: atPin.pin, aheadSuggestion: null }
+
   // Closed loops share agency coords with the finish: never treat an agency fix as the
   // end-of-route occurrence while mid-route progress is still open.
   try {
     const geometry = prepareDemoRouteGeometry(routeId, routePolyline)
     if (
       nearStart &&
-      floorChainage < geometry.totalLengthMeters * 0.85 &&
+      gpsChainage < geometry.totalLengthMeters * 0.15 &&
       completed.size > 0
     ) {
       return { pin: savedPin, aheadSuggestion: null }
     }
   } catch {
     /* fall through */
-  }
-  if (nearStart && completed.size === 0) {
-    const first = ordered[0]
-    if (first) return { pin: first, aheadSuggestion: null }
   }
   if (
     routeEnd &&

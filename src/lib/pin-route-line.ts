@@ -46,6 +46,12 @@ const ROAD_BY_SLUG: Record<string, LatLng[]> = {
 
 /** A loaded pin must sit on this road. Otherwise the straight pin line is used. */
 const ROAD_MATCH_M = 40
+const ROUTE_2_PIN_3_SEGMENT_GEOJSON = [
+  [45.476079, 41.930940],
+  [45.475908, 41.930672],
+  [45.476089, 41.930613],
+  [45.476258, 41.930878],
+] as const
 
 function projectOntoSegmentM(
   point: LatLng,
@@ -150,6 +156,91 @@ function route4Pin13Line(raw: readonly LatLng[], pins: readonly PinRoutePoint[])
   return pullPolylineThroughPoint(rounded, [pin13.lat, pin13.lng], 24)
 }
 
+function route2Pin3MapLine(raw: readonly LatLng[]): LatLng[] {
+  const line = roundSharpRouteCorners(raw)
+  const segment = ROUTE_2_PIN_3_SEGMENT_GEOJSON.map(
+    ([lng, lat]): LatLng => [lat, lng],
+  )
+
+  const nearestVertex = (target: LatLng, from: number, to: number) => {
+    let index = -1
+    let distance = Infinity
+    for (let i = from; i < Math.min(to, line.length); i += 1) {
+      const candidateDistance = distanceBetweenPointsM(line[i]!, target)
+      if (candidateDistance < distance) {
+        index = i
+        distance = candidateDistance
+      }
+    }
+    return { index, distance }
+  }
+
+  const start = nearestVertex(segment[0]!, 0, 30)
+  const end = nearestVertex(segment[segment.length - 1]!, start.index + 1, start.index + 20)
+  if (start.index < 0 || end.index <= start.index || start.distance > 20 || end.distance > 20) {
+    throw new Error('Route 2 PIN 3 display segment does not match the bundled road trace')
+  }
+
+  return [...line.slice(0, start.index), ...segment, ...line.slice(end.index + 1)]
+}
+
+function route3FinishCorridorLine(
+  raw: readonly LatLng[],
+  pins: readonly PinRoutePoint[],
+): LatLng[] {
+  const pin25 = pins.find((pin) => pin.sort_order === 25)
+  const pin26 = pins.find((pin) => pin.sort_order === 26)
+  if (!pin25 || !pin26) return roundSharpRouteCorners(raw)
+
+  let line = roundSharpRouteCorners(raw)
+  const junction: LatLng = [41.93018266666667, 45.475796]
+  const pin26Point: LatLng = [pin26.lat, pin26.lng]
+
+  let junctionIndex = -1
+  let junctionDistance = Infinity
+  let pin26Index = -1
+  let pin26Distance = Infinity
+  line.forEach((point, index) => {
+    const junctionCandidate = distanceBetweenPointsM(point, junction)
+    if (junctionCandidate < junctionDistance) {
+      junctionDistance = junctionCandidate
+      junctionIndex = index
+    }
+    const pin26Candidate = distanceBetweenPointsM(point, pin26Point)
+    if (pin26Candidate < pin26Distance) {
+      pin26Distance = pin26Candidate
+      pin26Index = index
+    }
+  })
+
+  if (junctionIndex >= 0 && pin26Index > junctionIndex && junctionDistance < 5 && pin26Distance < 5) {
+    line = [
+      ...line.slice(0, junctionIndex),
+      junction,
+      pin26Point,
+      ...line.slice(pin26Index + 1),
+    ]
+  }
+
+  line = pullPolylineThroughPoint(line, [pin25.lat, pin25.lng], 32)
+  const pin25Point: LatLng = [pin25.lat, pin25.lng]
+  const pin25Index = line.findIndex(
+    (point) => point[0] === pin25Point[0] && point[1] === pin25Point[1],
+  )
+  const pin26LineIndex = line.findIndex(
+    (point) => point[0] === pin26Point[0] && point[1] === pin26Point[1],
+  )
+  if (pin25Index < 0 || pin26LineIndex <= pin25Index) {
+    throw new Error('Route 3 PIN 25–26 line segment could not be located')
+  }
+  return [
+    ...line.slice(0, pin25Index),
+    pin25Point,
+    pin26Point,
+    ...line.slice(pin26LineIndex + 1),
+  ]
+}
+
 export function maxPinOffsetFromLineM(pins: readonly LatLng[], line: readonly LatLng[]): number {
   if (line.length < 2) return Infinity
   let worst = 0
@@ -185,6 +276,9 @@ export function examRoadTrace(slug: string, pins: readonly PinRoutePoint[]): Lat
  */
 export function examRouteLine(slug: string, pins: readonly PinRoutePoint[]): LatLng[] {
   const raw = examRoadTrace(slug, pins) ?? pinRouteLine(pins)
+  if (slug === 'route-3') {
+    return route3FinishCorridorLine(raw, pins)
+  }
   if (slug === 'route-4') {
     const pin13Line = route4Pin13Line(raw, pins)
     if (pin13Line) return pin13Line
@@ -197,23 +291,53 @@ export function examRouteLine(slug: string, pins: readonly PinRoutePoint[]): Lat
  * Route 4 shares its PIN 13 arc with examRouteLine.
  */
 export function examMapRouteLines(slug: string, pins: readonly PinRoutePoint[]): LatLng[][] {
-  const raw = examRoadTrace(slug, pins) ?? pinRouteLine(pins)
+  const road = examRoadTrace(slug, pins)
+  const raw = road ?? pinRouteLine(pins)
   if (slug === 'route-4') {
     return [route4Pin13Line(raw, pins) ?? roundSharpRouteCorners(raw)]
   }
+  if (slug === 'route-2') {
+    return [road ? route2Pin3MapLine(road) : roundSharpRouteCorners(raw)]
+  }
   if (slug !== 'route-3') return [roundSharpRouteCorners(raw)]
 
-  const connectorIndex = raw.findIndex(
+  const route3Line = route3FinishCorridorLine(raw, pins)
+
+  const connectorIndex = route3Line.findIndex(
     (point, index) =>
       point[0] === 41.924773 &&
       point[1] === 45.472255 &&
-      raw[index + 1]?.[0] === 41.924748 &&
-      raw[index + 1]?.[1] === 45.472457,
+      route3Line[index + 1]?.[0] === 41.924748 &&
+      route3Line[index + 1]?.[1] === 45.472457,
   )
-  if (connectorIndex < 0) return [roundSharpRouteCorners(raw)]
+  if (connectorIndex < 0) return [route3Line]
+
+  const finishLine = route3Line.slice(connectorIndex + 1)
+  const pin25 = pins.find((pin) => pin.sort_order === 25)
+  const pin26 = pins.find((pin) => pin.sort_order === 26)
+  if (!pin25 || !pin26) {
+    return [
+      roundSharpRouteCorners(route3Line.slice(0, connectorIndex + 1)),
+      roundSharpRouteCorners(finishLine, { protectStartMeters: 0 }),
+    ]
+  }
+  const pin25Index = finishLine.findIndex(
+    (point) => point[0] === pin25.lat && point[1] === pin25.lng,
+  )
+  const pin26Index = finishLine.findIndex(
+    (point) => point[0] === pin26.lat && point[1] === pin26.lng,
+  )
+  if (pin25Index < 0 || pin26Index !== pin25Index + 1) {
+    throw new Error('Route 3 map line does not preserve the straight PIN 25–26 segment')
+  }
 
   return [
-    roundSharpRouteCorners(raw.slice(0, connectorIndex + 1)),
-    roundSharpRouteCorners(raw.slice(connectorIndex + 1), { protectStartMeters: 0 }),
+    roundSharpRouteCorners(route3Line.slice(0, connectorIndex + 1)),
+    [
+      ...roundSharpRouteCorners(finishLine.slice(0, pin25Index + 1), {
+        protectStartMeters: 0,
+      }),
+      ...roundSharpRouteCorners(finishLine.slice(pin26Index), { protectStartMeters: 0 }),
+    ],
   ]
 }

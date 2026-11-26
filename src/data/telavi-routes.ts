@@ -15,13 +15,14 @@ function pin(
   instruction: string,
   order: number,
   triggerM = 50,
+  radiusM = 25,
 ) {
   return {
     id,
     route_id: routeId,
     lat: pt[0],
     lng: pt[1],
-    radius_m: 25,
+    radius_m: radiusM,
     trigger_distance_m: triggerM,
     instruction_ka: instruction,
     audio_url: null,
@@ -52,6 +53,7 @@ function pinsFromAudit(routeNumber: number, routeId: string, idPrefix: string) {
       item.instruction,
       item.pin,
       index === 0 || index === rows.length - 1 ? 40 : 50,
+      item.pin === 2 && (routeNumber === 3 || routeNumber === 4) ? 15 : 25,
     ),
   )
 }
@@ -69,6 +71,7 @@ function pinsFromOfficial(
       m.instruction,
       i + 1,
       m.type === 'start' || m.type === 'finish' ? 40 : 50,
+      i + 1 === 2 ? 15 : 25,
     ),
   )
 }

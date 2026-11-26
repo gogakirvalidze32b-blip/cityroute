@@ -1045,6 +1045,29 @@ describe('Telavi field-test routes keep strict progress and resume on production
     expect(localStorage.getItem('cityroute-manual-pin:route-1')).toBeNull()
   })
 
+  it('resetting after a manual selection returns the preview to automatic mode', async () => {
+    const route = routeBySlug('route-1')
+    let demoControls: { reset: () => void } | null = null
+    render(
+      <ExamDriveSession
+        route={route}
+        onPreviewDemoControls={(controls) => {
+          demoControls = controls
+        }}
+      />,
+    )
+    await settle()
+    await chooseManualPinMode()
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ხელით' }).getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => {
+      await demoControls!.reset()
+    })
+
+    expect(screen.getByRole('button', { name: 'PIN-ის არჩევა ავტომატურად' }).getAttribute('aria-pressed')).toBe('true')
+    expect(localStorage.getItem('cityroute-manual-pin:route-1')).toBeNull()
+  })
+
   it('automatic start never goes back before the saved progress when GPS is at an earlier PIN', async () => {
     const route = routeBySlug('route-1')
     saveRoutePinProgress(route.slug, [1, 2, 3, 4, 5])
@@ -2334,6 +2357,25 @@ describe('Telavi field-test routes keep strict progress and resume on production
     await settle()
     await pressStart()
     expect(nextOrder()).toBe(1)
+  })
+
+  it('switching routes selects from the new route and the current GPS fix', async () => {
+    const route1 = routeBySlug('route-1')
+    const route3 = routeBySlug('route-3')
+    gps.once = fix(route1, 1)
+    const first = render(<ExamDriveSession route={route1} />)
+    await settle()
+    await pressStart()
+    expect(nextOrder()).toBe(1)
+    first.unmount()
+    cleanup()
+
+    gps.once = fix(route3, 26)
+    render(<ExamDriveSession route={route3} />)
+    await settle()
+    await pressStart()
+
+    expect(nextOrder()).toBe(26)
   })
 })
 

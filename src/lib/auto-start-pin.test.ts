@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
 import { examRouteLine } from '@/lib/pin-route-line'
+import { positionAtChainageMeters } from '@/lib/pure-route-geometry'
+import { prepareDemoRouteGeometry, resolveDemoPinChainage } from '@/lib/preview-gps-demo-pin'
 import { PASSED_PIN_SKIP_M, resolveAutoStart } from './auto-start-pin'
 
 const route = TELAVI_ROUTES_FALLBACK.find((r) => r.slug === 'route-1')!
@@ -33,6 +35,60 @@ describe('resolveAutoStart', () => {
       'route-1',
     )
     expect(result.pin?.sort_order).toBe(7)
+  })
+
+  it('uses route progress, not the broad route-start radius, for PINs 1 and 2', () => {
+    const geometry = prepareDemoRouteGeometry('route-1', road)
+    const firstChainage = resolveDemoPinChainage(geometry, pins, 1, 0)
+    expect(firstChainage).not.toBeNull()
+    const secondChainage = resolveDemoPinChainage(geometry, pins, 2, firstChainage!)
+    expect(secondChainage).not.toBeNull()
+
+    const between = positionAtChainageMeters(
+      geometry,
+      (firstChainage! + secondChainage!) / 2,
+    )!
+    const result = resolveAutoStart(pins, new Set(), between, road, 'route-1')
+    expect(result.pin?.sort_order).toBe(2)
+  })
+
+  it('starts before PIN 1 or at PIN 1, and selects PIN 2 when genuinely at PIN 2', () => {
+    const first = at(1)
+    const second = at(2)
+    expect(
+      resolveAutoStart(pins, new Set(), road[0], road, 'route-1').pin?.sort_order,
+    ).toBe(1)
+    expect(
+      resolveAutoStart(pins, new Set(), [first.lat, first.lng], road, 'route-1').pin?.sort_order,
+    ).toBe(1)
+    expect(
+      resolveAutoStart(pins, new Set(), [second.lat, second.lng], road, 'route-1').pin?.sort_order,
+    ).toBe(2)
+  })
+
+  it('selects Route 3 PIN 26 when GPS is between PINs 25 and 26', () => {
+    const route3 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
+    const route3Pins = [...route3.pins].sort((a, b) => a.sort_order - b.sort_order)
+    const route3Line = examRouteLine('route-3', route3Pins)
+    const geometry = prepareDemoRouteGeometry('route-3', route3Line)
+    const pin25Chainage = resolveDemoPinChainage(geometry, route3Pins, 25, 0)
+    expect(pin25Chainage).not.toBeNull()
+    const pin26Chainage = resolveDemoPinChainage(geometry, route3Pins, 26, pin25Chainage!)
+    expect(pin26Chainage).not.toBeNull()
+
+    const between = positionAtChainageMeters(
+      geometry,
+      (pin25Chainage! + pin26Chainage!) / 2,
+    )!
+    const result = resolveAutoStart(
+      route3Pins,
+      new Set(),
+      between,
+      route3Line,
+      'route-3',
+    )
+
+    expect(result.pin?.sort_order).toBe(26)
   })
 
   it('skips saved next when live GPS is already near a later PIN', () => {

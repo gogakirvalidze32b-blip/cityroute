@@ -16,6 +16,23 @@ describe('production street line for Telavi routes 1–4', () => {
     expect(TELAVI_ROUTES_FALLBACK.find((route) => route.slug === 'route-4')!.pins).toHaveLength(32)
   })
 
+  it('sets the 15 m radius for Route 1, 3 and 4 PIN 2 only', () => {
+    for (const slug of ['route-1', 'route-3', 'route-4'] as const) {
+      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
+      const pin = route.pins.find((item) => item.sort_order === 2)!
+      const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+      const line = examRouteLine(slug, pins)
+
+      expect(pin.lat).toBe(41.931121)
+      expect(pin.lng).toBe(45.476190)
+      expect(pin.radius_m).toBe(15)
+      expect(pin.trigger_distance_m).toBe(50)
+      expect(maxPinOffsetFromLineM([[pin.lat, pin.lng]], line)).toBeLessThanOrEqual(1)
+    }
+    const route2 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
+    expect(route2.pins.find((item) => item.sort_order === 2)?.radius_m).toBe(25)
+  })
+
   it.each([
     ['route-1', 35],
     ['route-2', 29],
@@ -32,7 +49,9 @@ describe('production street line for Telavi routes 1–4', () => {
         : Array.from({ length: count }, (_, index) => index + 1),
     )
     expect(line).toEqual(
-      slug === 'route-4'
+      slug === 'route-3'
+        ? examRouteLine('route-3', pins)
+        : slug === 'route-4'
         ? examMapRouteLines(slug, pins)[0]
         : roundSharpRouteCorners(examRoadTrace(slug, pins)!),
     )
@@ -209,12 +228,53 @@ describe('production street line for Telavi routes 1–4', () => {
     expect(maxPinOffsetFromLineM(pins.map((pin) => [pin.lat, pin.lng]), line)).toBeLessThanOrEqual(40)
   })
 
+  it('uses the exact Route 2 PIN 3 GeoJSON segment on the map only', () => {
+    const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
+    const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
+    const raw = examRoadTrace('route-2', pins)!
+    const pin3 = pins.find((pin) => pin.sort_order === 3)!
+    const pin24 = pins.find((pin) => pin.sort_order === 24)!
+    const pin26 = pins.find((pin) => pin.sort_order === 26)!
+    const mapLine = examMapRouteLines('route-2', pins)[0]!
+    const navigationLine = examRouteLine('route-2', pins)
+    const defaultMapLine = roundSharpRouteCorners(raw)
+    const exactSegment: LatLng[] = [
+      [41.930940, 45.476079],
+      [41.930672, 45.475908],
+      [41.930613, 45.476089],
+      [41.930878, 45.476258],
+    ]
+
+    expect(mapLine).not.toEqual(navigationLine)
+    expect(navigationLine).toEqual(defaultMapLine)
+    expect(mapLine[0]).toEqual(raw[0])
+    expect(mapLine.at(-1)).toEqual(raw.at(-1))
+    expect(mapLine).toEqual([
+      ...defaultMapLine.slice(0, 5),
+      ...exactSegment,
+      ...defaultMapLine.slice(11),
+    ])
+    expect(
+      maxPinOffsetFromLineM(
+        [
+          [pin3.lat, pin3.lng],
+          [pin24.lat, pin24.lng],
+        ],
+        mapLine,
+      ),
+    ).toBeLessThanOrEqual(25)
+    expect(maxPinOffsetFromLineM([[pin3.lat, pin3.lng]], exactSegment)).toBeLessThan(0.05)
+    const nearPin26 = (point: LatLng) =>
+      Math.hypot((point[0] - pin26.lat) * 110540, (point[1] - pin26.lng) * 82000) <= 120
+    expect(mapLine.filter(nearPin26)).toEqual(defaultMapLine.filter(nearPin26))
+  })
+
   it('keeps other map lines unchanged and separates the Route 3 Alazani carriageways', () => {
-    for (const slug of ['route-1', 'route-2'] as const) {
-      const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === slug)!
-      const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
-      expect(examMapRouteLines(slug, pins)).toEqual([examRouteLine(slug, pins)])
-    }
+    const route1 = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-1')!
+    const route1Pins = [...route1.pins].sort((a, b) => a.sort_order - b.sort_order)
+    expect(examMapRouteLines('route-1', route1Pins)).toEqual([
+      examRouteLine('route-1', route1Pins),
+    ])
 
     const route = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-3')!
     const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
@@ -227,7 +287,32 @@ describe('production street line for Telavi routes 1–4', () => {
     expect(raw[39]).toEqual([41.924748, 45.472457])
     expect(mapLines[0]!.slice(-2)).toEqual(raw.slice(37, 39))
     expect(mapLines[1]!.slice(0, 2)).toEqual(raw.slice(39, 41))
-    expect(examRouteLine('route-3', pins)).toEqual(roundSharpRouteCorners(raw))
+    expect(maxPinOffsetFromLineM(
+      [[pins.find((pin) => pin.sort_order === 25)!.lat, pins.find((pin) => pin.sort_order === 25)!.lng]],
+      examRouteLine('route-3', pins),
+    )).toBe(0)
+    expect(maxPinOffsetFromLineM(
+      [[pins.find((pin) => pin.sort_order === 26)!.lat, pins.find((pin) => pin.sort_order === 26)!.lng]],
+      examRouteLine('route-3', pins),
+    )).toBe(0)
+    const pin25 = pins.find((pin) => pin.sort_order === 25)!
+    const pin26 = pins.find((pin) => pin.sort_order === 26)!
+    expect(pin25.lat).toBe(41.929207)
+    expect(pin25.lng).toBe(45.475204)
+    const route3Line = examRouteLine('route-3', pins)
+    const pin25Index = route3Line.findIndex(
+      (point) => point[0] === pin25.lat && point[1] === pin25.lng,
+    )
+    const pin26Index = route3Line.findIndex(
+      (point) => point[0] === pin26.lat && point[1] === pin26.lng,
+    )
+    expect(pin25Index).toBeGreaterThanOrEqual(0)
+    expect(pin26Index).toBe(pin25Index + 1)
+    const mapFinishLine = examMapRouteLines('route-3', pins)[1]!
+    const mapPin25Index = mapFinishLine.findIndex(
+      (point) => point[0] === pin25.lat && point[1] === pin25.lng,
+    )
+    expect(mapFinishLine[mapPin25Index + 1]).toEqual([pin26.lat, pin26.lng])
     expect(
       maxPinOffsetFromLineM(
         [[pin6.lat, pin6.lng]],
