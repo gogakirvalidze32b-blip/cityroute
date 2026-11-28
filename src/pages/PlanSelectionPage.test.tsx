@@ -198,6 +198,22 @@ describe('Premium package selection', () => {
     expect(screen.queryByRole('link', { name: 'შეძენის მოთხოვნა' })).toBeNull()
   })
 
+  it('shows only the small Rules & Terms link at the bottom, without the footer panel', () => {
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('home-terms')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'წესები და პირობები' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'support@cityroute.ge' })).toBeNull()
+    expect(document.querySelector('.public-site-footer')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'წესები და პირობები' }))
+    expect(screen.getByTestId('terms-dialog')).toBeTruthy()
+  })
+
   it('keeps the user on plan selection when the secure plan RPC rejects the trial choice', async () => {
     state.selectPlan.mockResolvedValue('This session is no longer active; sign in again')
     render(

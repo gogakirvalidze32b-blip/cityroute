@@ -1,6 +1,6 @@
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
-import { PublicSiteFooter } from '@/components/PublicSiteFooter'
+import { TermsFooterLink } from '@/components/TermsFooterLink'
 import { PaymentButton } from '@/components/PaymentButton'
 import { DrivingSchoolPackages } from '@/components/DrivingSchoolPackages'
 import { useAuth } from '@/context/AuthContext'
@@ -341,7 +341,7 @@ export function PlanSelectionPage() {
           </div>
         </section>
       </div>
-      <PublicSiteFooter className="public-site-footer--checkout" />
+      <TermsFooterLink />
     </main>
   )
 }
