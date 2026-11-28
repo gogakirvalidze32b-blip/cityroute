@@ -92,6 +92,20 @@ All 35 failures are pre-existing:
 
 ---
 
+## 3b. Follow-up commit (same day)
+
+- Signed-in Home: bottom footer panel (contacts + public links) removed; only the "წესები და პირობები" link remains at the bottom.
+- Route pages (not only the demo): the route preview map before starting uses the turquoise navigation line and golden PINs (`RoutePreviewMap navigationStyle`).
+
+## 3a. Deployment record (first Preview deploy)
+
+- Release commit: `1901927` pushed to `origin/preview/design-plus-pin-audio-20261104` (remote head `19019279519f…`); `origin/main` unchanged at `928c0c9`.
+- Vercel project `cityroute`: Git-linked to `gogakirvalidze32b-blip/cityroute`, **Production branch `main`**; the push created an automatic **Preview** deployment.
+- Preview URL: `https://cityroute-1efuq1j8p-gogas-projects-8280b2a8.vercel.app` — target `preview`, status Ready (Vercel deployment protection: requires Vercel sign-in).
+- Latest Production deployment unchanged: `cityroute-dpmdxb68d…` (2026-11-27).
+- Checked on the live Preview (via `vercel curl` protection bypass): bundle uses only Supabase `agtcdzxltvtcfxmpnwxr`; contains chainage activation, consent checkbox + "წავიკითხე", terms phone `579 15 59 75`, new line/PIN colours. BOG `initialize` / `verify` / `callback` → **404 "BOG Live payments are available only in Production"**.
+- Preview Demo (`/preview-demo`) is **off** in this Preview build: `VITE_PREVIEW_DEMO_MODE` is not set in the Preview environment, so the demo check is compiled out.
+
 ## 4. Rollback
 
 - **Chainage only (Preview):** open the app with `?pinTrigger=legacy` → legacy PIN trigger for the session.

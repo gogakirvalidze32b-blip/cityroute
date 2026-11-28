@@ -4232,9 +4232,9 @@ export function ExamDriveSession({
           <RoutePreviewMap
             route={route}
             offlineMaps={offlineMaps}
-            // Demo page only (it is the only caller with a simulated GPS source):
-            // same turquoise route line and golden PINs as the live navigation map.
-            navigationStyle={Boolean(previewGpsSource)}
+            // Same turquoise route line and golden PINs as the live navigation map
+            // (route pages and the demo alike).
+            navigationStyle
             selectedPinOrder={
               previewSelectionMode === 'manual'
                 ? previewPin?.sort_order ?? null

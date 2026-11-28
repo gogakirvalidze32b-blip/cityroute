@@ -128,6 +128,8 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     const link = screen.getByRole('button', { name: 'წესები და პირობები' })
     expect(screen.queryByTestId('terms-dialog')).toBeNull()
     expect(document.querySelector('[data-testid="login-terms-consent"]')).toBeNull()
+    // No bottom footer panel (contacts / public links) on the signed-in page.
+    expect(document.querySelector('.public-site-footer')).toBeNull()
     // The phone is not shown outside the terms…
     expect(screen.queryByRole('link', { name: '579 15 59 75' })).toBeNull()
     fireEvent.click(link)

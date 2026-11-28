@@ -2,7 +2,6 @@ import { Link, Navigate } from 'react-router-dom'
 import { useState } from 'react'
 
 import { AppBrand } from '@/components/AppBrand'
-import { PublicSiteFooter } from '@/components/PublicSiteFooter'
 import { HomeTermsFooter } from '@/components/HomeTermsFooter'
 import { useAuth } from '@/context/AuthContext'
 import { SupportButton } from '@/components/support/SupportLinks'
@@ -138,7 +137,6 @@ export function HomePage() {
         </button>
         <HomeTermsFooter />
       </footer>
-      <PublicSiteFooter className="public-site-footer--app" />
     </div>
   )
 }
