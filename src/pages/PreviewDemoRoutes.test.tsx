@@ -77,6 +77,16 @@ afterEach(() => {
 })
 
 describe('isolated Preview Demo mode', () => {
+  it('opens the local demo from the root URL without entering the authenticated app', async () => {
+    window.history.replaceState({}, '', '/')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('demo-route-list')).toBeTruthy()
+    expect(window.location.pathname).toBe('/preview-demo')
+    expect(screen.queryByRole('heading', { name: 'შესვლა' })).toBeNull()
+  })
+
   it('renders only four local routes and makes no external API connections', async () => {
     render(<App />)
 
@@ -119,6 +129,44 @@ describe('isolated Preview Demo mode', () => {
     })
     expect(screen.queryByRole('button', { name: /მხარდაჭერა|გასვლა/ })).toBeNull()
     expect(screen.queryByText(/გადახდა|Premium-ის შეძენა/i)).toBeNull()
+  })
+
+  it('shows the small Rules & Terms link on the demo home; the number is inside the terms', async () => {
+    render(<App />)
+
+    expect(await screen.findByTestId('demo-route-list')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '579 15 59 75' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'წესები და პირობები' }))
+    expect(screen.getByTestId('terms-dialog')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '579 15 59 75' })).toHaveAttribute('href', 'tel:579155975')
+  })
+
+  it('previews the real Login consent flow without signing in or calling the backend', async () => {
+    window.history.replaceState({}, '', '/preview-demo/login')
+
+    render(<App />)
+
+    const consent = await screen.findByTestId('login-terms-consent')
+    const submit = screen.getByRole('button', { name: /^შესვლა/ })
+    expect(consent).not.toBeChecked()
+    expect(submit).toBeDisabled()
+    expect(screen.queryByTestId('rules-terms')).toBeNull()
+
+    // Ticking before reading opens the terms instead.
+    fireEvent.click(consent)
+    expect(consent).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'წავიკითხე' }))
+    fireEvent.click(consent)
+    expect(consent).toBeChecked()
+    expect(submit).toBeEnabled()
+
+    fireEvent.change(screen.getByPlaceholderText('ელფოსტა'), { target: { value: 'demo@example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('პაროლი'), { target: { value: 'x' } })
+    fireEvent.click(submit)
+    expect(await screen.findByText(/DEMO: ეს მხოლოდ გადახედვაა/)).toBeTruthy()
+    expect(localStorage.getItem('cityroute-remember-email')).toBeNull()
+    expect(supabase.getSupabase).not.toHaveBeenCalled()
+    expect(externalFetch).not.toHaveBeenCalled()
   })
 
   it('keeps demo route saves separate from production localStorage keys', async () => {

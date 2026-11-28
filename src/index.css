@@ -1073,6 +1073,55 @@ button:disabled {
   transform-origin: center;
 }
 
+/* Live-map vehicle arrow (Google Maps navigation style). Visual only — the
+   rotation is set by the camera controller via --exam-live-map-heading on
+   .exam-live-map__vehicle-marker-inner; both elements are centred on the
+   vehicle position (the inner element's 0×0 origin).
+   Class names are prefixed `exam-` on purpose: the legacy `.nav-arrow` rule
+   above (NavigationMap / Yandex) draws a CSS border-triangle and would render
+   a second arrow on this element. */
+.exam-nav-arrow-halo {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 36px;
+  height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  box-shadow:
+    0 0 0 1px rgba(26, 115, 232, 0.12),
+    0 1px 5px rgba(15, 23, 42, 0.14);
+  pointer-events: none;
+}
+
+.exam-nav-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  margin-left: -12px;
+  margin-top: -13px;
+  overflow: visible;
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.35));
+  pointer-events: none;
+}
+
+.exam-nav-arrow path {
+  fill: #1a73e8;
+  stroke: #ffffff;
+  stroke-width: 4.5;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+}
+
+/* Route line layers (RoutePolyline): crisp, anti-aliased edges on mobile. */
+.leaflet-pane path.route-line {
+  shape-rendering: geometricPrecision;
+}
+
 .fixed-navigation-arrow-icon {
   position: absolute;
   left: 50%;

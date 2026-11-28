@@ -1,31 +1,12 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useCallback, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
+import { TermsDialog } from '@/components/TermsDialog'
 import { useAuth } from '@/context/AuthContext'
-import { SUPPORT_EMAIL } from '@/lib/support/constants'
 import './login-v2.css'
 
 export function LoginPage() {
   const { signIn, signInWithGoogle, user, loading, signOutWarning } = useAuth()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(true) // Default: checked
-  const [error, setError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [googleSubmitting, setGoogleSubmitting] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
-
-  // Load saved credentials if "remember me" was checked
-  useState(() => {
-    const savedEmail = localStorage.getItem('cityroute-remember-email')
-    const savedPassword = localStorage.getItem('cityroute-remember-password')
-    if (savedEmail) {
-      setEmail(savedEmail)
-      if (savedPassword) {
-        setPassword(atob(savedPassword)) // Simple base64 decode
-      }
-    }
-  })
 
   if (loading) {
     return (
@@ -42,8 +23,63 @@ export function LoginPage() {
 
   if (user) return <Navigate to="/" replace />
 
+  return (
+    <LoginView signIn={signIn} signInWithGoogle={signInWithGoogle} signOutWarning={signOutWarning} />
+  )
+}
+
+type LoginViewProps = {
+  signIn: (email: string, password: string) => Promise<string | null>
+  signInWithGoogle: () => Promise<string | null>
+  signOutWarning?: string | null
+  /** Read/write the "remember me" credentials (off for the isolated Preview Demo). */
+  persistCredentials?: boolean
+}
+
+/** The Login screen itself (no auth state) — shared by LoginPage and the Preview Demo. */
+export function LoginView({
+  signIn,
+  signInWithGoogle,
+  signOutWarning = null,
+  persistCredentials = true,
+}: LoginViewProps) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(true) // Default: checked
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [googleSubmitting, setGoogleSubmitting] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  // Required consent to the Rules & Terms — never pre-checked, never remembered.
+  // It can only be ticked after the terms were read ("წავიკითხე" at their end).
+  const [termsAccepted, setTermsAccepted] = useState(false)
+  const [termsRead, setTermsRead] = useState(false)
+  const [termsOpen, setTermsOpen] = useState(false)
+  const closeTerms = useCallback(() => setTermsOpen(false), [])
+  const markTermsRead = useCallback(() => {
+    setTermsRead(true)
+    setTermsOpen(false)
+  }, [])
+
+  // Load saved credentials if "remember me" was checked
+  useState(() => {
+    if (!persistCredentials) return
+    const savedEmail = localStorage.getItem('cityroute-remember-email')
+    const savedPassword = localStorage.getItem('cityroute-remember-password')
+    if (savedEmail) {
+      setEmail(savedEmail)
+      if (savedPassword) {
+        setPassword(atob(savedPassword)) // Simple base64 decode
+      }
+    }
+  })
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
+    if (!termsAccepted) {
+      setError(TERMS_REQUIRED_MESSAGE)
+      return
+    }
     setSubmitting(true)
     setError(null)
     
@@ -51,7 +87,9 @@ export function LoginPage() {
     
     try {
       // Save credentials if "remember me" is checked
-      if (rememberMe) {
+      if (!persistCredentials) {
+        // Preview Demo: never touch the real app's saved credentials.
+      } else if (rememberMe) {
         localStorage.setItem('cityroute-remember-email', email.trim())
         localStorage.setItem('cityroute-remember-password', btoa(password)) // Simple base64 encode
       } else {
@@ -157,8 +195,52 @@ export function LoginPage() {
               />
               <span>დამახსოვრება</span>
             </label>
+            <label className={`login-v2__consent ${termsRead ? '' : 'is-unread'}`.trim()}>
+              <input
+                type="checkbox"
+                required
+                checked={termsAccepted}
+                aria-describedby="login-consent-hint"
+                onChange={(e) => {
+                  // Not read yet: never tick — open the terms instead.
+                  if (!termsRead) {
+                    setTermsOpen(true)
+                    return
+                  }
+                  setTermsAccepted(e.target.checked)
+                  if (e.target.checked && error === TERMS_REQUIRED_MESSAGE) setError(null)
+                }}
+                data-testid="login-terms-consent"
+              />
+              <span>
+                ვეთანხმები{' '}
+                <button
+                  type="button"
+                  className="login-v2__consent-link"
+                  onClick={(e) => {
+                    // Opens the terms; does not tick the checkbox.
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setTermsOpen(true)
+                  }}
+                >
+                  წესებსა და პირობებს
+                </button>
+              </span>
+            </label>
+            {!termsAccepted && (
+              <p id="login-consent-hint" className="login-v2__consent-hint">
+                {termsRead
+                  ? 'გასაგრძელებლად მონიშნეთ თანხმობა.'
+                  : 'ჯერ გაეცანით წესებსა და პირობებს.'}
+              </p>
+            )}
             {error && <p className="error-text">{error}</p>}
-            <button type="submit" className="login-v2__submit" disabled={submitting || googleSubmitting}>
+            <button
+              type="submit"
+              className={`login-v2__submit ${termsAccepted ? '' : 'is-consent-blocked'}`.trim()}
+              disabled={submitting || googleSubmitting || !termsAccepted}
+            >
               {submitting ? '...' : 'შესვლა →'}
             </button>
           </form>
@@ -167,9 +249,14 @@ export function LoginPage() {
           </div>
           <button
             type="button"
-            className="login-v2__google"
-            disabled={submitting || googleSubmitting}
+            className={`login-v2__google ${termsAccepted ? '' : 'is-consent-blocked'}`.trim()}
+            disabled={submitting || googleSubmitting || !termsAccepted}
             onClick={async () => {
+              // Google sign-in also needs consent — never start OAuth without it.
+              if (!termsAccepted) {
+                setError(TERMS_REQUIRED_MESSAGE)
+                return
+              }
               setGoogleSubmitting(true)
               setError(null)
               try {
@@ -191,16 +278,14 @@ export function LoginPage() {
           <p className="login-v2__register">
             ანგარიში არ გაქვს? <Link to="/register">რეგისტრაცია</Link>
           </p>
-          <p className="login-v2__support">
-            <Link to="/support">დახმარება</Link>
-            <span aria-hidden="true"> · </span>
-            დაგვიკავშირდით: <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
-          </p>
         </div>
       </div>
+      <TermsDialog open={termsOpen} onClose={closeTerms} onRead={markTermsRead} />
     </div>
   )
 }
+
+const TERMS_REQUIRED_MESSAGE = 'გასაგრძელებლად დაეთანხმეთ წესებსა და პირობებს.'
 
 const FEATURES = [
   { icon: '📍', label: 'რეალური მარშრუტები' },

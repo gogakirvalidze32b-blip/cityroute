@@ -178,11 +178,15 @@ const SAME_PASS_M = 60
 const MERGE_BACK_M = 40
 
 /** Bearing of straight-ish recent movement (≥25 m baseline), else null. */
-export function recentTravelBearing(track: readonly ArrowTrackPoint[], current: LL): number | null {
+export function recentTravelBearing(
+  track: readonly ArrowTrackPoint[],
+  current: LL,
+  minimumBaselineMeters = TRAVEL_MIN_BASELINE_M,
+): number | null {
   for (let i = track.length - 1; i >= 0; i -= 1) {
     const [x, y] = toXY(current, track[i].position)
     const dist = Math.hypot(x, y)
-    if (dist < TRAVEL_MIN_BASELINE_M) continue
+    if (dist < minimumBaselineMeters) continue
     if (dist > TRAVEL_MAX_BASELINE_M) return null
     for (let j = i + 1; j < track.length; j += 1) {
       const [px, py] = toXY(current, track[j].position)
@@ -201,8 +205,13 @@ export function detectWrongPassChainage(
   position: LL,
   track: readonly ArrowTrackPoint[],
   arrowChainageMeters: number,
+  aggressive = false,
 ): number | null {
-  const travel = recentTravelBearing(track, position)
+  const travel = recentTravelBearing(
+    track,
+    position,
+    aggressive ? 12 : TRAVEL_MIN_BASELINE_M,
+  )
   if (travel == null) return null
   const here = forwardBearingAlongRoute(geometry, arrowChainageMeters, ARROW_LOOK_AHEAD_M)
   if (here == null || Math.abs(turnBetween(here, travel)) < WRONG_PASS_MIN_DISAGREE_DEG) return null
@@ -231,9 +240,10 @@ export function stepArrowTracker(
     readonly position: LL
     readonly matchedChainageMeters: number | null
     readonly timestampMs: number
+    readonly aggressiveSelfCorrection?: boolean
   },
 ): ArrowTrackerState | null {
-  const { geometry, position, matchedChainageMeters, timestampMs } = input
+  const { geometry, position, matchedChainageMeters, timestampMs, aggressiveSelfCorrection = false } = input
   const track = [...(state?.track ?? []), { position, timestampMs }]
     .filter((p) => timestampMs - p.timestampMs <= TRACK_MAX_AGE_MS)
     .slice(-20)
@@ -265,9 +275,16 @@ export function stepArrowTracker(
   }
 
   if (hasMatch) chain = advanceArrowChainage(chain, matchedChainageMeters as number, timestampMs)
-  const wrong = detectWrongPassChainage(geometry, position, track, chain.chainageMeters)
+  const wrong = detectWrongPassChainage(
+    geometry,
+    position,
+    track,
+    chain.chainageMeters,
+    aggressiveSelfCorrection,
+  )
   votes = wrong != null ? votes + 1 : 0
-  if (wrong != null && votes >= WRONG_PASS_VOTES) {
+  const requiredVotes = aggressiveSelfCorrection ? 1 : WRONG_PASS_VOTES
+  if (wrong != null && votes >= requiredVotes) {
     chain = { chainageMeters: wrong, timestampMs, speedMps: chain.speedMps }
     return { chain, override: true, votes: 0, track }
   }

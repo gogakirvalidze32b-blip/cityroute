@@ -12,6 +12,20 @@ import { YANDEX_STREET_ZOOM } from '@/data/telavi-routes'
 import type { PinRow, RouteWithPins } from '@/types/database'
 import { mapRotationCssDeg } from '@/lib/map-rotation'
 import { limitHeadingStep } from '@/lib/arrow-heading'
+import { ROUTE_PIN_STYLE } from '@/lib/route-pin-style'
+import {
+  createVehicleGlide,
+  retargetVehicleGlide,
+  sampleVehicleGlide,
+  type VehicleGlide,
+} from '@/lib/vehicle-glide'
+import {
+  retargetMotionTrack,
+  sampleMotionTrack,
+  type MotionTrack,
+  type VehicleMotion,
+} from '@/lib/vehicle-motion'
+import { positionAtChainageMeters, projectPointToRoute } from '@/lib/pure-route-geometry'
 import { NavigationStateManager, CameraStateManager, type RawGpsUpdate, type CameraMode } from '@/lib/navigation-state'
 import { formatPinInstructionLabel } from '@/lib/pin-instruction-label'
 
@@ -250,14 +264,20 @@ function useDeviceCompass(): number | null {
  * CRITICAL: Uses refs to avoid stale closures
  */
 function NavigationCameraController({
-  navManager,
+  glideRef,
+  motionTrackRef,
+  displayVehicleRef,
+  markerRef,
   cameraManager,
   cameraModeRef,
   courseRef,
   worldRef,
   wakeCameraRef,
 }: {
-  navManager: React.MutableRefObject<NavigationStateManager | null>
+  glideRef: React.MutableRefObject<VehicleGlide | null>
+  motionTrackRef: React.MutableRefObject<MotionTrack | null>
+  displayVehicleRef: React.MutableRefObject<LatLng | null>
+  markerRef: React.MutableRefObject<L.Marker | null>
   cameraManager: React.MutableRefObject<CameraStateManager>
   cameraModeRef: React.MutableRefObject<CameraMode>
   courseRef: React.MutableRefObject<number>
@@ -272,6 +292,8 @@ function NavigationCameraController({
   const lastAppliedHeading = useRef<number | null>(null)
   const wasFree = useRef(false)
   const previousFrameTime = useRef<number | null>(null)
+  /** FOLLOW catch-up after recenter: camera offset from the vehicle anchor, decays to 0. */
+  const cameraOffset = useRef<[number, number]>([0, 0])
 
   useEffect(() => {
     const applyBearing = (headingDeg: number, vehicleHeadingDeg = headingDeg) => {
@@ -291,16 +313,42 @@ function NavigationCameraController({
 
     const animate = (time: number) => {
       rafRef.current = undefined
-      const navState = navManager.current?.getState()
-      if (!navState) return
-      const elapsed = previousFrameTime.current === null
-        ? 16
-        : Math.min(Math.max(time - previousFrameTime.current, 0), 50)
+      const glide = glideRef.current
+      if (!glide && !motionTrackRef.current) return
+      // First frame after an idle loop: the previous frame time is stale, so
+      // treat it as a single frame (no one-frame catch-up hop).
+      const sinceLast = previousFrameTime.current === null ? Infinity : time - previousFrameTime.current
+      const elapsed = sinceLast > 100 ? 16 : Math.min(Math.max(sinceLast, 0), 50)
       const interpolationFactor = 1 - Math.exp(-elapsed / 65)
 
-      // Camera follows the REAL GPS position (camera only; PIN detection is unchanged and
-      // uses the raw GPS in ExamDriveSession). The route-snapped position is not used here.
-      const cameraPosition = navState.rawPosition
+      // ONE visual source for the vehicle (display only — GPS, route progress
+      // and PIN triggering never read it). On a road-matched route: per-frame
+      // prediction along the fixed route line (vehicle-motion.ts, no lag);
+      // otherwise the glide between accepted GPS fixes. The marker is moved
+      // imperatively, so frames cause no React re-render.
+      let cameraPosition: LatLng | null = null
+      let vehicleMoving = false
+      const track = motionTrackRef.current
+      if (track) {
+        const motion = sampleMotionTrack(track, time, elapsed)
+        motionTrackRef.current = motion.track
+        const onRoute = positionAtChainageMeters(track.geometry, motion.chainageMeters)
+        if (onRoute) {
+          cameraPosition = [onRoute[0], onRoute[1]]
+          vehicleMoving = motion.moving
+        }
+      }
+      if (glide) {
+        const sample = sampleVehicleGlide(glide, time)
+        glideRef.current = sample.glide
+        if (!cameraPosition) {
+          cameraPosition = [sample.position[0], sample.position[1]]
+          vehicleMoving = !sample.done
+        }
+      }
+      if (!cameraPosition) return
+      displayVehicleRef.current = cameraPosition
+      markerRef.current?.setLatLng(cameraPosition)
       const viewportHeight = worldRef.current?.parentElement?.clientHeight || map.getSize().y
       const cameraCenter = cameraCenterForVehicleAnchor(
         map,
@@ -331,6 +379,11 @@ function NavigationCameraController({
           wasFree.current = false
           currentDisplayHeading.current = courseRef.current
           applyBearing(currentDisplayHeading.current)
+          // Recenter: glide the camera from where the user left it (decaying offset).
+          const anchor = cameraCenterForVehicleAnchor(map, cameraPosition, currentDisplayHeading.current, viewportHeight)
+          const center = map.getCenter()
+          cameraOffset.current = [center.lat - anchor[0], center.lng - anchor[1]]
+          currentDisplayPosition.current = [center.lat, center.lng]
         }
         // Eased toward the road course, then capped in °/s so a new GPS fix at a
         // corner turns the arrow smoothly instead of snapping (arrow-only).
@@ -351,42 +404,45 @@ function NavigationCameraController({
         }
         applyBearing(currentDisplayHeading.current)
 
-        const targetPosition = cameraCenterForVehicleAnchor(
+        // Camera is locked to the gliding vehicle (no second easing of the vehicle,
+        // so the arrow stays exactly on its screen anchor while the map moves).
+        const anchorPosition = cameraCenterForVehicleAnchor(
           map,
           cameraPosition,
           currentDisplayHeading.current,
           viewportHeight,
         )
+        // Recenter catch-up: the offset from the anchor decays smoothly to zero.
+        const offsetDecay = Math.exp(-elapsed / 140)
+        let [offsetLat, offsetLng] = cameraOffset.current
+        offsetLat *= offsetDecay
+        offsetLng *= offsetDecay
+        const offsetPixels = map
+          .latLngToContainerPoint(anchorPosition)
+          .distanceTo(map.latLngToContainerPoint([anchorPosition[0] + offsetLat, anchorPosition[1] + offsetLng]))
+        if (offsetPixels < 0.5) {
+          offsetLat = 0
+          offsetLng = 0
+        } else {
+          needsAnotherFrame = true
+        }
+        cameraOffset.current = [offsetLat, offsetLng]
+        const targetPosition: LatLng = [anchorPosition[0] + offsetLat, anchorPosition[1] + offsetLng]
 
         if (currentDisplayPosition.current) {
-          const currentPosition = currentDisplayPosition.current
-          const currentPoint = map.latLngToContainerPoint(currentPosition)
-          const targetPoint = map.latLngToContainerPoint(targetPosition)
-          const remainingPixels = currentPoint.distanceTo(targetPoint)
-
-          if (remainingPixels >= 0.75) {
-            const [currentLat, currentLng] = currentPosition
-            const [targetLat, targetLng] = targetPosition
-            const nextPosition: LatLng = [
-              currentLat + (targetLat - currentLat) * interpolationFactor,
-              currentLng + (targetLng - currentLng) * interpolationFactor,
-            ]
-            const nextPoint = map.latLngToContainerPoint(nextPosition)
-            const stepPixels = currentPoint.distanceTo(nextPoint)
-            const displayPosition =
-              stepPixels < 0.75 || remainingPixels <= 5
-                ? targetPosition
-                : nextPosition
-
-            currentDisplayPosition.current = displayPosition
-            map.panTo(displayPosition, {
+          const movedPixels = map
+            .latLngToContainerPoint(currentDisplayPosition.current)
+            .distanceTo(map.latLngToContainerPoint(targetPosition))
+          if (movedPixels >= 0.05) {
+            currentDisplayPosition.current = targetPosition
+            map.panTo(targetPosition, {
               animate: false,
               noMoveStart: true,
               duration: 0,
             })
-            needsAnotherFrame = remainingPixels > 4
           }
         }
+        if (vehicleMoving) needsAnotherFrame = true
 
         cameraManager.current.updateCurrent(
           currentDisplayPosition.current || cameraPosition,
@@ -404,6 +460,8 @@ function NavigationCameraController({
           currentDisplayPosition.current,
           currentDisplayHeading.current,
         )
+        // GPS never moves the camera in FREE, but the arrow keeps gliding on the map.
+        if (vehicleMoving) needsAnotherFrame = true
       }
 
       previousFrameTime.current = time
@@ -428,7 +486,7 @@ function NavigationCameraController({
       previousFrameTime.current = null
       if (wakeCameraRef.current === wake) wakeCameraRef.current = null
     }
-  }, [map, navManager, cameraManager, cameraModeRef, courseRef, worldRef, wakeCameraRef])
+  }, [map, glideRef, motionTrackRef, displayVehicleRef, markerRef, cameraManager, cameraModeRef, courseRef, worldRef, wakeCameraRef])
 
   return null
 }
@@ -481,7 +539,12 @@ type Props = {
   mapBadge?: string
   offlineMaps?: boolean
   onGpsUpdate?: (update: RawGpsUpdate) => void // For parent to send GPS updates
+  /** Display-only route progress + speed: zero-lag arrow prediction along the route. */
+  vehicleMotion?: VehicleMotion | null
 }
+
+/** Route PIN look on the live map — shared with the demo route preview. */
+const PIN_STYLE = ROUTE_PIN_STYLE
 
 export function ExamLiveMapLeaflet({
   route,
@@ -492,6 +555,7 @@ export function ExamLiveMapLeaflet({
   mapBadge,
   offlineMaps = false,
   onGpsUpdate,
+  vehicleMotion = null,
 }: Props) {
   const [cameraMode, setCameraMode] = useState<CameraMode>('FOLLOW')
   const cameraModeRef = useRef<CameraMode>('FOLLOW')
@@ -503,12 +567,25 @@ export function ExamLiveMapLeaflet({
   const [vehiclePosition, setVehiclePosition] = useState<LatLng | null>(
     hasGpsFix ? userPos : null,
   )
+  // Visual-only arrow motion (see vehicle-glide.ts), driven by the camera loop.
+  const glideRef = useRef<VehicleGlide | null>(hasGpsFix ? createVehicleGlide(userPos) : null)
+  const displayVehicleRef = useRef<LatLng | null>(hasGpsFix ? userPos : null)
+  const markerRef = useRef<L.Marker | null>(null)
+  const motionTrackRef = useRef<MotionTrack | null>(null)
   const vehicleIcon = useMemo(() => {
     return L.divIcon({
       className: 'exam-live-map__vehicle-marker',
       iconSize: [28, 48],
       iconAnchor: [14, 24],
-      html: '<div class="exam-live-map__vehicle-marker-inner" style="transform:rotate(var(--exam-live-map-heading, 0deg))"><div class="fixed-navigation-arrow-icon"></div><div class="fixed-navigation-arrow-dot"></div></div>',
+      // Visual only: Google-Maps-style navigation chevron over a soft halo.
+      // Rotation still comes from --exam-live-map-heading (camera controller).
+      html:
+        '<div class="exam-live-map__vehicle-marker-inner" style="transform:rotate(var(--exam-live-map-heading, 0deg))">' +
+        '<div class="exam-nav-arrow-halo"></div>' +
+        '<svg class="exam-nav-arrow" viewBox="0 0 40 40" width="24" height="24" aria-hidden="true" focusable="false">' +
+        '<path d="M20 3.5 L34.5 35 L20 27.6 L5.5 35 Z" />' +
+        '</svg>' +
+        '</div>',
     })
   }, [])
 
@@ -577,12 +654,51 @@ export function ExamLiveMapLeaflet({
       timestamp: Date.now(),
     }
     
-    const acceptedState = navManagerRef.current.processGpsUpdate(gpsUpdate)
-    if (acceptedState) {
-      setVehiclePosition(acceptedState.rawPosition)
-    }
+    navManagerRef.current.processGpsUpdate(gpsUpdate)
+    // Every accepted position from ExamDriveSession becomes the glide target.
+    // (The map-local manager used to drop >100 m jumps, freezing the arrow
+    // after GPS recovery / resume; the glide snaps those instead.)
+    const displayed = displayVehicleRef.current ?? userPos
+    glideRef.current = glideRef.current
+      ? retargetVehicleGlide(glideRef.current, userPos, displayed, performance.now())
+      : createVehicleGlide(userPos)
+    if (!displayVehicleRef.current) displayVehicleRef.current = userPos
+    setVehiclePosition(userPos)
     wakeCameraRef.current?.()
   }, [userPos, heading, hasGpsFix])
+
+  // Each new fix re-anchors the along-route prediction (display only).
+  useEffect(() => {
+    if (!vehicleMotion) {
+      motionTrackRef.current = null
+    } else {
+      // First fix of a track: start from where the arrow is drawn now (if it is
+      // on this route just behind the fix) so the hand-over never hops.
+      let currentChainage: number | null = null
+      const displayed = displayVehicleRef.current
+      if (!motionTrackRef.current && displayed) {
+        const projection = projectPointToRoute(vehicleMotion.geometry, displayed)
+        if (projection && projection.crossTrackMeters <= 15) currentChainage = projection.chainageMeters
+      }
+      motionTrackRef.current = retargetMotionTrack(
+        motionTrackRef.current,
+        vehicleMotion,
+        performance.now(),
+        currentChainage,
+      )
+    }
+    wakeCameraRef.current?.()
+  }, [vehicleMotion])
+
+  // react-leaflet moves the marker to its `position` prop (the latest fix) in a
+  // passive effect when it changes. This passive effect runs right after it
+  // (parent after child, same flush), putting the marker straight back on the
+  // glide before the next paint — so a GPS update never shows as a one-frame
+  // jump. (A layout effect would run BEFORE react-leaflet and be overwritten.)
+  useEffect(() => {
+    const displayed = displayVehicleRef.current
+    if (displayed) markerRef.current?.setLatLng(displayed)
+  }, [vehiclePosition])
   
   const nextPinDist =
     nextPin != null ? Math.round(distanceToPinMeters(userPos, [nextPin.lat, nextPin.lng])) : null
@@ -595,17 +711,18 @@ export function ExamLiveMapLeaflet({
     : 'unknown'
   
   const handleRecenter = useCallback(() => {
-    const navState = navManagerRef.current?.getState()
-    if (!navState) return
-    
+    const latestFix = glideRef.current?.to
+    if (!latestFix) return
+    const latest: LatLng = [latestFix[0], latestFix[1]]
+
     console.log('[CAMERA] Red button pressed → FOLLOW mode, recentering to current vehicle')
-    
+
     // Switch to FOLLOW mode
     cameraModeRef.current = 'FOLLOW'
     setCameraMode('FOLLOW')
     cameraManagerRef.current.setMode('FOLLOW')
-    setVehiclePosition(navState.rawPosition)
-    cameraManagerRef.current.recenter(navState.rawPosition, courseRef.current)
+    setVehiclePosition(latest)
+    cameraManagerRef.current.recenter(latest, courseRef.current)
     const el = worldRef.current
     if (el) {
       el.style.transform = `rotate(${mapRotationCssDeg(courseRef.current)}deg)`
@@ -694,24 +811,36 @@ export function ExamLiveMapLeaflet({
 
           {pinLines.map((line, index) =>
             line.length >= 2 ? (
-              <RoutePolyline key={index} positions={line} variant="pins" />
+              <RoutePolyline key={index} positions={line} variant="navigation" />
             ) : null,
           )}
 
           {pins.map((pin) => {
             const isNext = nextPin?.id === pin.id
             const isPulse = isNext && nextPinPulse
+            // Visual state only, derived from the existing nextPin prop.
+            const isPassed = nextPin != null && pin.sort_order < nextPin.sort_order
+            const style = isNext
+              ? PIN_STYLE.next
+              : isPassed
+                ? PIN_STYLE.passed
+                : PIN_STYLE.upcoming
             return (
               <CircleMarker
                 key={pin.id}
                 center={[pin.lat, pin.lng]}
-                radius={isPulse ? 13 : 10}
+                radius={isPulse ? style.radius + 1.5 : style.radius}
                 pathOptions={{
-                  color: isNext ? '#0f766e' : '#047857',
-                  fillColor: isNext ? '#5eead4' : '#10b981',
-                  fillOpacity: 1,
-                  weight: 3,
-                  className: isPulse ? 'exam-pin-pulse' : undefined,
+                  color: style.stroke,
+                  fillColor: style.fill,
+                  fillOpacity: style.fillOpacity,
+                  opacity: style.strokeOpacity,
+                  weight: style.weight,
+                  className: [
+                    'exam-route-pin',
+                    `exam-route-pin--${isNext ? 'next' : isPassed ? 'passed' : 'upcoming'}`,
+                    isPulse ? 'exam-pin-pulse' : '',
+                  ].join(' ').trim(),
                 }}
               />
             )
@@ -720,7 +849,10 @@ export function ExamLiveMapLeaflet({
           <InteractionHandler cameraModeRef={cameraModeRef} onEnterFreeMode={handleEnterFreeMode} />
 
           <NavigationCameraController
-            navManager={navManagerRef}
+            glideRef={glideRef}
+            motionTrackRef={motionTrackRef}
+            displayVehicleRef={displayVehicleRef}
+            markerRef={markerRef}
             cameraManager={cameraManagerRef}
             cameraModeRef={cameraModeRef}
             courseRef={courseRef}
@@ -730,6 +862,7 @@ export function ExamLiveMapLeaflet({
 
           {vehiclePosition && (
             <Marker
+              ref={markerRef}
               position={vehiclePosition}
               icon={vehicleIcon}
               zIndexOffset={1000}

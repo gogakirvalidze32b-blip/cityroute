@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
+import { HomeTermsFooter } from '@/components/HomeTermsFooter'
+import { LoginView } from '@/pages/LoginPage'
 import { ExamDriveSession } from '@/components/ExamDriveSession'
 import { selectableRoutes } from '@/data/selectable-routes'
 import { TELAVI_ROUTES_FALLBACK } from '@/data/telavi-routes'
@@ -56,10 +58,33 @@ function PreviewDemoHomePage() {
 
       <footer className="home-footer">
         <p className="muted home-meta">Demo progress is stored only in this browser.</p>
+        <Link to="/preview-demo/login" className="tag" data-testid="demo-login-preview-link">
+          DEMO · შესვლის გვერდი (თანხმობა)
+        </Link>
+        <HomeTermsFooter />
       </footer>
     </div>
   )
 }
+
+/** The real Login screen with demo handlers — nothing signs in or touches the backend. */
+function PreviewDemoLoginPage() {
+  const demoSignIn = useCallback(async () => DEMO_LOGIN_MESSAGE, [])
+  return (
+    <>
+      <LoginView
+        signIn={demoSignIn}
+        signInWithGoogle={demoSignIn}
+        persistCredentials={false}
+      />
+      <Link to="/preview-demo" className="tag demo-login-back" data-testid="demo-login-back">
+        ← DEMO მარშრუტები
+      </Link>
+    </>
+  )
+}
+
+const DEMO_LOGIN_MESSAGE = 'DEMO: ეს მხოლოდ გადახედვაა — შესვლა არ სრულდება.'
 
 function PreviewDemoRoutePage() {
   const { slug } = useParams<{ slug: string }>()
@@ -141,6 +166,7 @@ export function PreviewDemoRoutes() {
     <Routes>
       <Route path="/preview-demo" element={<PreviewDemoHomePage />} />
       <Route path="/preview-demo/route/:slug" element={<PreviewDemoRoutePage />} />
+      <Route path="/preview-demo/login" element={<PreviewDemoLoginPage />} />
       <Route path="*" element={<Navigate to="/preview-demo" replace />} />
     </Routes>
   )

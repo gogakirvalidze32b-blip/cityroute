@@ -113,6 +113,30 @@ import {
 } from '@/lib/pure-route-geometry'
 import { resolveDemoPinChainage } from '@/lib/preview-gps-demo-pin'
 import {
+  decideChainageTrigger,
+  INITIAL_CHAINAGE_TRIGGER_STATE,
+  PIN_FIRE_MAX_CROSS_TRACK_M,
+  type ChainagePin,
+  type ChainageTriggerState,
+} from '@/lib/pin-chainage-trigger'
+import {
+  FIELD_DIAGNOSTICS_ENABLED,
+  isChainageTriggerEnabled,
+  reportPinTriggerEvent,
+} from '@/lib/pin-chainage-flag'
+import { recordGpsTraceFix } from '@/lib/gps-trace-recorder'
+import {
+  DISPLAY_LOCAL_BETTER_BY_M,
+  DISPLAY_LOCAL_MAX_CROSS_TRACK_M,
+  DISPLAY_LOCAL_MIN_GAP_M,
+  DISPLAY_LOCAL_WINDOW_M,
+  stepDisplayProgress,
+  type DisplayProgress,
+} from '@/lib/display-progress'
+import type { VehicleMotion } from '@/lib/vehicle-motion'
+import { chainagePinsForRoute } from '@/data/pin-chainage'
+import { routeGeometryVersion } from '@/data/route-geometry'
+import {
   clearManualPinSelection,
   loadManualPinSelection,
   saveManualPinSelection,
@@ -275,9 +299,11 @@ function restoreAudioQueue(
 
 /** Only the newest mounted session may write on pagehide / unmount. */
 let examSaveOwner = 0
-// Per-GPS-fix diagnostics are development-only (production keeps console quiet).
+// Per-GPS-fix diagnostics ([PIN KM], [ROUTE MATCH], [PIN SEQUENCE]) run in
+// development and Vercel Preview builds only, for field tests; production keeps
+// the console quiet (FIELD_DIAGNOSTICS_ENABLED folds to false there).
 const devLog: typeof console.log = (...args) => {
-  if (import.meta.env.DEV) console.log(...args)
+  if (FIELD_DIAGNOSTICS_ENABLED) console.log(...args)
 }
 
 type Props = {
@@ -449,6 +475,12 @@ export function ExamDriveSession({
   const [rawPos, setRawPos] = useState<GpsPosition | null>(null)
   const [userPos, setUserPos] = useState<LatLng | null>(savedState?.userPos || null)
   const currentPositionRef = useRef<LatLng | null>(savedState?.userPos || null)
+  /** Map arrow position (display only, never read by navigation logic). */
+  const [mapVehiclePos, setMapVehiclePos] = useState<LatLng | null>(null)
+  /** Map arrow motion (display only): filtered route progress + speed, for zero-lag prediction. */
+  const [mapVehicleMotion, setMapVehicleMotion] = useState<VehicleMotion | null>(null)
+  /** Display-only route progress behind mapVehiclePos (see display-progress.ts). */
+  const displayProgressRef = useRef<DisplayProgress | null>(null)
   /** Along-road u on examRoadTrace for km-based speed zones (monotonic). */
   const [speedRoadU, setSpeedRoadU] = useState<number | null>(null)
   const speedRoadURef = useRef<number | null>(null)
@@ -705,6 +737,12 @@ export function ExamDriveSession({
   const seedHintChainageRef = useRef<number | null>(null)
   const gpsAutoStartBlockedRef = useRef(false)
   const roundaboutGateRef = useRef<RoundaboutReturnGateState | null>(null)
+  /** Kilometre trigger (active mode): PIN orders queued to be marked passed WITHOUT audio. */
+  const silentPinOrdersRef = useRef<Set<number>>(new Set(savedState?.silentPinSortOrders ?? []))
+  const chainageTriggerStateRef = useRef<ChainageTriggerState>(INITIAL_CHAINAGE_TRIGGER_STATE)
+  /** Kilometre trigger (shadow mode): what the new trigger would already have fired. */
+  const shadowFiredOrdersRef = useRef<Set<number>>(new Set())
+  const shadowTriggerStateRef = useRef<ChainageTriggerState>(INITIAL_CHAINAGE_TRIGGER_STATE)
 
   const setPendingPinSortOrder = useCallback((sortOrder: number | null) => {
     pendingPinSortOrderRef.current = sortOrder
@@ -848,6 +886,18 @@ export function ExamDriveSession({
       if (!pin) return null
       return projectPointToRoute(geometry, [pin.lat, pin.lng])?.chainageMeters ?? null
     }
+    if (route.slug === 'route-2' && sortOrder === 3) {
+      const pin = voicePinsRef.current.find((row) => row.sort_order === sortOrder)
+      const matchedChainage = routeMatchStateRef.current?.chainageMeters
+      if (pin && matchedChainage != null) {
+        return projectPointToRouteNearChainage(
+          geometry,
+          [pin.lat, pin.lng],
+          matchedChainage,
+          40,
+        )?.chainageMeters ?? matchedChainage
+      }
+    }
     if (route.slug === 'route-2' && sortOrder === 26) {
       const pin = voicePinsRef.current.find((row) => row.sort_order === sortOrder)
       const matchedChainage = routeMatchStateRef.current?.chainageMeters
@@ -917,6 +967,101 @@ export function ExamDriveSession({
   )
   const voicePinsRef = useRef(voicePins)
   voicePinsRef.current = voicePins
+  /**
+   * PINs anchored to exact route kilometres (src/data/pin-chainage.json) for the
+   * kilometre trigger. Null (legacy trigger only) when the table does not match
+   * this PIN list or the frozen geometry version — it fails closed.
+   */
+  const chainagePins = useMemo(() => {
+    if (!FIELD_TEST_SLUGS.has(route.slug)) return null
+    const result = chainagePinsForRoute(route.slug, voicePins)
+    if ('reason' in result) {
+      if (voicePins.length > 0) devLog('[PIN KM] chainage table unavailable:', route.slug, result.reason)
+      return null
+    }
+    return result.pins
+  }, [route.slug, voicePins])
+  const chainagePinsRef = useRef<ChainagePin[] | null>(chainagePins)
+  chainagePinsRef.current = chainagePins
+  // Field-test check (dev / Preview console only): which PIN trigger this route uses.
+  useEffect(() => {
+    if (!FIELD_TEST_SLUGS.has(route.slug)) return
+    devLog(
+      '[PIN KM] trigger mode',
+      route.slug.toUpperCase(),
+      chainagePins !== null && isChainageTriggerEnabled(route.slug) ? 'KILOMETRE' : 'LEGACY',
+    )
+  }, [route.slug, chainagePins])
+
+  function chainageTriggerActive(): boolean {
+    return chainagePinsRef.current !== null && isChainageTriggerEnabled(route.slug)
+  }
+
+  /** Orders the kilometre trigger must not fire again: handled, playing, queued or silently passed. */
+  function chainageDoneOrders(): Set<number> {
+    return new Set<number>([
+      ...(handledOrdersRef.current ?? []),
+      ...(pendingPinSortOrderRef.current !== null ? [pendingPinSortOrderRef.current] : []),
+      ...queuedAudioPinOrdersRef.current,
+      ...silentPinOrdersRef.current,
+    ])
+  }
+
+  function shadowDoneOrders(): Set<number> {
+    return new Set<number>([...(handledOrdersRef.current ?? []), ...shadowFiredOrdersRef.current])
+  }
+
+  /** Saved-progress fields for the kilometre system (route identity is the save key + slug). */
+  function chainagePersistenceFields(): Pick<
+    SavedExamState,
+    'silentPinSortOrders' | 'routeGeometryVersion' | 'routeChainageMeters'
+  > {
+    const version = routeGeometryVersion(route.slug)
+    const chainage = routeMatchStateRef.current?.chainageMeters
+    return {
+      ...(silentPinOrdersRef.current.size > 0
+        ? { silentPinSortOrders: [...silentPinOrdersRef.current].sort((a, b) => a - b) }
+        : {}),
+      ...(version && chainage != null && Number.isFinite(chainage)
+        ? { routeGeometryVersion: version, routeChainageMeters: Math.max(0, chainage) }
+        : {}),
+    }
+  }
+
+  function resetChainageTriggerState() {
+    silentPinOrdersRef.current = new Set()
+    chainageTriggerStateRef.current = INITIAL_CHAINAGE_TRIGGER_STATE
+    shadowFiredOrdersRef.current = new Set()
+    shadowTriggerStateRef.current = INITIAL_CHAINAGE_TRIGGER_STATE
+  }
+
+  /**
+   * Hand a kilometre-trigger decision to the EXISTING audio queue, so duplicate
+   * protection, retries, persistence and in-order completion stay unchanged.
+   * Silent entries complete immediately without playback. Queued audible PINs
+   * that are now behind a newer PIN are turned silent (never play outdated turns).
+   */
+  function scheduleChainagePin(order: number, silent: boolean) {
+    const pin = voicePinsRef.current.find((item) => item.sort_order === order)
+    if (!pin) return
+    if (silent) {
+      silentPinOrdersRef.current.add(order)
+    } else {
+      for (const queued of queuedAudioPinOrdersRef.current) {
+        if (queued < order) silentPinOrdersRef.current.add(queued)
+      }
+    }
+    markPinTriggered(pin)
+    if (pendingPinSortOrderRef.current === null) {
+      setPendingPinSortOrder(order)
+    } else if (
+      pendingPinSortOrderRef.current !== order &&
+      !queuedAudioPinOrdersRef.current.includes(order)
+    ) {
+      queuedAudioPinOrdersRef.current.push(order)
+      queuedAudioPinOrdersRef.current.sort((a, b) => a - b)
+    }
+  }
   const completedPreviewOrders = mostAdvancedPinProgress(
     sortedPins,
     initialRoutePinProgress,
@@ -1024,6 +1169,11 @@ export function ExamDriveSession({
       pinApproachRef.current.clear()
       queuedAudioPinOrdersRef.current = []
       setPendingPinSortOrder(null)
+      // Route switch: kilometre-trigger state never leaks between routes.
+      resetChainageTriggerState()
+      displayProgressRef.current = null
+      setMapVehiclePos(null)
+      setMapVehicleMotion(null)
     }
     // ============================================================
     // Resume by slug so local-route-* → Supabase UUID does not drop the session.
@@ -1071,6 +1221,13 @@ export function ExamDriveSession({
         )
         setPendingPinSortOrder(restoredAudio.pending)
         queuedAudioPinOrdersRef.current = restoredAudio.queued
+        // Silent (outdated) queue entries survive a reload so they are never spoken.
+        resetChainageTriggerState()
+        silentPinOrdersRef.current = new Set(
+          (saved.silentPinSortOrders ?? []).filter(
+            (order) => order === restoredAudio.pending || restoredAudio.queued.includes(order),
+          ),
+        )
         sessionStartRef.current = examSessionOriginMs(saved)
         setExam(saved.exam)
         setExamSummary(null)
@@ -1117,8 +1274,20 @@ export function ExamDriveSession({
               timestampMs: Date.now(),
             })
           } else {
-            const restoredChainage =
-              route.slug === 'route-1' && hasSavedDistance
+            // Kilometre trigger: resume from the exact saved route chainage, but
+            // only when it was measured on the SAME frozen geometry version and
+            // belongs to this route's save. Otherwise fall back to the legacy
+            // distance-based restore (older saves have no chainage).
+            const savedChainageUsable =
+              chainageTriggerActive() &&
+              nextOrder > 1 &&
+              (saved.routeSlug === undefined || saved.routeSlug === route.slug) &&
+              typeof saved.routeChainageMeters === 'number' &&
+              Number.isFinite(saved.routeChainageMeters) &&
+              saved.routeGeometryVersion === routeGeometryVersion(route.slug)
+            const restoredChainage = savedChainageUsable
+              ? saved.routeChainageMeters!
+              : route.slug === 'route-1' && hasSavedDistance
                 ? restoredDistance + routeDistanceOriginMetersRef.current
                 : restoredDistance
             applyRouteChainageMeters(restoredChainage, {
@@ -1456,7 +1625,19 @@ export function ExamDriveSession({
     return () => window.clearInterval(id)
   }, [phase])
 
-  // Auto-save exam state every 5 seconds when active; also persist on unmount (Home/leave).
+  // Latest values for the auto-save below. The save effect reads these refs so it
+  // does not re-subscribe (and save twice) on every 1 s timer tick / GPS fix.
+  const examRef = useRef(exam)
+  examRef.current = exam
+  const headingRef = useRef(heading)
+  headingRef.current = heading
+  const speedKmhRef = useRef(speedKmh)
+  speedKmhRef.current = speedKmh
+  const elapsedMsRef = useRef(elapsedMs)
+  elapsedMsRef.current = elapsedMs
+
+  // Auto-save exam state every 5 seconds when active; also persist on hide /
+  // unmount (Home/leave), on PIN events (saveNowRef) and on exam-error changes.
   useEffect(() => {
     if (phase !== 'active') return
     if (finishInProgressRef.current) return // Skip saving if finish is in progress
@@ -1469,7 +1650,7 @@ export function ExamDriveSession({
       if (audioRouteSlugRef.current !== route.slug) return // never let an old route overwrite the new route's queue
       const liveElapsed = sessionStartRef.current
         ? Math.max(0, Date.now() - sessionStartRef.current)
-        : elapsedMs
+        : elapsedMsRef.current
       const pins = pinsRef.current
       const fieldTest = FIELD_TEST_SLUGS.has(route.slug)
         ? (() => {
@@ -1503,15 +1684,16 @@ export function ExamDriveSession({
           ...(tabId ? { tabId } : {}),
           ...(remoteSessionIdRef.current ? { examSessionId: remoteSessionIdRef.current } : {}),
           startMode: sessionStartModeRef.current,
-          exam,
+          exam: examRef.current,
           userPos: currentPositionRef.current,
-          heading,
-          speedKmh,
+          heading: headingRef.current,
+          speedKmh: speedKmhRef.current,
           elapsedMs: liveElapsed,
           distanceMeters: distanceMetersRef.current,
           triggeredPins: Array.from(triggeredRef.current),
           pendingPinSortOrder: pendingPinSortOrderRef.current,
           queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
+          ...chainagePersistenceFields(),
           driveView:
             loadDriveView(route.slug, persistenceScope) ?? driveViewRef.current,
           ...fieldTest,
@@ -1547,13 +1729,16 @@ export function ExamDriveSession({
     userId,
     deviceId,
     tabId,
-    exam,
-    userPos,
-    heading,
-    speedKmh,
-    elapsedMs,
     sortedPins,
   ])
+
+  // An exam error (or severe-quick) changes the score: persist it right away,
+  // as the previous every-render save did.
+  useEffect(() => {
+    if (phaseRef.current !== 'active') return
+    const pendingSave = saveNowRef.current?.()
+    if (pendingSave) void pendingSave.catch(() => undefined)
+  }, [exam])
 
   useEffect(() => {
     if (!gpsStarted) return
@@ -1562,6 +1747,8 @@ export function ExamDriveSession({
       : watchGps
     return subscribe(
       (pos) => {
+        // Development builds only: keep the raw fix for field replay (no-op in production).
+        recordGpsTraceFix(route.slug, pos)
         // Apply GPS filter
         const reading: GpsReading = {
           position: gpsToLatLng(pos),
@@ -1592,6 +1779,13 @@ export function ExamDriveSession({
         const raw = filtered.position
         setUserPos(raw)
         currentPositionRef.current = raw
+        // Map arrow (display only): during an active exam on a matched route the
+        // arrow follows ACCEPTED road-matched positions only (set below).
+        if (!routeGeometryRef.current || phaseRef.current !== 'active') {
+          displayProgressRef.current = null
+          setMapVehiclePos(raw)
+          setMapVehicleMotion(null)
+        }
         updateSpeedRoadProgress(raw)
         const prevRaw = prevGpsRef.current ? gpsToLatLng(prevGpsRef.current) : null
         // When exam route geometry exists (R1–R4), arrow heading is owned by
@@ -1653,18 +1847,18 @@ export function ExamDriveSession({
         // Find the FIRST untriggered pin in sequence
         // This is THE ONLY pin that can trigger right now
         const nextPinIndex = voicePins.findIndex((p) => !triggeredRef.current.has(p.id))
-        const pending = nextPinIndex >= 0 ? voicePins[nextPinIndex] : null
-        
-        setNextPin(pending ?? null)
+        const nextUnhandledPin = nextPinIndex >= 0 ? voicePins[nextPinIndex] : null
+
+        setNextPin(nextUnhandledPin ?? null)
         if (fieldTest && handledOrdersRef.current && totalPins > 0) {
           setRouteComplete(nextSortOrder(voicePins, handledOrdersRef.current).nextSortOrder === null)
         }
         // Log current state
-        if (pending) {
+        if (nextUnhandledPin) {
           devLog('[PIN SEQUENCE]',
             route.slug.toUpperCase(),
             '| Expected: #' + (nextPinIndex + 1),
-            '| ID:', pending.id,
+            '| ID:', nextUnhandledPin.id,
             '| Progress:', triggeredCount + '/' + totalPins
           )
         }
@@ -1702,11 +1896,30 @@ export function ExamDriveSession({
         }
 
         const previousRouteMatch = routeMatchStateRef.current
-        // Route 3 logic for all Telavi routes: ordered forward match through the
-        // finish U-turn, then 300m-right speaks on the post-turn roadside.
+        // PIN that steers the route matcher ("lit PIN"). Legacy: the next
+        // unhandled PIN. Kilometre trigger: the next PIN whose trigger point
+        // progress has NOT reached yet — the legacy matcher never lets progress
+        // run more than 20 m past its lit PIN, so steering on a PIN that progress
+        // already reached (but could not speak consistently) would clamp
+        // progress there for good after a sparse fix or a GPS outage.
+        const pending = (() => {
+          if (!nextUnhandledPin || !chainageTriggerActive()) return nextUnhandledPin
+          const done = chainageDoneOrders()
+          const lastProgress = previousRouteMatch?.chainageMeters
+          const steer = chainagePinsRef.current!.find(
+            (pin) =>
+              !done.has(pin.sortOrder) &&
+              (lastProgress == null || pin.chainageMeters - pin.leadMeters > lastProgress),
+          )
+          return steer ? voicePins.find((pin) => pin.sort_order === steer.sortOrder) ?? null : null
+        })()
+        // Context PINs speak only at their ordered forward occurrence.
         const usesOrderedRouteContext = FIELD_TEST_SLUGS.has(route.slug)
+        const usesRoute2Pin3ContextTarget =
+          route.slug === 'route-2' && pending?.sort_order === 3
         const usesRouteContextTarget =
           (route.slug === 'route-1' && pending?.sort_order === 32) ||
+          usesRoute2Pin3ContextTarget ||
           (route.slug === 'route-2' && pending?.sort_order === 26) ||
           (route.slug === 'route-3' && pending?.sort_order === 28) ||
           (route.slug === 'route-4' && pending?.sort_order === 29)
@@ -1765,6 +1978,7 @@ export function ExamDriveSession({
         let expectedForwardChainageMeters: number | undefined
         if (
           usesTargetOccurrenceContext &&
+          !usesRoute2Pin3ContextTarget &&
           orderedForwardM != null &&
           nearestForwardM != null &&
           nearestForwardM > orderedForwardM + 40
@@ -1778,7 +1992,7 @@ export function ExamDriveSession({
             expectedForwardChainageMeters = orderedForwardM
           } else if (previousRouteMatch.chainageMeters < nearestForwardM - 5) {
             // Route 2 PIN 26 follows a sharp finish U-turn; its match can lag the
-            // fixed 25 m crawl, so let the expected corridor catch up locally.
+            // fixed crawl, so let the expected corridor catch up locally.
             const forwardCrawlMeters =
               route.slug === 'route-2' && pending?.sort_order === 26 ? 40 : 25
             expectedForwardChainageMeters = Math.min(
@@ -1842,28 +2056,53 @@ export function ExamDriveSession({
             }
           }
         }
-        const routeMatch = matchGpsPosition(
-          routeGeometry,
-          {
-            position: raw,
-            accuracyMeters: pos.accuracy,
-            timestampMs: pos.timestamp,
-            headingDegrees: pos.heading,
-          },
-          previousRouteMatch,
-          {
-            nowMs: Date.now(),
-            maxGpsAgeMs: 15_000,
-            maxAccuracyMeters: AUDIO_GPS_MAX_ACCURACY_M,
-            maxCrossTrackMeters: AUDIO_GPS_MAX_CROSS_TRACK_M,
-            maxSpeedMetersPerSecond: 55,
-            stationaryThresholdMeters: 2,
-            ambiguityToleranceMeters: 5,
-            ambiguitySeparationMeters: 100,
-            expectedChainageMeters,
-            expectedForwardChainageMeters,
-          },
-        )
+        const routeFix = {
+          position: raw,
+          accuracyMeters: pos.accuracy,
+          timestampMs: pos.timestamp,
+          headingDegrees: pos.heading,
+        }
+        const routeMatchOptions = {
+          nowMs: Date.now(),
+          maxGpsAgeMs: 15_000,
+          maxAccuracyMeters: AUDIO_GPS_MAX_ACCURACY_M,
+          maxCrossTrackMeters: AUDIO_GPS_MAX_CROSS_TRACK_M,
+          maxSpeedMetersPerSecond: 55,
+          stationaryThresholdMeters: 2,
+          ambiguityToleranceMeters: 5,
+          ambiguitySeparationMeters: 100,
+        }
+        let routeMatch = matchGpsPosition(routeGeometry, routeFix, previousRouteMatch, {
+          ...routeMatchOptions,
+          expectedChainageMeters,
+          expectedForwardChainageMeters,
+        })
+        // Kilometre trigger only: the legacy lit-PIN corridor never lets a match
+        // land more than 20 m past its lit PIN, so after a GPS outage / sparse
+        // fixes that carried the car beyond it every fix was rejected forever
+        // (progress and every later PIN frozen). Retry the same matcher WITHOUT
+        // lit-PIN steering; keep its time-plausibility and loop-ambiguity
+        // rejection, and accept only a forward, physically consistent match.
+        if (
+          chainageTriggerActive() &&
+          previousRouteMatch &&
+          !routeMatch.accepted &&
+          (routeMatch.status === 'off-route' ||
+            routeMatch.status === 'gps-jump' ||
+            routeMatch.status === 'ambiguous-route-match')
+        ) {
+          const recovery = matchGpsPosition(routeGeometry, routeFix, previousRouteMatch, routeMatchOptions)
+          if (
+            recovery.accepted &&
+            recovery.direction === 'forward' &&
+            recovery.projection != null &&
+            recovery.projection.crossTrackMeters <= PIN_FIRE_MAX_CROSS_TRACK_M
+          ) {
+            devLog('[PIN KM] route match recovered without lit-PIN steering', route.slug.toUpperCase(),
+              Math.round(recovery.projection.chainageMeters) + 'm')
+            routeMatch = recovery
+          }
+        }
 
         devLog('[ROUTE MATCH]',
           route.slug.toUpperCase(),
@@ -1871,6 +2110,58 @@ export function ExamDriveSession({
           '| Direction:', routeMatch.direction,
           '| Chainage:', routeMatch.projection ? Math.round(routeMatch.projection.chainageMeters) + 'm' : '—',
         )
+
+        // Map arrow (display only, see display-progress.ts / vehicle-motion.ts):
+        // never read by route progress, chainage, PIN triggering or speed.
+        const publishMapArrow = (
+          candidateChainageMeters: number,
+          crossTrackMeters: number,
+          fallbackPosition: LatLng | null,
+          /** Rejected match: any good local road position wins (not only a nearer one). */
+          preferLocal = false,
+        ) => {
+          // The matcher may hold or snap onto another pass of the route that
+          // runs physically near the car (road doubling back, lit-PIN steering).
+          // If the raw fix is clearly better supported by the road just around
+          // the arrow, the ARROW uses that local position (display only).
+          let displayCandidate = candidateChainageMeters
+          let displayCrossTrack = crossTrackMeters
+          const previousDisplay = displayProgressRef.current
+          if (previousDisplay) {
+            const local = projectPointToRouteNearChainage(
+              routeGeometry,
+              raw,
+              previousDisplay.chainageMeters,
+              DISPLAY_LOCAL_WINDOW_M,
+            )
+            if (
+              local &&
+              local.crossTrackMeters <= DISPLAY_LOCAL_MAX_CROSS_TRACK_M &&
+              (preferLocal ||
+                (local.crossTrackMeters + DISPLAY_LOCAL_BETTER_BY_M < crossTrackMeters &&
+                  Math.abs(local.chainageMeters - candidateChainageMeters) > DISPLAY_LOCAL_MIN_GAP_M))
+            ) {
+              displayCandidate = local.chainageMeters
+              displayCrossTrack = local.crossTrackMeters
+            }
+          }
+          const display = stepDisplayProgress(displayProgressRef.current, {
+            candidateChainageMeters: displayCandidate,
+            crossTrackMeters: displayCrossTrack,
+            speedMps: pos.speed,
+            timestampMs: pos.timestamp,
+          })
+          displayProgressRef.current = display
+          const shown = positionAtChainageMeters(routeGeometry, display.chainageMeters)
+          const shownPosition: LatLng | null = shown ? [shown[0], shown[1]] : fallbackPosition
+          if (shownPosition) setMapVehiclePos(shownPosition)
+          setMapVehicleMotion((previous) => ({
+            geometry: routeGeometry,
+            chainageMeters: display.chainageMeters,
+            speedMps: display.speedMps,
+            seq: (previous?.seq ?? 0) + 1,
+          }))
+        }
 
         // Keep arrow slewing through brief off-route gaps on all R1–R4 U-tips:
         // never freeze then snap ~180°. Pin speak / 300m-right gate logic untouched.
@@ -1888,6 +2179,8 @@ export function ExamDriveSession({
           elapsedMs: previousRouteMatch
             ? Math.max(0, pos.timestamp - previousRouteMatch.timestampMs)
             : 0,
+          maxReverseMeters:
+            route.slug === 'route-2' && pending?.sort_order === 4 ? 2 : undefined,
         })
         const pendingPinRecoveryReady =
           pending != null &&
@@ -1943,6 +2236,8 @@ export function ExamDriveSession({
             )
             rejectChainage = crept
           }
+          // Map arrow input: the forward estimate BEFORE any pass switch below.
+          const mapArrowRejectChainage = rejectChainage
           // Arrow only: on a doubled road the locked pass can be the wrong one;
           // the car's real travel direction may move the arrow to the right pass.
           if (rejectChainage != null) {
@@ -1951,10 +2246,21 @@ export function ExamDriveSession({
               position: raw,
               matchedChainageMeters: rejectChainage,
               timestampMs: pos.timestamp,
+              aggressiveSelfCorrection:
+                route.slug === 'route-2' &&
+                (pending?.sort_order === 3 || pending?.sort_order === 4),
             })
             if (arrowChainageRef.current?.override) {
               rejectChainage = arrowChainageRef.current.chain.chainageMeters
             }
+          }
+          // Map arrow (display only): keep it moving through rejected stretches
+          // (e.g. hairpin turns) instead of freezing and then jumping when
+          // matches resume. Prefer the raw fix on the road right around the
+          // arrow; otherwise the forward estimate, treated as untrusted (the
+          // arrow coasts at its learned speed, never jumps to another pass).
+          if (mapArrowRejectChainage != null && previousRouteMatch && prevRaw) {
+            publishMapArrow(mapArrowRejectChainage, Number.POSITIVE_INFINITY, null, true)
           }
           const rejectTarget =
             rejectChainage != null
@@ -1984,6 +2290,13 @@ export function ExamDriveSession({
           routeMatch.projection.position[1],
         ]
         setUserPos(matchedPosition)
+        // Map arrow (display only): filtered progress along the fixed route line,
+        // so GPS noise / matcher snaps can never make the arrow jump ahead.
+        publishMapArrow(
+          routeMatch.nextState.chainageMeters,
+          routeMatch.projection.crossTrackMeters,
+          matchedPosition,
+        )
         currentPositionRef.current = matchedPosition
         {
           arrowChainageRef.current = stepArrowTracker(arrowChainageRef.current, {
@@ -1991,6 +2304,9 @@ export function ExamDriveSession({
             position: raw,
             matchedChainageMeters: routeMatch.nextState.chainageMeters,
             timestampMs: pos.timestamp,
+            aggressiveSelfCorrection:
+              route.slug === 'route-2' &&
+              (pending?.sort_order === 3 || pending?.sort_order === 4),
           })
           const matchedHeading = forwardBearingAlongRoute(
             routeGeometry,
@@ -2009,6 +2325,58 @@ export function ExamDriveSession({
               ),
             )
           }
+        }
+
+        // ============================================================
+        // KILOMETRE-CROSSING PIN TRIGGER
+        // Flag OFF (default): shadow only — computed and reported, the legacy
+        // trigger below stays in control. Flag ON for this route: the PIN fires
+        // when accepted route progress reaches its stored kilometre − lead.
+        // ============================================================
+        const chainagePins = chainagePinsRef.current
+        if (chainagePins) {
+          const activeMode = isChainageTriggerEnabled(route.slug)
+          const decision = decideChainageTrigger({
+            pins: chainagePins,
+            done: activeMode ? chainageDoneOrders() : shadowDoneOrders(),
+            progressAccepted: true,
+            progressMeters: adoptedChainageMeters,
+            crossTrackMeters: routeMatch.projection.crossTrackMeters,
+            gpsPosition: raw,
+            gpsHeadingDegrees: pos.heading,
+            gpsSpeedMps: pos.speed,
+            routeBearingDegrees: routeMatch.projection.segmentBearingDegrees,
+            state: activeMode ? chainageTriggerStateRef.current : shadowTriggerStateRef.current,
+          })
+          if (activeMode) chainageTriggerStateRef.current = decision.state
+          else shadowTriggerStateRef.current = decision.state
+          if (decision.play !== null || decision.passSilently.length > 0) {
+            reportPinTriggerEvent({
+              routeSlug: route.slug,
+              mode: activeMode ? 'active' : 'shadow',
+              play: decision.play,
+              passSilently: decision.passSilently,
+              progressMeters: adoptedChainageMeters,
+              gpsTimestampMs: pos.timestamp,
+            })
+            devLog(
+              activeMode ? '[PIN KM]' : '[PIN KM SHADOW]',
+              route.slug.toUpperCase(),
+              '| progress:', Math.round(adoptedChainageMeters) + 'm',
+              '| play:', decision.play ?? '—',
+              '| passed silently:', decision.passSilently.join(',') || '—',
+            )
+            if (activeMode) {
+              for (const order of decision.passSilently) scheduleChainagePin(order, true)
+              if (decision.play !== null) scheduleChainagePin(decision.play, false)
+              const pendingSave = saveNowRef.current?.()
+              if (pendingSave) void pendingSave.catch(() => undefined)
+            } else {
+              for (const order of decision.passSilently) shadowFiredOrdersRef.current.add(order)
+              if (decision.play !== null) shadowFiredOrdersRef.current.add(decision.play)
+            }
+          }
+          if (activeMode) return
         }
 
         const target = pending
@@ -2205,7 +2573,7 @@ export function ExamDriveSession({
       }, delayMs)
     }
 
-    const completePin = () => {
+    const completePin = (silent = false) => {
       if (!isCurrent()) return
       if (audioQueueWatchdogRef.current !== null) {
         clearTimeout(audioQueueWatchdogRef.current)
@@ -2218,7 +2586,7 @@ export function ExamDriveSession({
       markPinHandled(currentPin)
       pinApproachRef.current.delete(currentPin.id)
       setAudioPlaybackError(null)
-      setLastSpoken(formatPinInstructionLabel(currentPin.sort_order, currentPin.instruction_ka))
+      if (!silent) setLastSpoken(formatPinInstructionLabel(currentPin.sort_order, currentPin.instruction_ka))
       setPendingPinSortOrder(queuedAudioPinOrdersRef.current.shift() ?? null)
       const pendingSave = saveNowRef.current?.()
       if (pendingSave) void pendingSave.catch(() => undefined)
@@ -2246,6 +2614,13 @@ export function ExamDriveSession({
 
     const attemptPlayback = async () => {
       if (!isCurrent() || audioAttemptInFlightRef.current || audioWaitingForUserRef.current) return
+      // Kilometre trigger: an outdated PIN the car already passed is marked
+      // handled WITHOUT playing its instruction.
+      if (silentPinOrdersRef.current.has(target.sort_order)) {
+        silentPinOrdersRef.current.delete(target.sort_order)
+        completePin(true)
+        return
+      }
       if (startAudioPendingRef.current || audioEngine.isBusy()) {
         busyRetries += 1
         if (busyRetries > AUDIO_BUSY_MAX_RETRIES) {
@@ -2578,6 +2953,9 @@ export function ExamDriveSession({
     if (isFieldTest && handled.size > 0) saveRoutePinProgress(route.slug, handled, persistenceScope)
     triggeredRef.current = pinIdsForOrders(voicePins, handled)
     pinApproachRef.current = new Map()
+    resetChainageTriggerState()
+    displayProgressRef.current = null
+    setMapVehicleMotion(null)
     routeMatchStateRef.current = null
     arrowChainageRef.current = null
     setPendingPinSortOrder(null)
@@ -2884,12 +3262,34 @@ export function ExamDriveSession({
     return orders
   }
 
+  /**
+   * Re-anchored match state must carry the GPS time of the last accepted fix,
+   * not the device wall clock: matchGpsPosition rejects any later fix whose
+   * timestamp is not newer ('out-of-order-fix'), so a device clock running
+   * ahead of GPS time used to freeze progress and PINs after every anchor.
+   */
+  function anchorTimestampMs(): number {
+    const lastFix = routeMatchStateRef.current?.timestampMs
+    return lastFix != null && Number.isFinite(lastFix) ? lastFix : Date.now()
+  }
+
   function anchorDistanceAtConfirmedPin(pin: PinRow) {
+    if (chainageTriggerActive()) {
+      // Kilometre trigger: GPS route progress is the truth. Snapping progress to
+      // the PIN (the legacy anchor, up to ~60 m backwards on loop PINs) would
+      // corrupt it. Route 1 keeps its HUD km origin at PIN 1 only.
+      if (route.slug === 'route-1' && pin.sort_order === 1) {
+        routeDistanceOriginMetersRef.current = route1StartPinChainageMeters()
+        const current = routeMatchStateRef.current?.chainageMeters
+        if (current != null) applyRouteChainageMeters(current)
+      }
+      return
+    }
     if (route.slug === 'route-1' && pin.sort_order === 1) {
       routeDistanceOriginMetersRef.current = route1StartPinChainageMeters()
       applyRouteChainageMeters(routeDistanceOriginMetersRef.current, {
         syncMatchState: true,
-        timestampMs: Date.now(),
+        timestampMs: anchorTimestampMs(),
       })
       return
     }
@@ -2900,7 +3300,7 @@ export function ExamDriveSession({
     if (decision.action !== 'pin-anchor') return
     applyRouteChainageMeters(decision.chainageMeters, {
       syncMatchState: true,
-      timestampMs: Date.now(),
+      timestampMs: anchorTimestampMs(),
     })
   }
 
@@ -3142,6 +3542,7 @@ export function ExamDriveSession({
       startMode: sessionStartModeRef.current,
       pendingPinSortOrder: pendingPinSortOrderRef.current,
       queuedPinSortOrders: [...queuedAudioPinOrdersRef.current],
+      ...chainagePersistenceFields(),
       driveView: loadDriveView(route.slug, persistenceScope) ?? driveViewRef.current,
       ...(FIELD_TEST_SLUGS.has(route.slug) ? fieldTestProgressFields() : {}),
       savedAt: Date.now(),
@@ -3603,8 +4004,9 @@ export function ExamDriveSession({
       : null
 
   const sessionLayout = mapOnly ? 'nav-only' : features.canSwitchViews ? 'switchable' : 'panel-only'
+  // Display-only: an inaccurate/rejected fix never moves the map arrow off the road.
   const mapCenter: LatLng | null =
-    userPos ?? polyline[0] ?? ([TELAVI_CENTER.lat, TELAVI_CENTER.lng] as LatLng)
+    mapVehiclePos ?? userPos ?? polyline[0] ?? ([TELAVI_CENTER.lat, TELAVI_CENTER.lng] as LatLng)
   const shouldRenderMap = Boolean(showMapView && mapCenter)
   const mapConditions = {
     showMapView,
@@ -3788,6 +4190,7 @@ export function ExamDriveSession({
                 nextPin={summaryOpen ? null : nextPin}
                 hasGpsFix={userPos !== null}
                 offlineMaps={offlineMaps}
+                vehicleMotion={mapVehicleMotion}
               />
             )}
             {shouldRenderMap && active && (
@@ -3829,6 +4232,9 @@ export function ExamDriveSession({
           <RoutePreviewMap
             route={route}
             offlineMaps={offlineMaps}
+            // Demo page only (it is the only caller with a simulated GPS source):
+            // same turquoise route line and golden PINs as the live navigation map.
+            navigationStyle={Boolean(previewGpsSource)}
             selectedPinOrder={
               previewSelectionMode === 'manual'
                 ? previewPin?.sort_order ?? null

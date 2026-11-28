@@ -82,6 +82,7 @@ describe('wrong-pass self-correction (Route 3 doubled street at PIN 6/15)', () =
         position: [p[0], p[1]],
         matchedChainageMeters: 4090 + i * 8.3, // wrong-pass lock keeps "advancing"
         timestampMs: ts,
+        aggressiveSelfCorrection: true,
       })
       if (state?.override && switchedAt < 0) switchedAt = i
     }

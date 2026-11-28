@@ -8,6 +8,7 @@ import { getRouteOfficialPreviewMap } from '@/data/route-preview-maps'
 import { OfficialRoutePreviewZoom } from '@/components/OfficialRoutePreviewZoom'
 import { MAP_TILES } from '@/lib/map-tiles'
 import { examMapRouteLines } from '@/lib/pin-route-line'
+import { ROUTE_PIN_STYLE } from '@/lib/route-pin-style'
 import type { LatLng } from '@/lib/gps'
 import type { RouteWithPins } from '@/types/database'
 
@@ -16,6 +17,8 @@ type Props = {
   selectedPinOrder?: number | null
   onPinSelect?: (sortOrder: number) => void
   offlineMaps?: boolean
+  /** Use the live navigation map's turquoise route line and golden PINs (demo page). */
+  navigationStyle?: boolean
 }
 
 function MapSizeFix() {
@@ -67,22 +70,34 @@ function RoutePin({
   order,
   selected,
   onSelect,
+  navigationStyle = false,
 }: {
   position: LatLng
   order: number
   selected: boolean
   onSelect?: (sortOrder: number) => void
+  navigationStyle?: boolean
 }) {
-  return (
-    <CircleMarker
-      center={position}
-      radius={selected ? 8 : 6}
-      pathOptions={{
+  const nav = selected ? ROUTE_PIN_STYLE.next : ROUTE_PIN_STYLE.upcoming
+  const pathOptions = navigationStyle
+    ? {
+        color: nav.stroke,
+        fillColor: nav.fill,
+        fillOpacity: nav.fillOpacity,
+        opacity: nav.strokeOpacity,
+        weight: nav.weight,
+      }
+    : {
         color: selected ? '#0f172a' : '#ffffff',
         fillColor: selected ? '#facc15' : '#1d4ed8',
         fillOpacity: 1,
         weight: selected ? 3 : 2,
-      }}
+      }
+  return (
+    <CircleMarker
+      center={position}
+      radius={navigationStyle ? nav.radius : selected ? 8 : 6}
+      pathOptions={pathOptions}
       eventHandlers={onSelect ? { click: () => onSelect(order) } : undefined}
     >
       <Tooltip permanent direction="top" offset={[0, -5]} className="route-pin-tip">
@@ -121,11 +136,13 @@ function InteractiveRoutePreviewMap({
   selectedPinOrder,
   onPinSelect,
   offlineMaps = false,
+  navigationStyle = false,
 }: {
   route: RouteWithPins
   selectedPinOrder?: number | null
   onPinSelect?: (sortOrder: number) => void
   offlineMaps?: boolean
+  navigationStyle?: boolean
 }) {
   const pins = [...route.pins].sort((a, b) => a.sort_order - b.sort_order)
   const lines = examMapRouteLines(route.slug, pins)
@@ -169,7 +186,7 @@ function InteractiveRoutePreviewMap({
         <MapBasemapLayers tiles={MAP_TILES} detectRetina enabled={!offlineMaps} />
         {lines.map((line, index) =>
           line.length >= 2 ? (
-            <RoutePolyline key={index} positions={line} variant="pins" />
+            <RoutePolyline key={index} positions={line} variant={navigationStyle ? 'navigation' : 'pins'} />
           ) : null,
         )}
         {pins.map((pin) => (
@@ -179,6 +196,7 @@ function InteractiveRoutePreviewMap({
             order={pin.sort_order}
             selected={pin.sort_order === selectedPinOrder}
             onSelect={onPinSelect}
+            navigationStyle={navigationStyle}
           />
         ))}
         <RouteEndpoint position={start} kind="start" />
@@ -201,7 +219,7 @@ function InteractiveRoutePreviewMap({
   )
 }
 
-export function RoutePreviewMap({ route, selectedPinOrder, onPinSelect, offlineMaps }: Props) {
+export function RoutePreviewMap({ route, selectedPinOrder, onPinSelect, offlineMaps, navigationStyle }: Props) {
   const officialMap = route.slug === 'route-5' ? getRouteOfficialPreviewMap(route.slug) : null
   if (officialMap) {
     return <OfficialRoutePreviewImage map={officialMap} />
@@ -212,6 +230,7 @@ export function RoutePreviewMap({ route, selectedPinOrder, onPinSelect, offlineM
       selectedPinOrder={selectedPinOrder}
       onPinSelect={onPinSelect}
       offlineMaps={offlineMaps}
+      navigationStyle={navigationStyle}
     />
   )
 }

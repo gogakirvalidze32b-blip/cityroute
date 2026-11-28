@@ -1,8 +1,8 @@
 import { FormEvent, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
+import { PublicSiteFooter } from '@/components/PublicSiteFooter'
 import { useAuth } from '@/context/AuthContext'
-import { SupportFooterLinks } from '@/components/support/SupportLinks'
 
 export function RegisterPage() {
   const { signUp, signInWithGoogle, user, loading } = useAuth()
@@ -23,6 +23,7 @@ export function RegisterPage() {
         <div className="auth-card">
           <p className="muted">იტვირთება...</p>
         </div>
+        <PublicSiteFooter />
       </div>
     )
   }
@@ -66,6 +67,7 @@ export function RegisterPage() {
             შესვლა
           </Link>
         </div>
+        <PublicSiteFooter />
       </div>
     )
   }
@@ -77,7 +79,7 @@ export function RegisterPage() {
       </div>
       <div className="auth-card">
         <h1>რეგისტრაცია</h1>
-        <p className="muted">12 საათი სრული საცდელი · შესვლის შემდეგ აირჩევ პაკეტს · 1 ანგარიში = 1 მანქანა</p>
+        <p className="muted">12-საათიანი საცდელი წვდომა · პაკეტის მიხედვით 1 ან 2 მოწყობილობა</p>
         <form onSubmit={onSubmit} className="form">
           <label>
             სახელი
@@ -129,7 +131,7 @@ export function RegisterPage() {
           უკვე გაქვს ანგარიში? <Link to="/login">შესვლა</Link>
         </p>
       </div>
-      <SupportFooterLinks />
+      <PublicSiteFooter />
     </div>
   )
 }

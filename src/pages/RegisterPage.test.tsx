@@ -22,7 +22,7 @@ describe('Registration Trial duration', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getByText(/12 საათი სრული საცდელი/)).toBeTruthy()
+    expect(screen.getByText(/12-საათიანი საცდელი წვდომა/)).toBeTruthy()
     expect(screen.queryByText(/24 საათ/)).toBeNull()
   })
 

@@ -28,6 +28,7 @@ import {
   type ActiveRouteId,
   type PreparedRouteGeometry,
 } from '@/lib/pure-route-geometry'
+import { examRouteLine } from '@/lib/pin-route-line'
 import type { RouteWithPins } from '@/types/database'
 import type { LatLng } from '@/lib/gps'
 
@@ -43,6 +44,18 @@ vi.mock('@/context/AuthContext', () => ({
 
 vi.mock('@/hooks/useExamLayoutMode', () => ({
   useExamLayoutMode: () => 'desktop' as const,
+}))
+
+// This file drives a FICTIONAL straight route that reuses the 'route-2' slug.
+// Since the chainage migration the four exam routes use frozen real-world
+// geometry, so the fictional world must keep building its line from its own
+// pins (the pre-freeze behaviour). Real-route frozen geometry is covered by
+// ExamDriveSession.replay.test.tsx and src/test/migration-baseline.
+vi.mock('@/data/route-geometry', () => ({
+  frozenRouteGeometry: () => null,
+  frozenMatchLine: () => null,
+  frozenMapLines: () => null,
+  routeGeometryVersion: () => null,
 }))
 
 const h = vi.hoisted(() => ({
@@ -274,6 +287,76 @@ describe('ExamDriveSession – PIN audio wiring', () => {
   })
 
   const played = () => vi.mocked(audioEngine.playDetailed as (...a: unknown[]) => unknown).mock.calls.map((c) => c[1])
+
+  it('waits to announce Route 2 PIN 3 until its forward occurrence after the turn', async () => {
+    cleanup()
+    localStorage.clear()
+    const selectedRoute = TELAVI_ROUTES_FALLBACK.find((item) => item.slug === 'route-2')!
+    const pins = [...selectedRoute.pins].sort((a, b) => a.sort_order - b.sort_order)
+    const geometry = prepareRouteGeometry('route-2', examRouteLine('route-2', pins))
+    const pin2 = pins.find((pin) => pin.sort_order === 2)!
+    const pin3 = pins.find((pin) => pin.sort_order === 3)!
+    const pin4 = pins.find((pin) => pin.sort_order === 4)!
+    const pin2Chainage = projectPointToRoute(geometry, [pin2.lat, pin2.lng])!.chainageMeters
+    const pin3Chainage = projectPointToRoute(geometry, [pin3.lat, pin3.lng])!.chainageMeters
+    const pin4Chainage = projectPointToRoute(geometry, [pin4.lat, pin4.lng])!.chainageMeters
+    const beforeTurnChainage = pin3Chainage - 25
+    const completedPins = pins.filter((pin) => pin.sort_order < 3)
+
+    saveRoutePinProgress('route-2', completedPins.map((pin) => pin.sort_order))
+    saveActiveExam({
+      routeId: selectedRoute.id,
+      routeSlug: selectedRoute.slug,
+      routeName: selectedRoute.name_ka,
+      phase: 'active',
+      exam: createExamSession(selectedRoute.id, selectedRoute.name_ka),
+      userPos: roadPointAt(geometry, pin2Chainage),
+      heading: 205,
+      speedKmh: 20,
+      elapsedMs: 1000,
+      triggeredPins: completedPins.map((pin) => pin.id),
+      savedAt: Date.now(),
+    })
+    render(<ExamDriveSession route={selectedRoute} />)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    let previousChainage = pin2Chainage
+    const emitAt = async (chainage: number) => {
+      advanceGpsClock(Math.max(150, Math.ceil((chainage - previousChainage) / 16.7 * 1_000)))
+      previousChainage = chainage
+      const position = roadPointAt(geometry, chainage)
+      await act(async () => {
+        h.gpsCb!({
+          latitude: position[0],
+          longitude: position[1],
+          accuracy: 3,
+          heading: 205,
+          speed: 10,
+          timestamp: gpsClock,
+        })
+        await Promise.resolve()
+      })
+    }
+
+    await emitAt(pin2Chainage)
+    await emitAt(pin3Chainage - 55)
+    await emitAt(pin3Chainage - 40)
+    await emitAt(beforeTurnChainage)
+    expect(played()).not.toContain(pin3.id)
+
+    await emitAt(pin3Chainage - 8)
+    expect(played()).toContain(pin3.id)
+    expect(played().filter((id) => id === pin3.id)).toHaveLength(1)
+
+    for (let chainage = pin3Chainage - 5.5; chainage < pin4Chainage - 10; chainage += 2.5) {
+      await emitAt(chainage)
+      expect(played()).not.toContain(pin4.id)
+    }
+    await emitAt(pin4Chainage - 5)
+    expect(played()).toContain(pin4.id)
+  })
 
   it('plays the start cue once on an allowed new-start PIN and not on GPS repeats', async () => {
     cleanup()

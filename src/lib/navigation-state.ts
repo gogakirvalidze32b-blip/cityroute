@@ -20,6 +20,11 @@ import bearing from '@turf/bearing'
 import { point } from '@turf/helpers'
 import distance from '@turf/distance'
 
+// Per-GPS-fix diagnostics: development builds only (tablets pay for console I/O).
+const devLog: typeof console.log = (...args) => {
+  if (import.meta.env.DEV) console.log(...args)
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -210,7 +215,7 @@ export class NavigationStateManager {
       lastProcessedTimestamp: update.timestamp,
     }
     
-    console.log('[NAV] Initialized:', {
+    devLog('[NAV] Initialized:', {
       position: snappedPosition,
       progress: progress.meters.toFixed(1) + 'm',
       heading: this.state.heading.toFixed(1) + '°',
@@ -285,7 +290,7 @@ export class NavigationStateManager {
       lastProcessedTimestamp: update.timestamp,
     }
     
-    console.log('[NAV] Updated:', {
+    devLog('[NAV] Updated:', {
       rawDist: rawDistance.toFixed(1) + 'm',
       progress: acceptedProgress.toFixed(1) + 'm',
       heading: newHeading.toFixed(1) + '°',

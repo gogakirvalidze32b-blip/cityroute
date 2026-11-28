@@ -5,6 +5,31 @@ import route2Official from './route-2-official.json'
 import auditedPins from './audio-audit-pins.fixture.json'
 import { L, TELAVI_CENTER } from './telavi-landmarks'
 import { applyCommonFinishInstructions } from './route-finish'
+import { coordinateFromChainage, frozenPreparedGeometry, pinChainageTable } from './pin-chainage'
+import { routeGeometryVersion } from './route-geometry'
+
+/**
+ * PIN position = its route kilometre (src/data/pin-chainage.json) on the frozen
+ * route geometry + the stored exact offset. Unchanged PINs reproduce their
+ * original coordinates bit-for-bit (guarded by src/test/migration-baseline);
+ * a PIN moved by kilometre (scripts/move-pin-chainage.mts) gets its new
+ * coordinate here automatically. Fails safe: if the table does not cover this
+ * exact PIN list or the geometry version differs, the bundled coordinates are kept.
+ */
+function withChainageCoordinates<T extends { sort_order: number; lat: number; lng: number }>(
+  slug: string,
+  pins: T[],
+): T[] {
+  const table = pinChainageTable(slug)
+  const geometry = frozenPreparedGeometry(slug)
+  if (!table || !geometry || table.geometryVersion !== routeGeometryVersion(slug)) return pins
+  const byOrder = new Map(table.pins.map((entry) => [entry.sort_order, entry]))
+  if (byOrder.size !== pins.length || pins.some((pin) => !byOrder.has(pin.sort_order))) return pins
+  return pins.map((pin) => {
+    const coordinate = coordinateFromChainage(geometry, byOrder.get(pin.sort_order)!)
+    return coordinate ? { ...pin, lat: coordinate[0], lng: coordinate[1] } : pin
+  })
+}
 
 export { TELAVI_CENTER }
 
@@ -104,7 +129,9 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 1,
     active: true,
     polyline: line('route-1', route1Fallback),
-    pins: ROUTE1_PINS_ENABLED ? applyCommonFinishInstructions(route1Pins('local-route-1')) : [],
+    pins: ROUTE1_PINS_ENABLED
+      ? withChainageCoordinates('route-1', applyCommonFinishInstructions(route1Pins('local-route-1')))
+      : [],
   },
   {
     id: 'local-route-2',
@@ -116,7 +143,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 2,
     active: true,
     polyline: line('route-2', route2Fallback),
-    pins: applyCommonFinishInstructions(pinsFromAudit(2, 'local-route-2', 'p2')),
+    pins: withChainageCoordinates('route-2', applyCommonFinishInstructions(pinsFromAudit(2, 'local-route-2', 'p2'))),
   },
   {
     id: 'local-route-3',
@@ -128,7 +155,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 3,
     active: true,
     polyline: line('route-3', route3Fallback),
-    pins: applyCommonFinishInstructions(pinsFromAudit(3, 'local-route-3', 'p3')),
+    pins: withChainageCoordinates('route-3', applyCommonFinishInstructions(pinsFromAudit(3, 'local-route-3', 'p3'))),
   },
   {
     id: 'local-route-4',
@@ -140,7 +167,7 @@ export const TELAVI_ROUTES_FALLBACK: RouteWithPins[] = [
     sort_order: 4,
     active: true,
     polyline: line('route-4', route4Fallback),
-    pins: applyCommonFinishInstructions(pinsFromAudit(4, 'local-route-4', 'p4')),
+    pins: withChainageCoordinates('route-4', applyCommonFinishInstructions(pinsFromAudit(4, 'local-route-4', 'p4'))),
   },
   {
     id: 'local-route-5',

@@ -1,0 +1,248 @@
+/* Rules & Terms text (shared by the terms window on Login and the signed-in page). */
+.rules-terms__intro {
+  margin: 12px 0 4px;
+  color: #4b5563;
+}
+
+.rules-terms__section h3 {
+  margin: 14px 0 6px;
+  color: #111827;
+  font-size: 14.5px;
+  font-weight: 700;
+}
+
+.rules-terms__section p,
+.rules-terms__section ul {
+  margin: 0 0 8px;
+  color: #374151;
+}
+
+.rules-terms__section ul {
+  padding-left: 20px;
+}
+
+/* Login consent checkbox ("ვეთანხმები წესებსა და პირობებს"). */
+.login-v2__consent {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #d5e8e6;
+  text-align: left;
+  cursor: pointer;
+}
+
+.login-v2__consent input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: #12c9a0;
+  cursor: pointer;
+}
+
+.login-v2__consent input:focus-visible {
+  outline: 2px solid #2de0c0;
+  outline-offset: 2px;
+}
+
+.login-v2__consent-link {
+  display: inline;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  color: #2de0c0;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.login-v2__consent-link:focus-visible {
+  outline: 2px solid #2de0c0;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.login-v2__consent-hint {
+  margin: -0.2rem 0 0;
+  color: #9fbcc2;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+/* Blocked only for missing consent (not "working…"): show a not-allowed cursor. */
+.login-v2__submit.is-consent-blocked:disabled,
+.login-v2__google.is-consent-blocked:disabled {
+  cursor: not-allowed;
+}
+
+/* Unread terms: the checkbox looks inactive until "წავიკითხე". */
+.login-v2__consent.is-unread input {
+  opacity: 0.55;
+}
+
+/* Full Rules & Terms dialog (Login: read before consenting). */
+.terms-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(3, 10, 16, 0.72);
+}
+
+.terms-dialog__panel {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 640px;
+  max-height: min(86vh, 860px);
+  max-height: min(86dvh, 860px);
+  background: #ffffff;
+  border: 1px solid #3b82f6;
+  border-radius: 14px;
+  color: #1f2937;
+  text-align: left;
+  overflow: hidden;
+  outline: none;
+}
+
+.terms-dialog__header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 10px 52px;
+  border-bottom: 1px solid #dbe7fb;
+}
+
+.terms-dialog__header h2 {
+  margin: 0;
+  color: #1d4ed8;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.terms-dialog__close {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  box-shadow: none;
+  color: #475569;
+  cursor: pointer;
+}
+
+.terms-dialog__close:hover {
+  background: #f1f5f9;
+}
+
+.terms-dialog__close svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.terms-dialog__body {
+  min-height: 0;
+  padding: 4px 20px 18px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.terms-dialog .terms-dialog__body a {
+  color: #1d4ed8;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.terms-dialog__read {
+  display: block;
+  width: 100%;
+  min-height: 46px;
+  margin: 18px 0 0;
+  padding: 10px 16px;
+  background: #1d4ed8;
+  border: 0;
+  border-radius: 12px;
+  color: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.terms-dialog__read:hover {
+  background: #1e40af;
+}
+
+@media (max-width: 480px) {
+  .terms-dialog {
+    padding: 10px;
+  }
+
+  .terms-dialog__body {
+    padding: 2px 14px 14px;
+    font-size: 13.5px;
+  }
+}
+
+/* Preview Demo login page: way back to the demo route list. */
+.demo-login-back {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+}
+
+/* Signed-in Home: small "წესები და პირობები" link — footer text size, Login link look. */
+.home-terms {
+  margin: 0;
+  font-size: clamp(0.7rem, 1.8vh, 0.92rem);
+  line-height: 1.25;
+  text-align: center;
+}
+
+.home-terms__link {
+  display: inline;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: #2de0c0;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.home-terms__link:focus-visible {
+  outline: 2px solid #2de0c0;
+  outline-offset: 2px;
+  border-radius: 3px;
+}

@@ -143,6 +143,7 @@ export function stabilizeRoadArrowHeading(
   maxStepDeg = 45,
   deadbandDeg = 8,
   allowInstantSnap = true,
+  maxAdaptiveStepDeg = 18,
 ): number {
   if (!Number.isFinite(targetDeg)) return previousDeg
   if (!Number.isFinite(previousDeg)) return ((targetDeg % 360) + 360) % 360
@@ -158,9 +159,10 @@ export function stabilizeRoadArrowHeading(
   // (cluster blend); a 32°/tick world jump still reads as a spin on heading-up.
   let stepCap = Math.max(1, maxStepDeg)
   if (!allowInstantSnap) {
-    if (absTurn > 70) stepCap = Math.max(stepCap, 18)
-    else if (absTurn > 45) stepCap = Math.max(stepCap, 14)
-    else if (absTurn > 25) stepCap = Math.max(stepCap, 12)
+    const adaptiveCap = Math.max(1, maxAdaptiveStepDeg)
+    if (absTurn > 70) stepCap = Math.max(stepCap, adaptiveCap)
+    else if (absTurn > 45) stepCap = Math.max(stepCap, Math.min(14, adaptiveCap))
+    else if (absTurn > 25) stepCap = Math.max(stepCap, Math.min(12, adaptiveCap))
   }
   const step = Math.sign(turn) * Math.min(absTurn, stepCap)
   return ((previousDeg + step) % 360 + 360) % 360

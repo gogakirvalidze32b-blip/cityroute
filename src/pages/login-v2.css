@@ -3,6 +3,7 @@
   height: 100vh;
   height: 100dvh;
   display: flex;
+  flex-direction: column;
   padding: clamp(1rem, 4vw, 3rem);
   padding-bottom: max(clamp(1rem, 4vw, 3rem), env(safe-area-inset-bottom));
   box-sizing: border-box;
@@ -38,6 +39,7 @@
 .login-v2__layout {
   position: relative;
   z-index: 1;
+  flex: 1 0 auto;
   width: 100%;
   max-width: 1180px;
   margin: auto;

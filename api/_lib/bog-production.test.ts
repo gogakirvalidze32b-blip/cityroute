@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   canApplyBogStatus,
   createBogIdempotencyKey,
+  getBogOrderDetails,
+  logBogDiagnostic,
   verifyBogOrderDetails,
   type BogOrderDetails,
   type BogStatus,
@@ -18,6 +20,8 @@ import {
   resolveDeviceSlotPackage,
   type StoredBogCheckout,
 } from './bog-production.ts'
+
+type BogInitializeDependencies = NonNullable<Parameters<typeof handleBogInitialize>[1]>
 
 const environment = {
   VERCEL_ENV: 'production',
@@ -63,6 +67,317 @@ function request(url: string, init: RequestInit = {}) {
 describe('BOG Production payment API', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  describe('BOG diagnostic logging', () => {
+    beforeEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('projects only safe diagnostic fields and redacts sensitive message content', () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+      logBogDiagnostic({
+        stage: 'verify.handler',
+        outcome: 'failure',
+        paymentId: 'f32cb949-f999-4217-8308-5862e856cc7f',
+        merchantPaymentId: 'cr-68ed36e6-6986-57f1-86e6-42171affffea',
+        httpStatus: 200,
+        orderStatus: 'rejected',
+        paymentStatus: 'failed',
+        errorCode: 'invalid_client',
+        error: new Error('Payer jane@example.com card 4111111111111111 token secret-token'),
+        configPresence: {
+          BOG_CLIENT_KEY: true,
+          BOG_SECRET_KEY: true,
+          SUPABASE_BOG_CONFIRM_KEY: false,
+          UNLISTED_SECRET: 'do-not-log-this',
+        },
+        rejectReason: 'Payment rejected by the servicing bank',
+        paymentDetailCode: '12',
+        paymentDetailCodeDescription: 'Cardholder Jane Doe; card 4111111111111111',
+        actions: [{
+          status: 'rejected',
+          code: '12',
+          code_description: 'Payer jane@example.com',
+        }],
+      })
+
+      const [label, event] = info.mock.calls[0]
+      expect(label).toBe('[BOG_DIAGNOSTIC]')
+      expect(event).toMatchObject({
+        stage: 'verify.handler',
+        outcome: 'failure',
+        http_status: 200,
+        order_status: 'rejected',
+        payment_status: 'failed',
+        error_code: 'invalid_client',
+        error_message: 'other',
+        config_present: {
+          BOG_CLIENT_KEY: true,
+          BOG_SECRET_KEY: true,
+          SUPABASE_BOG_CONFIRM_KEY: false,
+        },
+        reject_reason: 'servicing_bank_rejection',
+        payment_detail: {
+          code: '12',
+          code_description: 'other',
+        },
+        actions: [{
+          status: 'rejected',
+          code: '12',
+          code_description: 'other',
+        }],
+      })
+      const serialized = JSON.stringify(info.mock.calls)
+      expect(serialized).not.toContain('4111111111111111')
+      expect(serialized).not.toContain('jane@example.com')
+      expect(serialized).not.toContain('secret-token')
+      expect(serialized).not.toContain('do-not-log-this')
+    })
+
+    it('replaces unknown BOG statuses and codes with fixed placeholders', () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const longValue = 'x'.repeat(100_000)
+      const bearerValue = 'Bearer eyJhbGciOiJIUzI1NiJ9'
+
+      logBogDiagnostic({
+        stage: 'bog.receipt',
+        outcome: 'success',
+        orderStatus: 'secret-token',
+        paymentStatus: bearerValue,
+        errorCode: longValue,
+        error: new Error(bearerValue),
+        rejectReason: `payer ${longValue}`,
+        paymentDetailCode: longValue,
+        paymentDetailCodeDescription: bearerValue,
+        actions: [
+          'secret-token',
+          {
+            status: bearerValue,
+            code: 'secret-token',
+            code_description: longValue,
+          },
+          {
+            status: { token: 'secret-token' },
+            code: ['Bearer eyJhbGciOiJIUzI1NiJ9'],
+            code_description: { nested: longValue },
+          },
+          {
+            status: 'REJECTED',
+            code: 12,
+            code_description: 'Payment rejected by the servicing bank',
+          },
+        ],
+      })
+
+      const event = info.mock.calls[0][1]
+      expect(event).toMatchObject({
+        order_status: 'UNKNOWN_STATUS',
+        payment_status: 'UNKNOWN_STATUS',
+        error_code: 'UNKNOWN_CODE',
+        error_message: 'other',
+        reject_reason: 'other',
+        payment_detail: {
+          code: 'UNKNOWN_CODE',
+          code_description: 'other',
+        },
+        actions: [
+          { status: 'UNKNOWN_STATUS', code: 'UNKNOWN_CODE' },
+          { status: 'UNKNOWN_STATUS', code: 'UNKNOWN_CODE', code_description: 'other' },
+          { status: 'UNKNOWN_STATUS', code: 'UNKNOWN_CODE' },
+          { status: 'rejected', code: '12', code_description: 'servicing_bank_rejection' },
+        ],
+      })
+      const serialized = JSON.stringify(info.mock.calls)
+      expect(serialized).not.toContain('secret-token')
+      expect(serialized).not.toContain(bearerValue)
+      expect(serialized).not.toContain(longValue)
+    })
+
+    it('silently drops malformed action data and tolerates malformed receipt shape', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const malformedAction = Object.defineProperty({}, 'status', {
+        get() {
+          throw new Error('secret-token')
+        },
+      })
+      expect(() => logBogDiagnostic({
+        stage: 'bog.receipt',
+        actions: [malformedAction],
+      })).not.toThrow()
+      expect(info).not.toHaveBeenCalled()
+
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'test-access-token' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }))
+        .mockResolvedValueOnce(new Response('null', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }))
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const malformedReceipt = await getBogOrderDetails(
+          { clientKey: 'test-client-key', secretKey: 'test-secret-key' },
+          'f32cb949-f999-4217-8308-5862e856cc7f',
+        )
+        expect(malformedReceipt).toBeNull()
+        expect(info).toHaveBeenCalledWith('[BOG_DIAGNOSTIC]', expect.objectContaining({
+          stage: 'bog.receipt',
+          payment_id: 'f32cb949-f999-4217-8308-5862e856cc7f',
+        }))
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('omits correlation values that are not payment UUIDs', () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      logBogDiagnostic({
+        stage: 'verify.handler',
+        paymentId: 'payer-identifier',
+        merchantPaymentId: 'jane@example.com',
+      })
+
+      expect(info.mock.calls[0][1]).not.toHaveProperty('payment_id')
+      expect(info.mock.calls[0][1]).not.toHaveProperty('merchant_payment_id')
+      expect(JSON.stringify(info.mock.calls)).not.toContain('jane@example.com')
+      expect(JSON.stringify(info.mock.calls)).not.toContain('payer-identifier')
+    })
+
+    it('extracts selected BOG receipt diagnostics without logging the receipt or token', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'test-access-token' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          order_id: 'f32cb949-f999-4217-8308-5862e856cc7f',
+          external_order_id: 'cr-68ed36e6-6986-57f1-86e6-42171affffea',
+          order_status: { key: 'rejected' },
+          reject_reason: 'Payment rejected by the servicing bank',
+          purchase_units: { request_amount: '99.00', currency_code: 'GEL' },
+          payment_detail: {
+            status: 'rejected',
+            code: '12',
+            code_description: 'Cardholder Jane Doe; private-account-value',
+            actions: [{ status: 'rejected', code: '12', code_description: 'payer private-value' }],
+          },
+          private_receipt_value: 'must-not-be-logged',
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      try {
+        const order = await getBogOrderDetails(
+          { clientKey: 'test-client-key', secretKey: 'test-secret-key' },
+          'f32cb949-f999-4217-8308-5862e856cc7f',
+        )
+
+        expect(order.order_status?.key).toBe('rejected')
+        const receiptEvent = info.mock.calls
+          .map(([, event]) => event)
+          .find((event) => typeof event === 'object' && event !== null && 'stage' in event && event.stage === 'bog.receipt')
+        expect(receiptEvent).toMatchObject({
+          stage: 'bog.receipt',
+          http_status: 200,
+          order_status: 'rejected',
+          payment_status: 'rejected',
+          reject_reason: 'servicing_bank_rejection',
+          payment_detail: {
+            code: '12',
+            code_description: 'other',
+          },
+          actions: [{ status: 'rejected', code: '12', code_description: 'other' }],
+        })
+        const serialized = JSON.stringify(info.mock.calls)
+        expect(serialized).not.toContain('test-access-token')
+        expect(serialized).not.toContain('test-client-key')
+        expect(serialized).not.toContain('test-secret-key')
+        expect(serialized).not.toContain('private-account-value')
+        expect(serialized).not.toContain('private_receipt_value')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('records BOG HTTP failure status and error code without logging response text', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'test-access-token' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          error_code: 'UNKNOWN_CODE',
+          message: 'payer jane@example.com card 4111111111111111',
+        }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        }))
+      vi.stubGlobal('fetch', fetchMock)
+
+      try {
+        await expect(getBogOrderDetails(
+          { clientKey: 'test-client-key', secretKey: 'test-secret-key' },
+          'f32cb949-f999-4217-8308-5862e856cc7f',
+        )).rejects.toThrow('BOG receipt lookup failed (503)')
+        const receiptEvent = info.mock.calls
+          .map(([, event]) => event)
+          .find((event) => typeof event === 'object' && event !== null && 'stage' in event && event.stage === 'bog.receipt')
+        expect(receiptEvent).toMatchObject({
+          stage: 'bog.receipt',
+          outcome: 'failure',
+          http_status: 503,
+          error_code: 'UNKNOWN_CODE',
+          error_message: 'receipt_lookup_failure',
+        })
+        const serialized = JSON.stringify(info.mock.calls)
+        expect(serialized).not.toContain('jane@example.com')
+        expect(serialized).not.toContain('4111111111111111')
+        expect(serialized).not.toContain('test-access-token')
+        expect(serialized).not.toContain('secret-token')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('does not interrupt mocked verification when console.info throws', async () => {
+      vi.spyOn(console, 'info').mockImplementation(() => {
+        throw new Error('logger failure')
+      })
+      let currentStatus = 'pending'
+      const updatePaymentStatus = vi.fn(async ({ status }: { status: string }) => {
+        currentStatus = status
+      })
+      const response = await handleBogVerify(request(
+        'https://cityroute.ge/api/payments/bog/verify?provider=bog&merchantPaymentId=cr-merchant-1',
+        { method: 'GET' },
+      ), {
+        environment,
+        authenticateUser: async () => ({ id: 'user-1' }),
+        createOrder: vi.fn(),
+        insertTransaction: vi.fn(),
+        getDeviceSlotPackage: async () => ({ deviceSlots: 1, priceAmount: 99 }),
+        acquireBogRecoveryLease: async () => 'lease-test',
+        releaseBogRecoveryLease: async () => true,
+        getTransactionById: async () => paymentTransaction(currentStatus),
+        getTransactionByMerchantId: async () => paymentTransaction(currentStatus),
+        getOrderDetails: async () => successfulOrder,
+        updatePaymentStatus,
+        verifyCallbackSignature: async () => true,
+      })
+
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(await response.json()).toMatchObject({ status: 'success', bankStatus: 'completed' })
+      expect(updatePaymentStatus).toHaveBeenCalledTimes(1)
+      expect(currentStatus).toBe('success')
+    })
   })
 
   it('calculates 179 GEL on the server for two devices and stores the selected slots', async () => {
@@ -161,6 +476,8 @@ describe('BOG Production payment API', () => {
       authenticateUser: async () => ({ id: 'user-1' }),
       createOrder,
       getDeviceSlotPackage: async () => null,
+      acquireBogRecoveryLease: async () => null,
+      releaseBogRecoveryLease: async () => true,
       insertTransaction,
       getTransactionById: async () => null,
       getTransactionByMerchantId: async () => null,
@@ -193,6 +510,8 @@ describe('BOG Production payment API', () => {
       authenticateUser,
       createOrder,
       getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       insertTransaction: vi.fn(),
       getTransactionById: vi.fn(),
       getTransactionByMerchantId: vi.fn(),
@@ -225,6 +544,8 @@ describe('BOG Production payment API', () => {
       assertConfirmerReady: async () => {
         throw new Error('confirmer JWT is not authorized')
       },
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       insertTransaction: vi.fn(),
       getTransactionById: vi.fn(),
       getTransactionByMerchantId: vi.fn(),
@@ -250,9 +571,10 @@ describe('BOG Production payment API', () => {
       'bog-confirm-jwt-key',
     )
     // supabase-js stores the createClient key as the apikey header source
-    expect((client as { supabaseKey: string }).supabaseKey).toBe('anon-publishable-key')
-    expect((client as { supabaseKey: string }).supabaseKey).not.toBe('bog-confirm-jwt-key')
-    expect((client as { supabaseKey: string }).supabaseKey).not.toBe('service-role-key')
+    const apiKey: unknown = Reflect.get(client, 'supabaseKey')
+    expect(apiKey).toBe('anon-publishable-key')
+    expect(apiKey).not.toBe('bog-confirm-jwt-key')
+    expect(apiKey).not.toBe('service-role-key')
   })
 
   it('rejects production configuration when the confirmer JWT is missing or reused', async () => {
@@ -264,6 +586,9 @@ describe('BOG Production payment API', () => {
       authenticateUser: vi.fn(),
       createOrder: vi.fn(),
       insertTransaction: vi.fn(),
+      getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       getTransactionById: vi.fn(),
       getTransactionByMerchantId: vi.fn(),
       getOrderDetails: vi.fn(),
@@ -282,6 +607,9 @@ describe('BOG Production payment API', () => {
       authenticateUser: vi.fn(),
       createOrder: vi.fn(),
       insertTransaction: vi.fn(),
+      getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       getTransactionById: vi.fn(),
       getTransactionByMerchantId: vi.fn(),
       getOrderDetails: vi.fn(),
@@ -303,6 +631,9 @@ describe('BOG Production payment API', () => {
       authenticateUser: async () => ({ id: 'user-1' }),
       createOrder: vi.fn(),
       insertTransaction: vi.fn(),
+      getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       getTransactionById: vi.fn(),
       getTransactionByMerchantId: vi.fn(),
       getOrderDetails,
@@ -328,6 +659,8 @@ describe('BOG Production payment API', () => {
       authenticateUser,
       createOrder: vi.fn(),
       getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       insertTransaction: vi.fn(),
       getTransactionById: vi.fn(),
       getTransactionByMerchantId: vi.fn(),
@@ -355,6 +688,9 @@ describe('BOG Production payment API', () => {
       authenticateUser: async () => ({ id: 'user-1' }),
       createOrder: vi.fn(),
       insertTransaction: vi.fn(),
+      getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       getTransactionById: async () => paymentTransaction(status, amount),
       getTransactionByMerchantId: async () => paymentTransaction(status, amount),
       getOrderDetails: async () => ({
@@ -389,6 +725,9 @@ describe('BOG Production payment API', () => {
       authenticateUser: async () => ({ id: 'user-1' }),
       createOrder: vi.fn(),
       insertTransaction: vi.fn(),
+      getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       getTransactionById: async () => paymentTransaction('pending'),
       getTransactionByMerchantId: async () => paymentTransaction('pending'),
       getOrderDetails: async () => ({
@@ -414,6 +753,9 @@ describe('BOG Production payment API', () => {
       authenticateUser: async () => ({ id: 'user-1' }),
       createOrder: vi.fn(),
       insertTransaction: vi.fn(),
+      getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       getTransactionById: async () => paymentTransaction('pending'),
       getTransactionByMerchantId: vi.fn(),
       getOrderDetails: async () => ({
@@ -437,6 +779,9 @@ describe('BOG Production payment API', () => {
       authenticateUser: async () => ({ id: 'user-1' }),
       createOrder: vi.fn(),
       insertTransaction: vi.fn(),
+      getDeviceSlotPackage: vi.fn(),
+      acquireBogRecoveryLease: vi.fn(),
+      releaseBogRecoveryLease: vi.fn(),
       getTransactionById: async () => current,
       getTransactionByMerchantId: vi.fn(),
       getOrderDetails: async () => successfulOrder,
@@ -534,7 +879,7 @@ describe('BOG device package catalog lookup', () => {
   })
 
   it('starts a 99 GEL order through the fallback while migration 029 is not applied', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
     const { response, createOrder, insertTransaction } = initializeWith(1, async (slots) =>
       resolveDeviceSlotPackage(slots, { data: null, error: missingTable }),
     )
@@ -542,7 +887,12 @@ describe('BOG device package catalog lookup', () => {
     expect(result.status, await result.clone().text()).toBe(200)
     expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({ amount: 99, deviceSlots: 1 }))
     expect(insertTransaction).not.toHaveBeenCalled()
-    expect(warn).toHaveBeenCalledTimes(1)
+    expect(info.mock.calls.map(([, event]) => event)).toContainEqual(expect.objectContaining({
+      stage: 'db.package_catalog',
+      outcome: 'fallback',
+      database_operation: 'device_slot_packages',
+      database_outcome: 'fallback',
+    }))
   })
 
   it('refuses to start an order when the catalog lookup fails for any other reason', async () => {
@@ -601,6 +951,8 @@ describe('BOG pending checkout retry', () => {
       getDeviceSlotPackage: async () => (
         deviceSlots === 1 ? { deviceSlots: 1, priceAmount: 99 } : { deviceSlots: 2, priceAmount: 179 }
       ),
+      acquireBogRecoveryLease: async () => null,
+      releaseBogRecoveryLease: async () => true,
       findTransactionByIdempotencyKey: async () => existing,
       insertTransaction,
       getTransactionById: async () => null,
@@ -628,6 +980,8 @@ describe('BOG pending checkout retry', () => {
       authenticateUser: async () => ({ id: 'user-1' }),
       createOrder,
       getDeviceSlotPackage: async () => trusted,
+      acquireBogRecoveryLease: async () => null,
+      releaseBogRecoveryLease: async () => true,
       findTransactionByIdempotencyKey: async () => null,
       insertTransaction,
       getTransactionById: async () => null,
@@ -731,7 +1085,7 @@ describe('BOG atomic checkout claim', () => {
   function initialize(
     ledger: ReturnType<typeof createMemoryCheckoutLedger>,
     requestId: string,
-    createOrder: ReturnType<typeof vi.fn>,
+    createOrder: BogInitializeDependencies['createOrder'],
     deviceSlots = 1,
     recovery: {
       getOrderDetails?: () => Promise<BogOrderDetails>
@@ -908,7 +1262,9 @@ describe('BOG atomic checkout claim', () => {
 
   it('keeps the distributed lease after a timed-out BOG request to block overlapping retries', async () => {
     const ledger = createMemoryCheckoutLedger()
-    const createOrder = vi.fn((_input: { idempotencyKey: string }) => new Promise(() => {}))
+    const createOrder = vi.fn((_input: { idempotencyKey: string }) =>
+      new Promise<{ paymentId: string; paymentUrl: string }>(() => {}),
+    )
     const first = await initialize(ledger, requestIds[0], createOrder)
     expect(first.status).toBe(409)
     expect((await first.json()).code).toBe('payment_attempt_unresolved')
@@ -1038,7 +1394,9 @@ describe('BOG atomic checkout claim', () => {
 
     expect(first.status).toBe(200)
     expect(createOrder).toHaveBeenCalledTimes(1)
-    expect(createOrder.mock.calls[0][0].idempotencyKey).toBe(claim.idempotency_key)
+    expect(createOrder).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: claim.idempotency_key,
+    }))
     expect(getOrderDetails).toHaveBeenCalledTimes(1)
     expect(updatePaymentStatus).toHaveBeenCalledTimes(1)
     await expect(ledger.read(claim.payment_id)).resolves.toMatchObject({

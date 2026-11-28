@@ -1,5 +1,6 @@
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
+import { PublicSiteFooter } from '@/components/PublicSiteFooter'
 import { PaymentButton } from '@/components/PaymentButton'
 import { useAuth } from '@/context/AuthContext'
 import { loadDeviceSlotPackages, type DeviceSlotPackage } from '@/lib/device-slot-packages'
@@ -311,6 +312,7 @@ export function PlanSelectionPage() {
           </div>
         </section>
       </div>
+      <PublicSiteFooter className="public-site-footer--checkout" />
     </main>
   )
 }

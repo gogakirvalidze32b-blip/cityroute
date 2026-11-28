@@ -200,12 +200,15 @@ describe('ExamLiveMapLeaflet camera', () => {
     expect(mapState.panTo).toHaveBeenCalled()
     expect(mapState.panTo.mock.calls[0][0]).not.toEqual(gpsPosition)
 
+    // The arrow glides for about one GPS update interval (≤ 1.2 s ≈ 75 frames)
+    // instead of hopping to the fix; the loop must then stop on its own.
     let framesProcessed = 0
-    while (frames.length > 0 && framesProcessed < 30) {
+    while (frames.length > 0 && framesProcessed < 120) {
       runNextFrame()
       framesProcessed++
     }
 
+    expect(framesProcessed).toBeGreaterThan(5)
     expect(frames).toHaveLength(0)
     expect(mapState.panTo.mock.calls.at(-1)?.[0]).not.toEqual(gpsPosition)
     expect(mapState.setView).toHaveBeenCalledTimes(1)
@@ -264,6 +267,36 @@ describe('ExamLiveMapLeaflet camera', () => {
       .toBeCloseTo(-turnedHeading)
   })
 
+  it('renders exactly one navigation arrow — no legacy arrow classes — through GPS and heading updates', () => {
+    const view = renderMap()
+    runNextFrame()
+    for (const [heading, offset] of [[30, 0.0002], [120, 0.0004], [250, 0.0006]] as const) {
+      view.rerender(
+        <ExamLiveMapLeaflet
+          route={route}
+          userPos={[initialPosition[0] + offset, initialPosition[1]]}
+          heading={heading}
+          nextPin={null}
+        />,
+      )
+      for (let frame = 0; frame < 10 && frames.length > 0; frame++) runNextFrame()
+
+      const markers = screen.getAllByTestId('navigation-vehicle-marker')
+      expect(markers).toHaveLength(1)
+      const icon = document.createElement('div')
+      icon.innerHTML = markers[0]!.dataset.iconHtml ?? ''
+      // One arrow graphic only.
+      expect(icon.querySelectorAll('svg')).toHaveLength(1)
+      expect(icon.querySelectorAll('.exam-nav-arrow')).toHaveLength(1)
+      // Legacy classes draw their own CSS triangle / dot (index.css) — a second arrow.
+      expect(
+        icon.querySelectorAll(
+          '.nav-arrow, .nav-arrow-dot, .nav-arrow-wrap, .fixed-navigation-arrow-icon, .fixed-navigation-arrow-dot',
+        ),
+      ).toHaveLength(0)
+    }
+  })
+
   it('smoothly crosses the 359° to 1° heading boundary', () => {
     const view = renderMap(initialPosition, null, 359)
     runNextFrame()
@@ -304,7 +337,8 @@ describe('ExamLiveMapLeaflet camera', () => {
         nextPin={null}
       />,
     )
-    runNextFrame()
+    // The arrow keeps gliding on the map in FREE mode, but GPS never moves the camera.
+    for (let frame = 0; frame < 120 && frames.length > 0; frame++) runNextFrame()
     expect(mapState.panTo).not.toHaveBeenCalled()
     expect(frames).toHaveLength(0)
 

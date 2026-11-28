@@ -1,6 +1,8 @@
 /** Shared limits for the support chat. The same numbers are enforced by the
  *  database (009/010 migrations); the client checks exist for fast feedback. */
 export const SUPPORT_EMAIL = 'support@cityroute.ge'
+export const SUPPORT_PHONE = '597 595 9575'
+export const SUPPORT_ADDRESS = 'ქ. თბილისი, ლილოს დასახლება'
 export const SUPPORT_BUCKET = 'support-attachments'
 
 export const MAX_BODY_LENGTH = 4000

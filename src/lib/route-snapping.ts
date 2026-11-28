@@ -36,9 +36,8 @@ export function snapToRoute(
     // Find nearest point on line
     const snapped = nearestPointOnLine(line, pt, { units: 'meters' })
     
-    // Check if within max distance
-    const distanceKm = snapped.properties.dist ?? 0
-    const distanceMeters = distanceKm * 1000
+    // `units: 'meters'` makes turf report `dist` in metres already.
+    const distanceMeters = snapped.properties.dist ?? 0
     
     if (distanceMeters <= maxDistanceMeters) {
       // Return snapped position [lat, lng]
@@ -66,8 +65,8 @@ export function distanceToRoute(position: LatLng, route: LatLng[]): number {
     const line = lineString(route.map(([lat, lng]) => [lng, lat]))
     const pt = point([position[1], position[0]])
     const snapped = nearestPointOnLine(line, pt, { units: 'meters' })
-    const distanceKm = snapped.properties.dist ?? 0
-    return distanceKm * 1000
+    // `units: 'meters'` makes turf report `dist` in metres already.
+    return snapped.properties.dist ?? 0
   } catch (error) {
     console.warn('Distance calculation failed:', error)
     return Infinity

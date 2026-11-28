@@ -1035,6 +1035,25 @@ describe('AuthContext – tab refocus', () => {
     expect(h.signOutOptions).toEqual({ scope: 'local' })
   })
 
+  it('does not report the revocation channel unavailable after intentional cleanup', async () => {
+    h.profileFetch = async () => ({ data: profile('u1'), error: null })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { unmount } = render(
+      <AuthProvider>
+        <Gate />
+        <EntitlementProbe />
+      </AuthProvider>,
+    )
+    await waitFor(() => expect(h.realtimeStatusCallback).toBeTypeOf('function'))
+
+    unmount()
+    h.realtimeStatusCallback?.('CLOSED')
+
+    expect(warning).not.toHaveBeenCalledWith(
+      'Session revocation realtime channel unavailable; polling remains active.',
+    )
+  })
+
   it('does not sign out a device whose slot was only released by idleness', async () => {
     h.profileFetch = async () => ({ data: profile('u1'), error: null })
     h.heartbeatResponse = { status: 'inactive' }

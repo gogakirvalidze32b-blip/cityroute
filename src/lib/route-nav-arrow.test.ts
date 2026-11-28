@@ -4,6 +4,7 @@ import {
   stabilizeRoadArrowHeading,
   shortestHeadingTurnDegrees,
 } from './route-nav'
+import { ARROW_MAX_STEP_DEG } from './arrow-heading'
 
 describe('resolveArrowHeading', () => {
   it('prefers the trusted synthetic route bearing over a stale matched bearing', () => {
@@ -52,6 +53,11 @@ describe('stabilizeRoadArrowHeading', () => {
     // Adaptive cap (~18°) for large lag — still not an instant 180° snap.
     expect(Math.abs(shortestHeadingTurnDegrees(26, next))).toBeLessThanOrEqual(18.01)
     expect(Math.abs(shortestHeadingTurnDegrees(next, 206))).toBeGreaterThan(90)
+  })
+
+  it('follows the full route bearing for PIN 3-style turns', () => {
+    const next = stabilizeRoadArrowHeading(26, 206, ARROW_MAX_STEP_DEG, 4, false)
+    expect(next).toBe(206)
   })
 
   it('Maps-style adaptive slew catches up through a ~90° corner without 80° lag', () => {

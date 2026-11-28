@@ -1,11 +1,13 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import {
   BOG_PRODUCTION_CONFIGURATION,
+  bogResponseErrorCode,
   canApplyBogStatus,
   createBogIdempotencyKey,
   createBogOrder,
   getBogOrderDetails,
   isBogPaymentUrl,
+  logBogDiagnostic,
   verifyBogCallbackSignature,
   verifyBogOrderDetails,
   type BogCredentials,
@@ -34,7 +36,15 @@ function isMissingDeviceSlotPackagesTable(error: { code?: string; message?: stri
 export function resolveDeviceSlotPackage(
   deviceSlots: number,
   result: DeviceSlotPackageQueryResult,
-  warn: (message: string, details: Record<string, unknown>) => void = console.warn,
+  warn: (_message: string, details: Record<string, unknown>) => void = (_message, details) => {
+    logBogDiagnostic({
+      stage: 'db.package_catalog',
+      outcome: 'fallback',
+      databaseOperation: 'device_slot_packages',
+      databaseOutcome: 'fallback',
+      errorCode: details.errorCode,
+    })
+  },
 ): DeviceSlotPackage | null {
   if (result.error) {
     if (!isMissingDeviceSlotPackagesTable(result.error)) throw result.error
@@ -169,7 +179,27 @@ async function createPendingBogPayment(
     p_device_slots: payment.device_slots,
     p_metadata: payment.metadata,
   })
-  if (error) throw error
+  if (error) {
+    logBogDiagnostic({
+      stage: 'db.create_pending_payment',
+      outcome: 'failure',
+      paymentId: payment.payment_id,
+      merchantPaymentId: payment.merchant_payment_id,
+      databaseOperation: 'create_bog_pending_payment',
+      databaseOutcome: 'failure',
+      errorCode: error.code,
+      error,
+    })
+    throw error
+  }
+  logBogDiagnostic({
+    stage: 'db.create_pending_payment',
+    outcome: 'success',
+    paymentId: payment.payment_id,
+    merchantPaymentId: payment.merchant_payment_id,
+    databaseOperation: 'create_bog_pending_payment',
+    databaseOutcome: 'success',
+  })
 }
 
 export type StoredBogCheckout = {
@@ -343,7 +373,7 @@ export function createMemoryCheckoutLedger(): CheckoutLedger & {
 } {
   const rows: StoredBogCheckout[] = []
   let tail = Promise.resolve()
-  const exclusive = <T>(work: () => T): Promise<T> => {
+  const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
     const run = tail.then(work, work)
     tail = run.then(() => undefined, () => undefined)
     return run
@@ -400,7 +430,7 @@ export function createMemoryCheckoutLedger(): CheckoutLedger & {
       })
     },
     beginBankCall(paymentId, now) {
-      return exclusive(() => {
+      return exclusive(async () => {
         const row = rows.find((item) => item.payment_id === paymentId)
         if (!row || phaseOf(row) !== 'claimed') return false
         const expires = epochOf(row.metadata?.claim_expires_at)
@@ -413,7 +443,7 @@ export function createMemoryCheckoutLedger(): CheckoutLedger & {
       })
     },
     takeover(paymentId, now, leaseMs) {
-      return exclusive(() => {
+      return exclusive(async () => {
         const row = rows.find((item) => item.payment_id === paymentId)
         if (!row || phaseOf(row) !== 'claimed') return null
         const expires = epochOf(row.metadata?.claim_expires_at)
@@ -426,7 +456,7 @@ export function createMemoryCheckoutLedger(): CheckoutLedger & {
       })
     },
     complete(paymentId, payment) {
-      return exclusive(() => {
+      return exclusive(async () => {
         const row = rows.find((item) =>
           item.payment_id === paymentId || item.metadata?.claim_payment_id === paymentId
         )
@@ -454,7 +484,7 @@ export function createMemoryCheckoutLedger(): CheckoutLedger & {
       })
     },
     read(paymentId) {
-      return exclusive(() => {
+      return exclusive(async () => {
         const row = rows.find((item) =>
           item.payment_id === paymentId || item.metadata?.claim_payment_id === paymentId
         )
@@ -506,7 +536,7 @@ type Dependencies = {
 const CHECKOUT_ROW_COLUMNS = 'user_id, payment_id, merchant_payment_id, idempotency_key, amount, currency, status, created_at, metadata'
 
 function createDatabaseCheckoutLedger(
-  admin: NonNullable<ReturnType<typeof createClient>>,
+  admin: SupabaseClient,
   supabaseUrl: string,
   anonKey: string,
 ): CheckoutLedger {
@@ -580,7 +610,7 @@ function createDatabaseCheckoutLedger(
           payment_id: checkout.payment_id,
           merchant_payment_id: checkout.merchant_payment_id,
           idempotency_key: checkout.idempotency_key,
-          amount: checkout.amount,
+          amount: input.priceAmount,
           device_slots: input.deviceSlots,
           metadata: checkout.metadata,
         })
@@ -738,79 +768,221 @@ function createDefaultDependencies(): Dependencies {
     },
     createOrder: (input) => createBogOrder(input),
     async findTransactionByIdempotencyKey(userId, idempotencyKey) {
-      if (!admin) throw new Error('Supabase service configuration is missing')
-      const { data, error } = await admin.from('payment_transactions')
-        .select('payment_id, merchant_payment_id, amount, currency, status, metadata')
-        .eq('provider', 'bog')
-        .eq('user_id', userId)
-        .eq('idempotency_key', idempotencyKey)
-        .maybeSingle()
-      if (error) throw error
-      return data
+      try {
+        if (!admin) throw new Error('Supabase service configuration is missing')
+        const { data, error } = await admin.from('payment_transactions')
+          .select('payment_id, merchant_payment_id, amount, currency, status, metadata')
+          .eq('provider', 'bog')
+          .eq('user_id', userId)
+          .eq('idempotency_key', idempotencyKey)
+          .maybeSingle()
+        if (error) throw error
+        logBogDiagnostic({
+          stage: 'db.checkout_lookup',
+          outcome: data ? 'success' : 'not_found',
+          databaseOperation: 'payment_transactions.find_by_idempotency_key',
+          databaseOutcome: data ? 'success' : 'not_found',
+        })
+        return data
+      } catch (error) {
+        logBogDiagnostic({
+          stage: 'db.checkout_lookup',
+          outcome: 'failure',
+          databaseOperation: 'payment_transactions.find_by_idempotency_key',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
+        throw error
+      }
     },
     async getDeviceSlotPackage(deviceSlots) {
-      if (!admin) throw new Error('Supabase service configuration is missing')
-      const result = await admin.from(DEVICE_SLOT_PACKAGES_TABLE)
-        .select('device_slots, price_amount')
-        .eq('subscription_plan', 'premium')
-        .eq('device_slots', deviceSlots)
-        .eq('active', true)
-        .maybeSingle()
-      return resolveDeviceSlotPackage(deviceSlots, result)
+      try {
+        if (!admin) throw new Error('Supabase service configuration is missing')
+        const result = await admin.from(DEVICE_SLOT_PACKAGES_TABLE)
+          .select('device_slots, price_amount')
+          .eq('subscription_plan', 'premium')
+          .eq('device_slots', deviceSlots)
+          .eq('active', true)
+          .maybeSingle()
+        const selected = resolveDeviceSlotPackage(deviceSlots, result)
+        logBogDiagnostic({
+          stage: 'db.package_lookup',
+          outcome: selected ? 'success' : 'not_found',
+          databaseOperation: 'device_slot_packages.select',
+          databaseOutcome: selected ? 'success' : 'not_found',
+          errorCode: result.error?.code,
+        })
+        return selected
+      } catch (error) {
+        logBogDiagnostic({
+          stage: 'db.package_lookup',
+          outcome: 'failure',
+          databaseOperation: 'device_slot_packages.select',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
+        throw error
+      }
     },
     async getTransactionById(paymentId, userId) {
-      if (!admin) throw new Error('Supabase service configuration is missing')
-      let query = admin.from('payment_transactions')
-        .select('payment_id, merchant_payment_id, user_id, amount, currency, status')
-        .eq('provider', 'bog')
-        .eq('payment_id', paymentId)
-      if (userId) query = query.eq('user_id', userId)
-      const { data, error } = await query.maybeSingle()
-      if (error) throw error
-      return data
+      try {
+        if (!admin) throw new Error('Supabase service configuration is missing')
+        let query = admin.from('payment_transactions')
+          .select('payment_id, merchant_payment_id, user_id, amount, currency, status')
+          .eq('provider', 'bog')
+          .eq('payment_id', paymentId)
+        if (userId) query = query.eq('user_id', userId)
+        const { data, error } = await query.maybeSingle()
+        if (error) throw error
+        logBogDiagnostic({
+          stage: 'db.transaction_lookup',
+          outcome: data ? 'success' : 'not_found',
+          paymentId,
+          databaseOperation: 'payment_transactions.find_by_payment_id',
+          databaseOutcome: data ? 'success' : 'not_found',
+        })
+        return data
+      } catch (error) {
+        logBogDiagnostic({
+          stage: 'db.transaction_lookup',
+          outcome: 'failure',
+          paymentId,
+          databaseOperation: 'payment_transactions.find_by_payment_id',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
+        throw error
+      }
     },
     async getTransactionByMerchantId(merchantPaymentId, userId) {
-      if (!admin) throw new Error('Supabase service configuration is missing')
-      const { data, error } = await admin.from('payment_transactions')
-        .select('payment_id, merchant_payment_id, user_id, amount, currency, status')
-        .eq('provider', 'bog')
-        .eq('merchant_payment_id', merchantPaymentId)
-        .eq('user_id', userId)
-        .maybeSingle()
-      if (error) throw error
-      return data
+      try {
+        if (!admin) throw new Error('Supabase service configuration is missing')
+        const { data, error } = await admin.from('payment_transactions')
+          .select('payment_id, merchant_payment_id, user_id, amount, currency, status')
+          .eq('provider', 'bog')
+          .eq('merchant_payment_id', merchantPaymentId)
+          .eq('user_id', userId)
+          .maybeSingle()
+        if (error) throw error
+        logBogDiagnostic({
+          stage: 'db.transaction_lookup',
+          outcome: data ? 'success' : 'not_found',
+          merchantPaymentId,
+          databaseOperation: 'payment_transactions.find_by_merchant_payment_id',
+          databaseOutcome: data ? 'success' : 'not_found',
+        })
+        return data
+      } catch (error) {
+        logBogDiagnostic({
+          stage: 'db.transaction_lookup',
+          outcome: 'failure',
+          merchantPaymentId,
+          databaseOperation: 'payment_transactions.find_by_merchant_payment_id',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
+        throw error
+      }
     },
     async acquireBogRecoveryLease(claimPaymentId, leaseSeconds) {
-      if (!admin) throw new Error('Supabase service configuration is missing')
-      const { data, error } = await admin.rpc('acquire_bog_checkout_recovery_lease', {
-        p_claim_payment_id: claimPaymentId,
-        p_lease_seconds: leaseSeconds,
-      })
-      if (error) throw error
-      return typeof data === 'string' ? data : null
+      try {
+        if (!admin) throw new Error('Supabase service configuration is missing')
+        const { data, error } = await admin.rpc('acquire_bog_checkout_recovery_lease', {
+          p_claim_payment_id: claimPaymentId,
+          p_lease_seconds: leaseSeconds,
+        })
+        if (error) throw error
+        logBogDiagnostic({
+          stage: 'db.recovery_lease_acquire',
+          outcome: typeof data === 'string' ? 'success' : 'not_acquired',
+          paymentId: claimPaymentId,
+          databaseOperation: 'acquire_bog_checkout_recovery_lease',
+          databaseOutcome: typeof data === 'string' ? 'success' : 'not_acquired',
+        })
+        return typeof data === 'string' ? data : null
+      } catch (error) {
+        logBogDiagnostic({
+          stage: 'db.recovery_lease_acquire',
+          outcome: 'failure',
+          paymentId: claimPaymentId,
+          databaseOperation: 'acquire_bog_checkout_recovery_lease',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
+        throw error
+      }
     },
     async releaseBogRecoveryLease(claimPaymentId, leaseToken) {
-      if (!admin) throw new Error('Supabase service configuration is missing')
-      const { data, error } = await admin.rpc('release_bog_checkout_recovery_lease', {
-        p_claim_payment_id: claimPaymentId,
-        p_lease_token: leaseToken,
-      })
-      if (error) throw error
-      if (typeof data !== 'boolean') throw new Error('BOG recovery lease release returned an invalid result')
-      return data
+      try {
+        if (!admin) throw new Error('Supabase service configuration is missing')
+        const { data, error } = await admin.rpc('release_bog_checkout_recovery_lease', {
+          p_claim_payment_id: claimPaymentId,
+          p_lease_token: leaseToken,
+        })
+        if (error) throw error
+        if (typeof data !== 'boolean') throw new Error('BOG recovery lease release returned an invalid result')
+        logBogDiagnostic({
+          stage: 'db.recovery_lease_release',
+          outcome: data ? 'success' : 'not_released',
+          paymentId: claimPaymentId,
+          databaseOperation: 'release_bog_checkout_recovery_lease',
+          databaseOutcome: data ? 'success' : 'not_released',
+        })
+        return data
+      } catch (error) {
+        logBogDiagnostic({
+          stage: 'db.recovery_lease_release',
+          outcome: 'failure',
+          paymentId: claimPaymentId,
+          databaseOperation: 'release_bog_checkout_recovery_lease',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
+        throw error
+      }
     },
     getOrderDetails: (paymentId) => getBogOrderDetails(credentials, paymentId),
     async updatePaymentStatus(input) {
-      if (!confirmer) {
-        throw new Error('BOG confirmer configuration is missing or reuses the service_role key')
+      try {
+        if (!confirmer) {
+          throw new Error('BOG confirmer configuration is missing or reuses the service_role key')
+        }
+        const { error } = await confirmer.rpc('update_bog_payment_status', {
+          p_payment_id: input.paymentId,
+          p_status: input.status,
+          p_transaction_id: input.transactionId,
+          p_metadata: input.metadata,
+        })
+        if (error) throw error
+        logBogDiagnostic({
+          stage: 'db.update_payment_status',
+          outcome: 'success',
+          paymentId: input.paymentId,
+          orderStatus: input.metadata.bank_status,
+          paymentStatus: input.status,
+          databaseOperation: 'update_bog_payment_status',
+          databaseOutcome: 'success',
+        })
+      } catch (error) {
+        logBogDiagnostic({
+          stage: 'db.update_payment_status',
+          outcome: 'failure',
+          paymentId: input.paymentId,
+          orderStatus: input.metadata.bank_status,
+          paymentStatus: input.status,
+          databaseOperation: 'update_bog_payment_status',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
+        throw error
       }
-      const { error } = await confirmer.rpc('update_bog_payment_status', {
-        p_payment_id: input.paymentId,
-        p_status: input.status,
-        p_transaction_id: input.transactionId,
-        p_metadata: input.metadata,
-      })
-      if (error) throw error
     },
     async assertConfirmerReady() {
       if (!confirmer) {
@@ -822,14 +994,37 @@ function createDefaultDependencies(): Dependencies {
         p_transaction_id: null,
         p_metadata: {},
       })
-      if (error?.message === 'Invalid BOG payment status update') return
+      if (error?.message === 'Invalid BOG payment status update') {
+        logBogDiagnostic({
+          stage: 'db.confirmer_readiness',
+          outcome: 'success',
+          databaseOperation: 'update_bog_payment_status.readiness_probe',
+          databaseOutcome: 'success',
+        })
+        return
+      }
       if (error) {
+        logBogDiagnostic({
+          stage: 'db.confirmer_readiness',
+          outcome: 'failure',
+          databaseOperation: 'update_bog_payment_status.readiness_probe',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
         const detail = typeof error.message === 'string' && error.message
           ? error.message
           : 'unknown RPC error'
         // Surface non-sensitive PostgREST/gateway message for ops (never includes JWT/secrets).
         throw new Error(`BOG confirmer authorization check failed: ${detail}`)
       }
+      logBogDiagnostic({
+        stage: 'db.confirmer_readiness',
+        outcome: 'failure',
+        databaseOperation: 'update_bog_payment_status.readiness_probe',
+        databaseOutcome: 'failure',
+        error: 'BOG confirmer authorization check was unexpectedly accepted',
+      })
       throw new Error('BOG confirmer authorization check was unexpectedly accepted')
     },
     verifyCallbackSignature: verifyBogCallbackSignature,
@@ -848,9 +1043,27 @@ function configuration(
   request: Request,
   dependencies: Dependencies,
   requireOrigin: boolean,
+  stage: 'initialize' | 'verify' | 'callback',
 ): { appUrl: URL; credentials: BogCredentials } | Response {
   const env = dependencies.environment
+  const configPresence = {
+    SUPABASE_URL: Boolean(env.SUPABASE_URL),
+    SUPABASE_ANON_KEY: Boolean(env.SUPABASE_ANON_KEY),
+    SUPABASE_SERVICE_ROLE_KEY: Boolean(env.SUPABASE_SERVICE_ROLE_KEY),
+    SUPABASE_BOG_CONFIRM_KEY: Boolean(env.SUPABASE_BOG_CONFIRM_KEY),
+    BOG_CLIENT_KEY: Boolean(env.BOG_CLIENT_KEY),
+    BOG_SECRET_KEY: Boolean(env.BOG_SECRET_KEY),
+    PRODUCTION_APP_URL: Boolean(env.PRODUCTION_APP_URL),
+  }
+  const logConfiguration = (outcome: string, error?: unknown) => logBogDiagnostic({
+    stage: `${stage}.configuration`,
+    outcome,
+    configPresence,
+    productionEnvironment: env.VERCEL_ENV === 'production',
+    error,
+  })
   if (env.VERCEL_ENV !== 'production') {
+    logConfiguration('rejected', 'Production environment is required')
     return jsonResponse({ error: 'BOG Live payments are available only in Production' }, 404)
   }
   if (
@@ -862,6 +1075,7 @@ function configuration(
     !env.BOG_SECRET_KEY ||
     !env.PRODUCTION_APP_URL
   ) {
+    logConfiguration('failure', 'Required payment configuration is missing')
     return jsonResponse({ error: 'Production BOG payments are not configured' }, 503)
   }
   try {
@@ -874,13 +1088,16 @@ function configuration(
       !PRODUCTION_HOSTS.has(appUrl.hostname) ||
       (requireOrigin && origin !== appUrl.origin)
     ) {
+      logConfiguration('rejected', 'Production payment origin is invalid')
       return jsonResponse({ error: 'Production payment origin is invalid' }, 403)
     }
+    logConfiguration('success')
     return {
       appUrl,
       credentials: { clientKey: env.BOG_CLIENT_KEY, secretKey: env.BOG_SECRET_KEY },
     }
   } catch {
+    logConfiguration('failure', 'Production payment configuration is invalid')
     return jsonResponse({ error: 'Production payment configuration is invalid' }, 503)
   }
 }
@@ -892,11 +1109,29 @@ function response(value: object): value is Response {
 async function authenticate(
   request: Request,
   dependencies: Dependencies,
+  stage: 'initialize' | 'verify' | 'callback',
 ): Promise<{ id: string } | Response> {
   const token = accessTokenOf(request)
-  if (!token) return jsonResponse({ error: 'Authentication is required' }, 401)
-  const user = await dependencies.authenticateUser(token)
-  return user ?? jsonResponse({ error: 'Unauthorized' }, 401)
+  if (!token) {
+    logBogDiagnostic({ stage: `${stage}.authentication`, outcome: 'missing_token' })
+    return jsonResponse({ error: 'Authentication is required' }, 401)
+  }
+  try {
+    const user = await dependencies.authenticateUser(token)
+    logBogDiagnostic({
+      stage: `${stage}.authentication`,
+      outcome: user ? 'success' : 'rejected',
+    })
+    return user ?? jsonResponse({ error: 'Unauthorized' }, 401)
+  } catch (error) {
+    logBogDiagnostic({
+      stage: `${stage}.authentication`,
+      outcome: 'failure',
+      errorCode: errorCodeOf(error),
+      error,
+    })
+    throw error
+  }
 }
 
 function accessTokenOf(request: Request): string | null {
@@ -956,7 +1191,15 @@ async function runClaimedCheckout(input: {
       try {
         await ledger.complete(paymentId, created)
       } catch (error) {
-        console.error('BOG checkout result could not be reconciled:', safeErrorMessage(error))
+        logBogDiagnostic({
+          stage: 'db.checkout_complete',
+          outcome: 'failure',
+          paymentId,
+          databaseOperation: 'checkout_ledger.complete',
+          databaseOutcome: 'failure',
+          errorCode: errorCodeOf(error),
+          error,
+        })
       }
     }, () => undefined)
   }
@@ -1003,9 +1246,21 @@ async function runClaimedCheckout(input: {
       if (!preserveLease) {
         try {
           const released = await input.dependencies.releaseBogRecoveryLease(claimPaymentId, leaseToken)
-          if (!released) console.error('BOG checkout recovery lease expired or was replaced before release')
+          if (!released) {
+            logBogDiagnostic({
+              stage: 'checkout.recovery_lease_release',
+              outcome: 'not_released',
+              paymentId: claimPaymentId,
+            })
+          }
         } catch (error) {
-          console.error('BOG checkout recovery lease could not be released:', safeErrorMessage(error))
+          logBogDiagnostic({
+            stage: 'checkout.recovery_lease_release',
+            outcome: 'failure',
+            paymentId: claimPaymentId,
+            errorCode: errorCodeOf(error),
+            error,
+          })
         }
       }
     }
@@ -1059,8 +1314,26 @@ async function runClaimedCheckout(input: {
         })
         try {
           await withTimeout(ledger.complete(checkout.payment_id, payment), bankTimeoutMs)
-        } catch {
+          logBogDiagnostic({
+            stage: 'db.checkout_complete',
+            outcome: 'success',
+            paymentId: checkout.payment_id,
+            merchantPaymentId,
+            databaseOperation: 'checkout_ledger.complete',
+            databaseOutcome: 'success',
+          })
+        } catch (error) {
           preserveLeaseUntilExpiry()
+          logBogDiagnostic({
+            stage: 'db.checkout_complete',
+            outcome: 'failure',
+            paymentId: checkout.payment_id,
+            merchantPaymentId,
+            databaseOperation: 'checkout_ledger.complete',
+            databaseOutcome: 'failure',
+            errorCode: errorCodeOf(error),
+            error,
+          })
           saveLater(checkout.payment_id, Promise.resolve(payment))
           return respond({ kind: 'reject', code: 'payment_attempt_unresolved', message: CHECKOUT_MESSAGES.payment_attempt_unresolved })
         }
@@ -1072,7 +1345,14 @@ async function runClaimedCheckout(input: {
         }, 200)
       } catch (error) {
         preserveLeaseUntilExpiry()
-        console.error('BOG idempotent checkout recovery failed:', safeErrorMessage(error))
+        logBogDiagnostic({
+          stage: 'checkout.recovery',
+          outcome: 'failure',
+          paymentId: checkout.payment_id,
+          merchantPaymentId: checkout.merchant_payment_id,
+          errorCode: errorCodeOf(error),
+          error,
+        })
         return respond({ kind: 'reject', code: 'payment_attempt_unresolved', message: CHECKOUT_MESSAGES.payment_attempt_unresolved })
       }
     },
@@ -1102,7 +1382,7 @@ async function runClaimedCheckout(input: {
           latest.payment_id.startsWith('unissued:') ||
           latest.payment_id !== paymentId ||
           latest.merchant_payment_id !== merchantPaymentId ||
-          !latest.metadata?.checkout_url
+          typeof latest.metadata?.checkout_url !== 'string'
         ) {
           throw new Error('BOG ready checkout changed while acquiring its recovery lease')
         }
@@ -1125,7 +1405,14 @@ async function runClaimedCheckout(input: {
         })
       } catch (error) {
         preserveLeaseUntilExpiry()
-        console.error('BOG ready checkout settlement retry failed:', safeErrorMessage(error))
+        logBogDiagnostic({
+          stage: 'checkout.ready_settlement',
+          outcome: 'failure',
+          paymentId,
+          merchantPaymentId,
+          errorCode: errorCodeOf(error),
+          error,
+        })
         return respond({ kind: 'reject', code: 'payment_attempt_unresolved', message: CHECKOUT_MESSAGES.payment_attempt_unresolved })
       }
     })
@@ -1154,8 +1441,26 @@ async function runClaimedCheckout(input: {
         const payment = await withTimeout(bankCall, bankTimeoutMs)
         try {
           await withTimeout(ledger.complete(checkout.payment_id, payment), bankTimeoutMs)
-        } catch {
+          logBogDiagnostic({
+            stage: 'db.checkout_complete',
+            outcome: 'success',
+            paymentId: checkout.payment_id,
+            merchantPaymentId: checkout.merchant_payment_id,
+            databaseOperation: 'checkout_ledger.complete',
+            databaseOutcome: 'success',
+          })
+        } catch (error) {
           preserveLeaseUntilExpiry()
+          logBogDiagnostic({
+            stage: 'db.checkout_complete',
+            outcome: 'failure',
+            paymentId: checkout.payment_id,
+            merchantPaymentId: checkout.merchant_payment_id,
+            databaseOperation: 'checkout_ledger.complete',
+            databaseOutcome: 'failure',
+            errorCode: errorCodeOf(error),
+            error,
+          })
           saveLater(checkout.payment_id, Promise.resolve(payment))
           return respond({ kind: 'reject', code: 'payment_attempt_unresolved', message: CHECKOUT_MESSAGES.payment_attempt_unresolved })
         }
@@ -1163,6 +1468,14 @@ async function runClaimedCheckout(input: {
       } catch (error) {
         preserveLeaseUntilExpiry()
         if (error instanceof Error && error.message === 'BOG_CALL_TIMEOUT') saveLater(checkout.payment_id, bankCall)
+        logBogDiagnostic({
+          stage: 'checkout.bank_call',
+          outcome: 'failure',
+          paymentId: checkout.payment_id,
+          merchantPaymentId: checkout.merchant_payment_id,
+          errorCode: errorCodeOf(error),
+          error,
+        })
         return respond({ kind: 'reject', code: 'payment_attempt_unresolved', message: CHECKOUT_MESSAGES.payment_attempt_unresolved })
       }
     })
@@ -1202,6 +1515,14 @@ async function runClaimedCheckout(input: {
     now: now(),
     leaseMs,
   })
+  logBogDiagnostic({
+    stage: 'db.checkout_reserve',
+    outcome: reservation.outcome,
+    paymentId: reservation.checkout.payment_id,
+    merchantPaymentId: reservation.checkout.merchant_payment_id,
+    databaseOperation: 'checkout_ledger.reserve',
+    databaseOutcome: reservation.outcome,
+  })
   if (reservation.outcome === 'owner') return startOwnedCheckout(reservation.checkout)
   return waitForCheckout(reservation.checkout)
 }
@@ -1210,12 +1531,16 @@ export async function handleBogInitialize(
   request: Request,
   dependencies = createDefaultDependencies(),
 ): Promise<Response> {
-  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405)
-  const config = configuration(request, dependencies, true)
+  if (request.method !== 'POST') {
+    logBogDiagnostic({ stage: 'initialize.request', outcome: 'invalid_method' })
+    return jsonResponse({ error: 'Method not allowed' }, 405)
+  }
+  const config = configuration(request, dependencies, true, 'initialize')
   if (response(config)) return config
 
+  let diagnosticMerchantPaymentId: string | undefined
   try {
-    const user = await authenticate(request, dependencies)
+    const user = await authenticate(request, dependencies, 'initialize')
     if (response(user)) return user
     const accessToken = accessTokenOf(request)
     if (!accessToken) return jsonResponse({ error: 'Authentication is required' }, 401)
@@ -1239,7 +1564,12 @@ export async function handleBogInitialize(
     try {
       await dependencies.assertConfirmerReady?.()
     } catch (error) {
-      console.error('Production BOG confirmer authorization failed:', safeErrorMessage(error))
+      logBogDiagnostic({
+        stage: 'initialize.confirmer_readiness',
+        outcome: 'failure',
+        errorCode: errorCodeOf(error),
+        error,
+      })
       return jsonResponse({ error: 'BOG settlement is unavailable' }, 503)
     }
 
@@ -1268,6 +1598,7 @@ export async function handleBogInitialize(
     }
     const idempotencyKey = await createBogIdempotencyKey(user.id, body.requestId)
     const merchantPaymentId = `cr-${idempotencyKey}`
+    diagnosticMerchantPaymentId = merchantPaymentId
     const existingOrder = dependencies.findTransactionByIdempotencyKey
       ? await dependencies.findTransactionByIdempotencyKey(user.id, idempotencyKey)
       : null
@@ -1297,7 +1628,13 @@ export async function handleBogInitialize(
         code: 'too_many_active_checkouts',
       }, 429)
     }
-    console.error('Production BOG initialization failed:', safeErrorMessage(error))
+    logBogDiagnostic({
+      stage: 'initialize.handler',
+      outcome: 'failure',
+      merchantPaymentId: diagnosticMerchantPaymentId,
+      errorCode: errorCodeOf(error),
+      error,
+    })
     return jsonResponse({ error: 'Payment could not be started; try again later' }, 500)
   }
 }
@@ -1306,11 +1643,16 @@ export async function handleBogVerify(
   request: Request,
   dependencies = createDefaultDependencies(),
 ): Promise<Response> {
-  if (request.method !== 'GET') return jsonResponse({ error: 'Method not allowed' }, 405)
-  const config = configuration(request, dependencies, false)
+  if (request.method !== 'GET') {
+    logBogDiagnostic({ stage: 'verify.request', outcome: 'invalid_method' })
+    return jsonResponse({ error: 'Method not allowed' }, 405)
+  }
+  const config = configuration(request, dependencies, false, 'verify')
   if (response(config)) return config
+  let diagnosticPaymentId: string | undefined
+  let diagnosticMerchantPaymentId: string | undefined
   try {
-    const user = await authenticate(request, dependencies)
+    const user = await authenticate(request, dependencies, 'verify')
     if (response(user)) return user
     const url = new URL(request.url)
     if (url.searchParams.get('provider') !== 'bog') {
@@ -1318,6 +1660,8 @@ export async function handleBogVerify(
     }
     const paymentId = url.searchParams.get('paymentId')
     const merchantPaymentId = url.searchParams.get('merchantPaymentId')
+    diagnosticPaymentId = paymentId ?? undefined
+    diagnosticMerchantPaymentId = merchantPaymentId ?? undefined
     if ((!paymentId && !merchantPaymentId) || (paymentId && merchantPaymentId)) {
       return jsonResponse({ error: 'Exactly one payment identifier is required' }, 400)
     }
@@ -1328,6 +1672,14 @@ export async function handleBogVerify(
       return jsonResponse({ error: 'Payment transaction was not found' }, 404)
     }
     const verified = await verifyStoredOrder(transaction, dependencies)
+    logBogDiagnostic({
+      stage: 'verify.receipt_validation',
+      outcome: 'success',
+      paymentId: transaction.payment_id,
+      merchantPaymentId: transaction.merchant_payment_id,
+      orderStatus: verified.bankStatus,
+      paymentStatus: verified.status,
+    })
     const shouldApply = canApplyBogStatus(transaction.status, verified.status)
     let currentStatus = transaction.status
     if (shouldApply) {
@@ -1341,13 +1693,28 @@ export async function handleBogVerify(
       if (!updated) throw new Error('Payment transaction disappeared after verification')
       currentStatus = updated.status
     }
+    logBogDiagnostic({
+      stage: 'verify.handler',
+      outcome: shouldApply ? 'settled' : 'unchanged',
+      paymentId: transaction.payment_id,
+      merchantPaymentId: transaction.merchant_payment_id,
+      orderStatus: verified.bankStatus,
+      paymentStatus: currentStatus,
+    })
     return jsonResponse({
       status: currentStatus,
       bankStatus: verified.bankStatus,
       transactionId: verified.transactionId,
     }, 200)
   } catch (error) {
-    console.error('Production BOG verification failed:', safeErrorMessage(error))
+    logBogDiagnostic({
+      stage: 'verify.handler',
+      outcome: 'failure',
+      paymentId: diagnosticPaymentId,
+      merchantPaymentId: diagnosticMerchantPaymentId,
+      errorCode: errorCodeOf(error),
+      error,
+    })
     return jsonResponse({ error: 'Payment verification failed' }, 500)
   }
 }
@@ -1356,12 +1723,18 @@ export async function handleBogCallback(
   request: Request,
   dependencies = createDefaultDependencies(),
 ): Promise<Response> {
-  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405)
-  const config = configuration(request, dependencies, false)
+  if (request.method !== 'POST') {
+    logBogDiagnostic({ stage: 'callback.request', outcome: 'invalid_method' })
+    return jsonResponse({ error: 'Method not allowed' }, 405)
+  }
+  const config = configuration(request, dependencies, false, 'callback')
   if (response(config)) return config
+  let diagnosticPaymentId: string | undefined
+  let diagnosticMerchantPaymentId: string | undefined
   try {
     const rawBody = await request.text()
     if (!await dependencies.verifyCallbackSignature(rawBody, request.headers.get('callback-signature'))) {
+      logBogDiagnostic({ stage: 'callback.signature', outcome: 'rejected' })
       return jsonResponse({ error: 'Invalid BOG callback signature' }, 401)
     }
     let callback: { event?: unknown; body?: { order_id?: unknown } }
@@ -1371,14 +1744,38 @@ export async function handleBogCallback(
       return jsonResponse({ error: 'Invalid BOG callback body' }, 400)
     }
     if (callback.event !== 'order_payment' || typeof callback.body?.order_id !== 'string') {
+      logBogDiagnostic({ stage: 'callback.payload', outcome: 'rejected' })
       return jsonResponse({ error: 'Invalid BOG callback body' }, 400)
     }
+    diagnosticPaymentId = callback.body.order_id
     const transaction = await dependencies.getTransactionById(callback.body.order_id)
     if (!transaction?.merchant_payment_id) {
+      logBogDiagnostic({
+        stage: 'callback.transaction_lookup',
+        outcome: 'not_found',
+        paymentId: diagnosticPaymentId,
+      })
       return jsonResponse({ error: 'BOG payment transaction was not found' }, 404)
     }
+    diagnosticMerchantPaymentId = transaction.merchant_payment_id
     const verified = await verifyStoredOrder(transaction, dependencies)
+    logBogDiagnostic({
+      stage: 'callback.receipt_validation',
+      outcome: 'success',
+      paymentId: transaction.payment_id,
+      merchantPaymentId: transaction.merchant_payment_id,
+      orderStatus: verified.bankStatus,
+      paymentStatus: verified.status,
+    })
     if (!canApplyBogStatus(transaction.status, verified.status)) {
+      logBogDiagnostic({
+        stage: 'callback.handler',
+        outcome: 'duplicate_or_stale',
+        paymentId: transaction.payment_id,
+        merchantPaymentId: transaction.merchant_payment_id,
+        orderStatus: verified.bankStatus,
+        paymentStatus: transaction.status,
+      })
       return jsonResponse({ success: true, duplicateOrStale: true }, 200)
     }
     await dependencies.updatePaymentStatus({
@@ -1387,9 +1784,24 @@ export async function handleBogCallback(
       transactionId: verified.transactionId,
       metadata: verifiedMetadata(verified),
     })
+    logBogDiagnostic({
+      stage: 'callback.handler',
+      outcome: 'settled',
+      paymentId: transaction.payment_id,
+      merchantPaymentId: transaction.merchant_payment_id,
+      orderStatus: verified.bankStatus,
+      paymentStatus: verified.status,
+    })
     return jsonResponse({ success: true }, 200)
   } catch (error) {
-    console.error('Production BOG callback failed:', safeErrorMessage(error))
+    logBogDiagnostic({
+      stage: 'callback.handler',
+      outcome: 'failure',
+      paymentId: diagnosticPaymentId,
+      merchantPaymentId: diagnosticMerchantPaymentId,
+      errorCode: errorCodeOf(error),
+      error,
+    })
     return jsonResponse({ error: 'BOG callback could not be processed' }, 500)
   }
 }
@@ -1418,8 +1830,13 @@ function verifiedMetadata(verified: Awaited<ReturnType<typeof verifyStoredOrder>
   }
 }
 
-function safeErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unknown error'
+function errorCodeOf(error: unknown): unknown {
+  try {
+    if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
+    return error.code
+  } catch {
+    return undefined
+  }
 }
 
 function isActiveBogCheckoutLimitError(error: unknown): boolean {

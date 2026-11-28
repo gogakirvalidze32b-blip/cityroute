@@ -123,6 +123,25 @@ describe('HomePage outer menu fit (Android landscape)', () => {
     expect(document.querySelector('.home-page--laptop')).toBeTruthy()
   })
 
+  it('shows a small Rules & Terms link (no consent checkbox) that opens the terms window', () => {
+    renderHome()
+    const link = screen.getByRole('button', { name: 'წესები და პირობები' })
+    expect(screen.queryByTestId('terms-dialog')).toBeNull()
+    expect(document.querySelector('[data-testid="login-terms-consent"]')).toBeNull()
+    // The phone is not shown outside the terms…
+    expect(screen.queryByRole('link', { name: '579 15 59 75' })).toBeNull()
+    fireEvent.click(link)
+    expect(screen.getByTestId('terms-dialog')).toBeTruthy()
+    expect(screen.getByText('1. ინფორმაცია CityRoute-ის შესახებ')).toBeTruthy()
+    // …only in their contact section.
+    expect(screen.getByRole('link', { name: '579 15 59 75' }).getAttribute('href')).toBe('tel:579155975')
+    // Both the ✕ and the button at the end of the text close it.
+    const closeButtons = screen.getAllByRole('button', { name: 'დახურვა' })
+    expect(closeButtons).toHaveLength(2)
+    fireEvent.click(closeButtons[1]!)
+    expect(screen.queryByTestId('terms-dialog')).toBeNull()
+  })
+
   it('offers active trial users a path to pay before their trial expires', () => {
     homeState.profile = {
       subscription_status: 'trial',

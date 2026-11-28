@@ -36,6 +36,15 @@ export type SavedExamState = {
   pendingPinSortOrder?: number | null
   /** Instructions queued behind the current PIN audio, in playback order. */
   queuedPinSortOrders?: number[]
+  /**
+   * Kilometre trigger: pending/queued PINs the car already passed — completed
+   * WITHOUT audio. Optional; older saves simply have none.
+   */
+  silentPinSortOrders?: number[]
+  /** Frozen route geometry version the chainage below was measured on. */
+  routeGeometryVersion?: string
+  /** Absolute route chainage (m) at save time. Only reused when the geometry version matches. */
+  routeChainageMeters?: number
   lastPassedSortOrder?: number | null
   nextSortOrder?: number | null
   /** Present when phase is `summary` so Finish survives a page refresh. */
@@ -151,6 +160,18 @@ export function isSavedExamState(value: unknown): value is SavedExamState {
     (!('startMode' in state) || state.startMode === 'automatic' || state.startMode === 'manual') &&
     (!('driveView' in state) || state.driveView === 'map' || state.driveView === 'panel') &&
     (!('summaryCanContinue' in state) || typeof state.summaryCanContinue === 'boolean') &&
+    (!('silentPinSortOrders' in state) ||
+      state.silentPinSortOrders === undefined ||
+      (Array.isArray(state.silentPinSortOrders) &&
+        state.silentPinSortOrders.every((order) => Number.isInteger(order) && order > 0))) &&
+    (!('routeGeometryVersion' in state) ||
+      state.routeGeometryVersion === undefined ||
+      typeof state.routeGeometryVersion === 'string') &&
+    (!('routeChainageMeters' in state) ||
+      state.routeChainageMeters === undefined ||
+      (typeof state.routeChainageMeters === 'number' &&
+        Number.isFinite(state.routeChainageMeters) &&
+        state.routeChainageMeters >= 0)) &&
     (!('summary' in state) ||
       state.summary === undefined ||
       (typeof state.summary === 'object' &&

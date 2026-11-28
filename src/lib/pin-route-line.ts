@@ -4,6 +4,7 @@ import route2Road from '@/data/route-2-road.json'
 import route3Road from '@/data/route-3-road.json'
 import route4Road from '@/data/route-4-road.json'
 import { roundSharpRouteCorners } from '@/lib/round-route-corners'
+import { frozenMapLines, frozenMatchLine } from '@/data/route-geometry'
 
 export type PinRoutePoint = {
   lat: number
@@ -270,11 +271,32 @@ export function examRoadTrace(slug: string, pins: readonly PinRoutePoint[]): Lat
 }
 
 /**
- * Exam blue route line (map + matching). Pin coordinates / order / triggers stay
- * unchanged. Only true hairpin / U-tip vertices are filleted (finish corridors);
- * ordinary street corners and the agency start T-junction stay as straight lines.
+ * Exam blue route line (map + matching + chainage).
+ *
+ * For the four Telavi exam routes this is the FROZEN, versioned geometry
+ * (src/data/route-geometry.ts) — an exact export of the line below built from
+ * the pre-migration PINs. It intentionally ignores `pins`, so moving or editing
+ * a PIN can never reshape the route or shift route kilometres. Other slugs still
+ * build the line from their pins.
  */
 export function examRouteLine(slug: string, pins: readonly PinRoutePoint[]): LatLng[] {
+  return frozenMatchLine(slug) ?? buildExamRouteLineFromPins(slug, pins)
+}
+
+/**
+ * Map-drawn street lines (frozen for the four exam routes, see examRouteLine).
+ */
+export function examMapRouteLines(slug: string, pins: readonly PinRoutePoint[]): LatLng[][] {
+  return frozenMapLines(slug) ?? buildExamMapRouteLinesFromPins(slug, pins)
+}
+
+/**
+ * Builder used to produce the frozen geometry: Pin coordinates / order / triggers
+ * stay unchanged. Only true hairpin / U-tip vertices are filleted (finish
+ * corridors); ordinary street corners and the agency start T-junction stay as
+ * straight lines.
+ */
+export function buildExamRouteLineFromPins(slug: string, pins: readonly PinRoutePoint[]): LatLng[] {
   const raw = examRoadTrace(slug, pins) ?? pinRouteLine(pins)
   if (slug === 'route-3') {
     return route3FinishCorridorLine(raw, pins)
@@ -287,10 +309,10 @@ export function examRouteLine(slug: string, pins: readonly PinRoutePoint[]): Lat
 }
 
 /**
- * Map-drawn street lines. Route 3's Alazani carriageways stay separate, while
- * Route 4 shares its PIN 13 arc with examRouteLine.
+ * Builder for map-drawn street lines. Route 3's Alazani carriageways stay
+ * separate, while Route 4 shares its PIN 13 arc with the route line.
  */
-export function examMapRouteLines(slug: string, pins: readonly PinRoutePoint[]): LatLng[][] {
+export function buildExamMapRouteLinesFromPins(slug: string, pins: readonly PinRoutePoint[]): LatLng[][] {
   const road = examRoadTrace(slug, pins)
   const raw = road ?? pinRouteLine(pins)
   if (slug === 'route-4') {

@@ -823,6 +823,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           },
         )
         .subscribe((status) => {
+          if (!mounted) return
           if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
             console.warn('Session revocation realtime channel unavailable; polling remains active.')
           }

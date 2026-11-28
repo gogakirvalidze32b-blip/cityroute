@@ -10,6 +10,8 @@ import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { PlanSelectionPage } from '@/pages/PlanSelectionPage'
 import { PaymentReturnPage } from '@/pages/PaymentReturnPage'
 import { PrivacyPolicyPage } from '@/pages/PrivacyPolicyPage'
+import { PricingPage } from '@/pages/PricingPage'
+import { PublicInfoPage } from '@/pages/PublicInfoPage'
 import { RegisterPage } from '@/pages/RegisterPage'
 import { RoutePage } from '@/pages/RoutePage'
 import { DebugLoginPage } from '@/pages/DebugLoginPage'
@@ -36,6 +38,11 @@ function ProductionRoutes() {
       <Route path="/payment/return" element={<PaymentReturnPage />} />
       <Route path="/demo-preview" element={<Navigate to="/choose-plan" replace />} />
       <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+      <Route path="/about" element={<PublicInfoPage page="about" />} />
+      <Route path="/contact" element={<PublicInfoPage page="contact" />} />
+      <Route path="/pricing" element={<PricingPage />} />
+      <Route path="/terms" element={<PublicInfoPage page="terms" />} />
+      <Route path="/cancellation-refunds" element={<PublicInfoPage page="cancellation-refunds" />} />
       <Route path="/support" element={<SupportChatPage />} />
       <Route path="/support-admin" element={<SupportAdminPage />} />
       <Route element={<ProtectedRoute />}>
@@ -52,6 +59,12 @@ function ProductionRoutes() {
 
 function AppContent() {
   const location = useLocation()
+  const isLocalDemoEntry =
+    location.pathname === '/' &&
+    import.meta.env.DEV &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  if (isLocalDemoEntry) return <Navigate to="/preview-demo" replace />
+
   const isDemoPath = location.pathname === '/preview-demo' || location.pathname.startsWith('/preview-demo/')
   const demo = isDemoPath && PREVIEW_DEMO_AVAILABLE
   if (isDemoPath && !PREVIEW_DEMO_AVAILABLE) return <Navigate to="/" replace />

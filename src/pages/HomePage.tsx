@@ -2,8 +2,10 @@ import { Link, Navigate } from 'react-router-dom'
 import { useState } from 'react'
 
 import { AppBrand } from '@/components/AppBrand'
+import { PublicSiteFooter } from '@/components/PublicSiteFooter'
+import { HomeTermsFooter } from '@/components/HomeTermsFooter'
 import { useAuth } from '@/context/AuthContext'
-import { SupportButton, SupportFooterLinks } from '@/components/support/SupportLinks'
+import { SupportButton } from '@/components/support/SupportLinks'
 
 import { accessLabel, routeSourceLabel } from '@/types/database'
 
@@ -134,8 +136,9 @@ export function HomePage() {
         <button type="button" className="home-signout" onClick={() => void handleSignOut()}>
           გასვლა
         </button>
-        <SupportFooterLinks />
+        <HomeTermsFooter />
       </footer>
+      <PublicSiteFooter className="public-site-footer--app" />
     </div>
   )
 }
