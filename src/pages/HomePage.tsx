@@ -2,7 +2,7 @@ import { Link, Navigate } from 'react-router-dom'
 import { useState } from 'react'
 
 import { AppBrand } from '@/components/AppBrand'
-import { HomeTermsFooter } from '@/components/HomeTermsFooter'
+import { TermsFooterLink } from '@/components/TermsFooterLink'
 import { useAuth } from '@/context/AuthContext'
 import { SupportButton } from '@/components/support/SupportLinks'
 
@@ -135,7 +135,7 @@ export function HomePage() {
         <button type="button" className="home-signout" onClick={() => void handleSignOut()}>
           გასვლა
         </button>
-        <HomeTermsFooter />
+        <TermsFooterLink />
       </footer>
     </div>
   )

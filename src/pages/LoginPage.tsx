@@ -1,7 +1,7 @@
-import { FormEvent, useCallback, useState } from 'react'
+import { FormEvent, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
-import { TermsDialog } from '@/components/TermsDialog'
+import { TermsFooterLink } from '@/components/TermsFooterLink'
 import { useAuth } from '@/context/AuthContext'
 import './login-v2.css'
 
@@ -50,16 +50,6 @@ export function LoginView({
   const [submitting, setSubmitting] = useState(false)
   const [googleSubmitting, setGoogleSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  // Required consent to the Rules & Terms — never pre-checked, never remembered.
-  // It can only be ticked after the terms were read ("წავიკითხე" at their end).
-  const [termsAccepted, setTermsAccepted] = useState(false)
-  const [termsRead, setTermsRead] = useState(false)
-  const [termsOpen, setTermsOpen] = useState(false)
-  const closeTerms = useCallback(() => setTermsOpen(false), [])
-  const markTermsRead = useCallback(() => {
-    setTermsRead(true)
-    setTermsOpen(false)
-  }, [])
 
   // Load saved credentials if "remember me" was checked
   useState(() => {
@@ -76,10 +66,6 @@ export function LoginView({
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
-    if (!termsAccepted) {
-      setError(TERMS_REQUIRED_MESSAGE)
-      return
-    }
     setSubmitting(true)
     setError(null)
     
@@ -195,52 +181,8 @@ export function LoginView({
               />
               <span>დამახსოვრება</span>
             </label>
-            <label className={`login-v2__consent ${termsRead ? '' : 'is-unread'}`.trim()}>
-              <input
-                type="checkbox"
-                required
-                checked={termsAccepted}
-                aria-describedby="login-consent-hint"
-                onChange={(e) => {
-                  // Not read yet: never tick — open the terms instead.
-                  if (!termsRead) {
-                    setTermsOpen(true)
-                    return
-                  }
-                  setTermsAccepted(e.target.checked)
-                  if (e.target.checked && error === TERMS_REQUIRED_MESSAGE) setError(null)
-                }}
-                data-testid="login-terms-consent"
-              />
-              <span>
-                ვეთანხმები{' '}
-                <button
-                  type="button"
-                  className="login-v2__consent-link"
-                  onClick={(e) => {
-                    // Opens the terms; does not tick the checkbox.
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setTermsOpen(true)
-                  }}
-                >
-                  წესებსა და პირობებს
-                </button>
-              </span>
-            </label>
-            {!termsAccepted && (
-              <p id="login-consent-hint" className="login-v2__consent-hint">
-                {termsRead
-                  ? 'გასაგრძელებლად მონიშნეთ თანხმობა.'
-                  : 'ჯერ გაეცანით წესებსა და პირობებს.'}
-              </p>
-            )}
             {error && <p className="error-text">{error}</p>}
-            <button
-              type="submit"
-              className={`login-v2__submit ${termsAccepted ? '' : 'is-consent-blocked'}`.trim()}
-              disabled={submitting || googleSubmitting || !termsAccepted}
-            >
+            <button type="submit" className="login-v2__submit" disabled={submitting || googleSubmitting}>
               {submitting ? '...' : 'შესვლა →'}
             </button>
           </form>
@@ -249,14 +191,9 @@ export function LoginView({
           </div>
           <button
             type="button"
-            className={`login-v2__google ${termsAccepted ? '' : 'is-consent-blocked'}`.trim()}
-            disabled={submitting || googleSubmitting || !termsAccepted}
+            className="login-v2__google"
+            disabled={submitting || googleSubmitting}
             onClick={async () => {
-              // Google sign-in also needs consent — never start OAuth without it.
-              if (!termsAccepted) {
-                setError(TERMS_REQUIRED_MESSAGE)
-                return
-              }
               setGoogleSubmitting(true)
               setError(null)
               try {
@@ -280,12 +217,10 @@ export function LoginView({
           </p>
         </div>
       </div>
-      <TermsDialog open={termsOpen} onClose={closeTerms} onRead={markTermsRead} />
+      <TermsFooterLink className="login-v2__terms" />
     </div>
   )
 }
-
-const TERMS_REQUIRED_MESSAGE = 'გასაგრძელებლად დაეთანხმეთ წესებსა და პირობებს.'
 
 const FEATURES = [
   { icon: '📍', label: 'რეალური მარშრუტები' },

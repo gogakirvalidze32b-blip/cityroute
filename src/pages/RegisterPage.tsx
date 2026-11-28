@@ -1,8 +1,10 @@
 import { FormEvent, useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
-import { PublicSiteFooter } from '@/components/PublicSiteFooter'
+import { TermsConsent } from '@/components/TermsConsent'
 import { useAuth } from '@/context/AuthContext'
+
+const TERMS_REQUIRED_MESSAGE = 'გასაგრძელებლად დაეთანხმეთ წესებსა და პირობებს.'
 
 export function RegisterPage() {
   const { signUp, signInWithGoogle, user, loading } = useAuth()
@@ -13,6 +15,8 @@ export function RegisterPage() {
   const [success, setSuccess] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [googleSubmitting, setGoogleSubmitting] = useState(false)
+  // Required consent to the Rules & Terms (never pre-checked, read first).
+  const [termsAccepted, setTermsAccepted] = useState(false)
 
   if (loading) {
     return (
@@ -23,7 +27,6 @@ export function RegisterPage() {
         <div className="auth-card">
           <p className="muted">იტვირთება...</p>
         </div>
-        <PublicSiteFooter />
       </div>
     )
   }
@@ -32,9 +35,13 @@ export function RegisterPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
+    if (!termsAccepted) {
+      setError(TERMS_REQUIRED_MESSAGE)
+      return
+    }
     setSubmitting(true)
     setError(null)
-    
+
     try {
       const timeoutPromise = new Promise<string>((resolve) => 
         setTimeout(() => resolve('მოთხოვნა ძალიან დიდხანს გრძელდება. სცადეთ თავიდან.'), 15000)
@@ -67,7 +74,6 @@ export function RegisterPage() {
             შესვლა
           </Link>
         </div>
-        <PublicSiteFooter />
       </div>
     )
   }
@@ -99,8 +105,15 @@ export function RegisterPage() {
             პაროლი
             <input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
           </label>
+          <TermsConsent
+            accepted={termsAccepted}
+            onAcceptedChange={(accepted) => {
+              setTermsAccepted(accepted)
+              if (accepted && error === TERMS_REQUIRED_MESSAGE) setError(null)
+            }}
+          />
           {error && <p className="error-text">{error}</p>}
-          <button type="submit" className="primary" disabled={submitting || googleSubmitting}>
+          <button type="submit" className="primary" disabled={submitting || googleSubmitting || !termsAccepted}>
             {submitting ? '...' : 'რეგისტრაცია'}
           </button>
         </form>
@@ -110,8 +123,13 @@ export function RegisterPage() {
         <button
           type="button"
           className="auth-google"
-          disabled={submitting || googleSubmitting}
+          disabled={submitting || googleSubmitting || !termsAccepted}
           onClick={async () => {
+            // Google registration also needs consent — never start OAuth without it.
+            if (!termsAccepted) {
+              setError(TERMS_REQUIRED_MESSAGE)
+              return
+            }
             setGoogleSubmitting(true)
             setError(null)
             try {
@@ -131,7 +149,6 @@ export function RegisterPage() {
           უკვე გაქვს ანგარიში? <Link to="/login">შესვლა</Link>
         </p>
       </div>
-      <PublicSiteFooter />
     </div>
   )
 }

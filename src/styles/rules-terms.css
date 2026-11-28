@@ -21,37 +21,51 @@
   padding-left: 20px;
 }
 
-/* Login consent checkbox ("ვეთანხმები წესებსა და პირობებს"). */
-.login-v2__consent {
+/* Required consent checkbox ("ვეთანხმები წესებსა და პირობებს") — Registration.
+   Selectors are doubled with .form so the generic .form label/input styles
+   (column layout, padded inputs) never apply to it. */
+.terms-consent,
+.form .terms-consent {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.6rem;
-  color: #d5e8e6;
+  color: inherit;
+  font-size: 0.95rem;
   text-align: left;
   cursor: pointer;
 }
 
-.login-v2__consent input {
+.terms-consent input[type='checkbox'],
+.form .terms-consent input[type='checkbox'] {
   flex: none;
   width: 20px;
   height: 20px;
   margin: 0;
+  padding: 0;
+  border-radius: 4px;
   accent-color: #12c9a0;
   cursor: pointer;
 }
 
-.login-v2__consent input:focus-visible {
+.terms-consent input[type='checkbox']:focus-visible {
   outline: 2px solid #2de0c0;
   outline-offset: 2px;
 }
 
-.login-v2__consent-link {
+/* Unread terms: the checkbox looks inactive until "წავიკითხე". */
+.terms-consent.is-unread input[type='checkbox'] {
+  opacity: 0.55;
+}
+
+.terms-consent__link {
   display: inline;
   height: auto;
   margin: 0;
   padding: 0;
   background: none;
   border: 0;
+  border-radius: 0;
   box-shadow: none;
   color: #2de0c0;
   font: inherit;
@@ -60,31 +74,27 @@
   cursor: pointer;
 }
 
-.login-v2__consent-link:focus-visible {
+.terms-consent__link:focus-visible {
   outline: 2px solid #2de0c0;
   outline-offset: 2px;
   border-radius: 3px;
 }
 
-.login-v2__consent-hint {
-  margin: -0.2rem 0 0;
-  color: #9fbcc2;
+.terms-consent__hint {
+  margin: -0.35rem 0 0;
   font-size: 0.85rem;
   text-align: left;
+  opacity: 0.75;
 }
 
-/* Blocked only for missing consent (not "working…"): show a not-allowed cursor. */
-.login-v2__submit.is-consent-blocked:disabled,
-.login-v2__google.is-consent-blocked:disabled {
-  cursor: not-allowed;
+/* Login: the bottom terms link sits above the background art. */
+.login-v2__terms {
+  position: relative;
+  z-index: 1;
+  margin-top: 1rem;
 }
 
-/* Unread terms: the checkbox looks inactive until "წავიკითხე". */
-.login-v2__consent.is-unread input {
-  opacity: 0.55;
-}
-
-/* Full Rules & Terms dialog (Login: read before consenting). */
+/* Full Rules & Terms dialog (Registration consent and the terms links). */
 .terms-dialog {
   position: fixed;
   inset: 0;

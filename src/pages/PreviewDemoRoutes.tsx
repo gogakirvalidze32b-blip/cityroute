@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
-import { HomeTermsFooter } from '@/components/HomeTermsFooter'
+import { TermsFooterLink } from '@/components/TermsFooterLink'
 import { LoginView } from '@/pages/LoginPage'
 import { ExamDriveSession } from '@/components/ExamDriveSession'
 import { selectableRoutes } from '@/data/selectable-routes'
@@ -59,9 +59,9 @@ function PreviewDemoHomePage() {
       <footer className="home-footer">
         <p className="muted home-meta">Demo progress is stored only in this browser.</p>
         <Link to="/preview-demo/login" className="tag" data-testid="demo-login-preview-link">
-          DEMO · შესვლის გვერდი (თანხმობა)
+          DEMO · შესვლის გვერდი
         </Link>
-        <HomeTermsFooter />
+        <TermsFooterLink />
       </footer>
     </div>
   )

@@ -141,24 +141,17 @@ describe('isolated Preview Demo mode', () => {
     expect(screen.getByRole('link', { name: '579 15 59 75' })).toHaveAttribute('href', 'tel:579155975')
   })
 
-  it('previews the real Login consent flow without signing in or calling the backend', async () => {
+  it('previews the real Login screen (terms link, no consent) without signing in or calling the backend', async () => {
     window.history.replaceState({}, '', '/preview-demo/login')
 
     render(<App />)
 
-    const consent = await screen.findByTestId('login-terms-consent')
-    const submit = screen.getByRole('button', { name: /^შესვლა/ })
-    expect(consent).not.toBeChecked()
-    expect(submit).toBeDisabled()
-    expect(screen.queryByTestId('rules-terms')).toBeNull()
-
-    // Ticking before reading opens the terms instead.
-    fireEvent.click(consent)
-    expect(consent).not.toBeChecked()
-    fireEvent.click(screen.getByRole('button', { name: 'წავიკითხე' }))
-    fireEvent.click(consent)
-    expect(consent).toBeChecked()
+    const submit = await screen.findByRole('button', { name: /^შესვლა/ })
     expect(submit).toBeEnabled()
+    expect(screen.queryByTestId('terms-consent')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'წესები და პირობები' }))
+    expect(screen.getByTestId('terms-dialog')).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: 'დახურვა' })[1]!)
 
     fireEvent.change(screen.getByPlaceholderText('ელფოსტა'), { target: { value: 'demo@example.com' } })
     fireEvent.change(screen.getByPlaceholderText('პაროლი'), { target: { value: 'x' } })
