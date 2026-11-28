@@ -504,6 +504,15 @@ async function getBogAccessToken(
   return result.access_token
 }
 
+/**
+ * Item name shown on the Bank of Georgia checkout page. (It used to read
+ * "CityRoute Premium ? 1 ???????, 30 ???": the Georgian text had been lost
+ * to literal question marks.)
+ */
+export function bogBasketDescription(deviceSlots: number): string {
+  return `CityRoute Premium — ${deviceSlots} მოწყობილობა, 30 დღე`
+}
+
 export async function createBogOrder(input: {
   credentials: BogCredentials
   idempotencyKey: string
@@ -537,7 +546,7 @@ export async function createBogOrder(input: {
             quantity: 1,
             unit_price: input.amount,
             product_id: `cityroute-premium-${input.deviceSlots}`,
-            description: `CityRoute Premium ? ${input.deviceSlots} ???????, 30 ???`,
+            description: bogBasketDescription(input.deviceSlots),
             total_price: input.amount,
           }],
         },
