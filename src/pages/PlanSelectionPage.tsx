@@ -2,6 +2,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { AppBrand } from '@/components/AppBrand'
 import { PublicSiteFooter } from '@/components/PublicSiteFooter'
 import { PaymentButton } from '@/components/PaymentButton'
+import { DrivingSchoolPackages } from '@/components/DrivingSchoolPackages'
 import { useAuth } from '@/context/AuthContext'
 import { loadDeviceSlotPackages, type DeviceSlotPackage } from '@/lib/device-slot-packages'
 import { accessLabel, isAccessActive } from '@/types/database'
@@ -18,6 +19,8 @@ export function PlanSelectionPage() {
   const [submitting, setSubmitting] = useState(false)
   const [checkingSession, setCheckingSession] = useState(false)
   const [signOutError, setSignOutError] = useState<string | null>(null)
+  // Display-only switch; the instructor (1/2-car) state above is never reset by it.
+  const [category, setCategory] = useState<'instructor' | 'school'>('instructor')
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -251,6 +254,30 @@ export function PlanSelectionPage() {
 
         <section className="subscription-checkout" aria-labelledby="subscription-checkout-title">
           <div className="subscription-checkout__body">
+            <div className="subscription-category-tabs" role="tablist" aria-label="პაკეტის კატეგორია">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={category === 'instructor'}
+                className={`subscription-category-tab${category === 'instructor' ? ' is-selected' : ''}`}
+                onClick={() => setCategory('instructor')}
+              >
+                ინსტრუქტორი
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={category === 'school'}
+                className={`subscription-category-tab${category === 'school' ? ' is-selected' : ''}`}
+                onClick={() => setCategory('school')}
+              >
+                ავტოსკოლა
+              </button>
+            </div>
+            {category === 'school' ? (
+              <DrivingSchoolPackages userId={user?.id ?? null} />
+            ) : (
+            <>
             <h2 id="subscription-checkout-title">რამდენი ავტომობილისთვის?</h2>
             <div className="subscription-options" role="radiogroup" aria-label="მანქანების რაოდენობა">
               {devicePackages.map((devicePackage) => {
@@ -304,6 +331,8 @@ export function PlanSelectionPage() {
                   {submitting ? 'ინახება...' : '12 საათიანი უფასო წვდომის დაწყება'}
                 </button>
               </>
+            )}
+            </>
             )}
             {signOutError && <p className="subscription-error" role="alert">{signOutError}</p>}
             <button type="button" className="subscription-signout" onClick={() => void handleSignOut()}>

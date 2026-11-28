@@ -3,11 +3,13 @@ import { lazy, Suspense } from 'react'
 import { AuthProvider } from '@/context/AuthContext'
 import { PlanGate } from '@/components/PlanGate'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
+import { AdminOnlyAccountRedirect } from '@/components/AdminOnlyAccountRedirect'
 import { HomePage } from '@/pages/HomePage'
 import { LoginPage } from '@/pages/LoginPage'
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage'
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage'
 import { PlanSelectionPage } from '@/pages/PlanSelectionPage'
+import { DrivingSchoolRegistrationPage } from '@/pages/DrivingSchoolRegistrationPage'
 import { PaymentReturnPage } from '@/pages/PaymentReturnPage'
 import { PrivacyPolicyPage } from '@/pages/PrivacyPolicyPage'
 import { PricingPage } from '@/pages/PricingPage'
@@ -43,10 +45,11 @@ function ProductionRoutes() {
       <Route path="/pricing" element={<PricingPage />} />
       <Route path="/terms" element={<PublicInfoPage page="terms" />} />
       <Route path="/cancellation-refunds" element={<PublicInfoPage page="cancellation-refunds" />} />
-      <Route path="/support" element={<SupportChatPage />} />
+      <Route path="/support" element={<AdminOnlyAccountRedirect><SupportChatPage /></AdminOnlyAccountRedirect>} />
       <Route path="/support-admin" element={<SupportAdminPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/choose-plan" element={<PlanSelectionPage />} />
+        <Route path="/driving-school" element={<DrivingSchoolRegistrationPage />} />
         <Route element={<PlanGate />}>
           <Route path="/" element={<HomePage />} />
           <Route path="/route/:slug" element={<RoutePage />} />

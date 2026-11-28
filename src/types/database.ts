@@ -95,9 +95,113 @@ export type Database = {
         Update: Partial<Database['public']['Tables']['pins']['Row']>
         Relationships: []
       }
+      // Driving-school (ავტოსკოლა) tables — migration 038, isolated from device_slot_packages/profiles.
+      driving_school_packages: {
+        Row: {
+          car_count: 5 | 10
+          price_amount: number | null
+          currency: 'GEL'
+          duration_days: number
+          active: boolean
+          sort_order: number
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      driving_school_licenses: {
+        Row: {
+          id: string
+          school_id: string
+          car_count: 5 | 10
+          status: 'active' | 'replaced' | 'revoked'
+          source: 'admin' | 'bog'
+          price_amount: number | null
+          bog_payment_id: string | null
+          starts_at: string
+          expires_at: string
+          granted_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      driving_school_cars: {
+        Row: {
+          id: string
+          school_id: string
+          slot_number: number
+          label: string
+          status: 'active' | 'disabled'
+          android_device_id: string | null
+          device_bound_at: string | null
+          device_last_seen_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
+      driving_schools: {
+        Row: {
+          id: string
+          owner_id: string
+          name: string
+          contact_name: string
+          contact_phone: string
+          contact_email: string
+          address: string
+          city: string
+          registration_code: string | null
+          verification_info: string
+          status: 'pending' | 'approved' | 'rejected'
+          review_note: string | null
+          reviewed_by: string | null
+          reviewed_at: string | null
+          submitted_at: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: never
+        Update: never
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: {
+      owner_upsert_driving_school_car: {
+        Args: { p_slot_number: number; p_label: string }
+        Returns: string
+      }
+      owner_set_driving_school_car_status: {
+        Args: { p_car_id: string; p_action: 'disable' | 'enable' | 'release_device' }
+        Returns: undefined
+      }
+      admin_review_driving_school: {
+        Args: { p_school_id: string; p_decision: 'approved' | 'rejected'; p_note?: string | null }
+        Returns: undefined
+      }
+      admin_grant_driving_school_license: {
+        Args: { p_school_id: string; p_car_count: 5 | 10; p_duration_days?: number | null }
+        Returns: string
+      }
+      submit_driving_school_application: {
+        Args: {
+          p_name: string
+          p_contact_name: string
+          p_contact_phone: string
+          p_contact_email: string
+          p_address: string
+          p_city: string
+          p_registration_code: string
+          p_verification_info: string
+        }
+        Returns: string
+      }
       activate_current_session: {
         Args: Record<string, never>
         Returns: Json

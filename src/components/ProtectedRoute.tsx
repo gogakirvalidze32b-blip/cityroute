@@ -1,4 +1,5 @@
 import { Navigate, Outlet } from 'react-router-dom'
+import { AdminOnlyAccountRedirect } from '@/components/AdminOnlyAccountRedirect'
 import { useAuth } from '@/context/AuthContext'
 
 export function ProtectedRoute() {
@@ -13,5 +14,11 @@ export function ProtectedRoute() {
   }
 
   if (!user) return <Navigate to="/login" replace />
-  return <Outlet />
+  // Instructor routes (plan, driving school, home, exam routes): the admin-only
+  // account goes to /support-admin instead; everyone else is unchanged.
+  return (
+    <AdminOnlyAccountRedirect>
+      <Outlet />
+    </AdminOnlyAccountRedirect>
+  )
 }

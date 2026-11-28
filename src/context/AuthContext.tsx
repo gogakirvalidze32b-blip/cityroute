@@ -23,6 +23,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import type { SubscriptionPlan } from '@/data/subscription-plans'
 
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase'
+import { safeNextPath } from '@/lib/auth-redirect'
 import { getDeviceFingerprint, getExamTabId } from '@/lib/device'
 import { revokeExamTab } from '@/lib/exam-session-edge'
 
@@ -72,7 +73,8 @@ type AuthState = {
 
   signIn: (email: string, password: string) => Promise<string | null>
 
-  signInWithGoogle: () => Promise<string | null>
+  /** `redirectPath`: optional allowed post-login path (see safeNextPath); default `/`. */
+  signInWithGoogle: (redirectPath?: string | null) => Promise<string | null>
 
   signOut: () => Promise<void>
 
@@ -1203,7 +1205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (redirectPath?: string | null) => {
 
     setSignOutWarning(null)
     signedOutLocallyRef.current = false
@@ -1213,7 +1215,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/`,
+        // Only allowlisted paths (safeNextPath); anything else keeps the old `/`.
+        redirectTo: `${window.location.origin}${safeNextPath(redirectPath) ?? '/'}`,
         queryParams: { prompt: 'select_account' },
       },
     })

@@ -1,5 +1,7 @@
 import { FormEvent, useState } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
+import { safeNextPath } from '@/lib/auth-redirect'
+import { ADMIN_HOME_PATH, isAdminOnlyAccount } from '@/lib/admin-account'
 import { AppBrand } from '@/components/AppBrand'
 import { TermsFooterLink } from '@/components/TermsFooterLink'
 import { useAuth } from '@/context/AuthContext'
@@ -7,6 +9,8 @@ import './login-v2.css'
 
 export function LoginPage() {
   const { signIn, signInWithGoogle, user, loading, signOutWarning } = useAuth()
+  const [searchParams] = useSearchParams()
+  const next = safeNextPath(searchParams.get('next'))
 
   if (loading) {
     return (
@@ -21,10 +25,16 @@ export function LoginPage() {
     )
   }
 
-  if (user) return <Navigate to="/" replace />
+  // Allowed post-login destination (e.g. /support-admin?c=<id> from the support e-mail).
+  // The admin-only account (cityroute.ge@gmail.com) lands on /support-admin instead of `/`.
+  if (user) return <Navigate to={next ?? (isAdminOnlyAccount(user) ? ADMIN_HOME_PATH : '/')} replace />
 
   return (
-    <LoginView signIn={signIn} signInWithGoogle={signInWithGoogle} signOutWarning={signOutWarning} />
+    <LoginView
+      signIn={signIn}
+      signInWithGoogle={() => signInWithGoogle(next)}
+      signOutWarning={signOutWarning}
+    />
   )
 }
 

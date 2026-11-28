@@ -44,6 +44,20 @@ vi.mock('@/lib/device-slot-packages', () => ({
   loadDeviceSlotPackages: packageState.load,
 }))
 
+const schoolState = vi.hoisted(() => ({
+  packages: vi.fn(async () => [
+    { car_count: 5, price_amount: null, currency: 'GEL', duration_days: 30, sort_order: 1 },
+    { car_count: 10, price_amount: null, currency: 'GEL', duration_days: 30, sort_order: 2 },
+  ]),
+  school: vi.fn(async () => null as null | Record<string, unknown>),
+}))
+
+vi.mock('@/lib/driving-school', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/driving-school')>()),
+  loadDrivingSchoolPackages: schoolState.packages,
+  loadMyDrivingSchool: schoolState.school,
+}))
+
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
     ...state.auth,
@@ -66,6 +80,8 @@ describe('Premium package selection', () => {
       { subscription_plan: 'premium', device_slots: 1, price_amount: 99, currency: 'GEL', sort_order: 1 },
       { subscription_plan: 'premium', device_slots: 2, price_amount: 179, currency: 'GEL', sort_order: 2 },
     ])
+    schoolState.packages.mockClear()
+    schoolState.school.mockClear()
     state.selectPlan.mockClear()
     state.signOut.mockClear()
     state.refreshProfile.mockClear()
@@ -114,6 +130,72 @@ describe('Premium package selection', () => {
     expect(screen.queryByRole('radio', { name: /3 მანქანა|5 მანქანა/ })).toBeNull()
     expect(screen.getAllByText('99 ₾')).toHaveLength(2)
     expect(screen.getAllByText('179 ₾')).toHaveLength(1)
+  })
+
+  it('opens on the ინსტრუქტორი category with the unchanged 1 car 99 ₾ / 2 cars 179 ₾ BOG packages', async () => {
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('tab', { name: 'ინსტრუქტორი' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'ავტოსკოლა' })).toHaveAttribute('aria-selected', 'false')
+    expect(await screen.findByRole('radio', { name: /1 მანქანა/ })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('button', { name: 'Pay for 1' })).toBeTruthy()
+    expect(schoolState.packages).not.toHaveBeenCalled()
+  })
+
+  it('shows 5/10-car driving-school packages as not purchasable and keeps the 2-car selection on return', async () => {
+    schoolState.packages.mockClear()
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByRole('radio', { name: /2 მანქანა/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'ავტოსკოლა' }))
+
+    expect(screen.getByRole('radio', { name: /5 მანქანა/ })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: /10 მანქანა/ })).toBeTruthy()
+    expect(screen.getAllByText('ფასი დაზუსტდება').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: /Pay for/ })).toBeNull()
+    expect(screen.queryByText('99 ₾')).toBeNull()
+    expect(screen.queryByText(/179 ₾/)).toBeNull()
+    expect(await screen.findByRole('link', { name: 'ავტოსკოლის რეგისტრაცია' })).toHaveAttribute('href', '/driving-school')
+    expect(screen.getByRole('button', { name: 'ფასი დაზუსტდება' })).toBeDisabled()
+    expect(schoolState.school).toHaveBeenCalledWith('user-1')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'ინსტრუქტორი' }))
+    expect(screen.getByRole('radio', { name: /2 მანქანა/ })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('button', { name: 'Pay for 2' })).toBeTruthy()
+    expect(packageState.load).toHaveBeenCalledOnce()
+  })
+
+  it('does not unlock a priced school package for a Pending school', async () => {
+    schoolState.packages.mockResolvedValueOnce([
+      { car_count: 5, price_amount: 400, currency: 'GEL', duration_days: 30, sort_order: 1 },
+      { car_count: 10, price_amount: null, currency: 'GEL', duration_days: 30, sort_order: 2 },
+    ])
+    schoolState.school.mockResolvedValueOnce({ id: 's1', name: 'სკოლა', status: 'pending', review_note: null })
+    render(
+      <MemoryRouter initialEntries={['/plans']}>
+        <Routes>
+          <Route path="/plans" element={<PlanSelectionPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('tab', { name: 'ავტოსკოლა' }))
+    expect(await screen.findByText('განხილვაშია')).toBeTruthy()
+    expect(screen.getByText('400 ₾')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'საჭიროა დადასტურებული ავტოსკოლა' })).toBeDisabled()
+    expect(screen.queryByRole('link', { name: 'შეძენის მოთხოვნა' })).toBeNull()
   })
 
   it('keeps the user on plan selection when the secure plan RPC rejects the trial choice', async () => {

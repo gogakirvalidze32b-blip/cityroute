@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { loginPathWithNext } from '@/lib/auth-redirect'
+import { isAdminOnlyAccount } from '@/lib/admin-account'
 import { ChatThread } from '@/components/support/ChatThread'
 import { Composer } from '@/components/support/Composer'
+import { DrivingSchoolsAdminPanel } from '@/components/admin/DrivingSchoolsAdminPanel'
 import { useAuth } from '@/context/AuthContext'
 import {
   adminListDeviceSessions,
@@ -33,6 +36,7 @@ type Access = 'checking' | 'granted' | 'denied' | 'error'
 
 export function SupportAdminPage() {
   const { user, loading } = useAuth()
+  const location = useLocation()
   const [access, setAccess] = useState<Access>('checking')
 
   // The database decides who is an admin (RPC backed by support_admins).
@@ -61,17 +65,9 @@ export function SupportAdminPage() {
     )
   }
   if (!user) {
-    return (
-      <div className="page center support-page--center">
-        <div className="sc-card">
-          <h1>{S.adminTitle}</h1>
-          <p className="muted">{S.adminLogin}</p>
-          <Link to="/login" className="support-button support-button--solid">
-            {S.login}
-          </Link>
-        </div>
-      </div>
-    )
+    // Signed out (e.g. opened from the support-notify e-mail link): go to the
+    // existing login page and come back to this exact admin URL afterwards.
+    return <Navigate to={loginPathWithNext(`${location.pathname}${location.search}`)} replace />
   }
   if (access === 'checking') {
     return (
@@ -103,14 +99,77 @@ export function SupportAdminPage() {
               </pre>
             </>
           )}
-          <Link to="/" className="support-button">
-            {S.back}
-          </Link>
+          {isAdminOnlyAccount(user) ? (
+            // The admin-only account has no instructor home to go back to.
+            <AdminSignOutButton />
+          ) : (
+            <Link to="/" className="support-button">
+              {S.back}
+            </Link>
+          )}
         </div>
       </div>
     )
   }
-  return <AdminWorkspace />
+  return <AdminSections showSignOut={isAdminOnlyAccount(user)} />
+}
+
+// Sign-out for the admin-only account, which never reaches the instructor home
+// page (where the regular sign-out button lives).
+function AdminSignOutButton() {
+  const { signOut } = useAuth()
+  const navigate = useNavigate()
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <>
+      <button
+        type="button"
+        className="support-button sa-signout"
+        onClick={() => {
+          setError(null)
+          void signOut()
+            .then(() => navigate('/login', { replace: true }))
+            .catch(() => setError('ანგარიშიდან გასვლა ვერ მოხერხდა. სცადე თავიდან.'))
+        }}
+      >
+        ანგარიშიდან გასვლა
+      </button>
+      {error && <span className="sc-inline-error" role="alert">{error}</span>}
+    </>
+  )
+}
+
+type AdminSection = 'chat' | 'schools'
+
+// Tabs inside the same /support-admin page. ?tab=schools selects Driving
+// Schools; no tab param = Support Chat (unchanged). Other params such as the
+// conversation ?c= are kept when switching tabs.
+function AdminSections({ showSignOut }: { showSignOut: boolean }) {
+  const [params, setParams] = useSearchParams()
+  const section: AdminSection = params.get('tab') === 'schools' ? 'schools' : 'chat'
+
+  function selectSection(next: AdminSection) {
+    if (next === section) return
+    const nextParams = new URLSearchParams(params)
+    if (next === 'schools') nextParams.set('tab', 'schools')
+    else nextParams.delete('tab')
+    setParams(nextParams, { replace: false })
+  }
+
+  return (
+    <>
+      <nav className="sa-sections" role="tablist" aria-label="ადმინისტრირების სექციები">
+        <button type="button" role="tab" aria-selected={section === 'chat'} className={section === 'chat' ? 'is-active' : ''} onClick={() => selectSection('chat')}>
+          მხარდაჭერის ჩატი
+        </button>
+        <button type="button" role="tab" aria-selected={section === 'schools'} className={section === 'schools' ? 'is-active' : ''} onClick={() => selectSection('schools')}>
+          ავტოსკოლები
+        </button>
+        {showSignOut && <AdminSignOutButton />}
+      </nav>
+      {section === 'schools' ? <DrivingSchoolsAdminPanel /> : <AdminWorkspace />}
+    </>
+  )
 }
 
 function AdminWorkspace() {

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const auth = vi.hoisted(() => ({ value: { user: null as any, loading: false } }))
@@ -28,6 +28,11 @@ vi.mock('@/lib/support/api', () => api)
 import { SupportAdminPage } from './SupportAdminPage'
 import { SupportChatPage } from './SupportChatPage'
 
+function LoginLocation() {
+  const location = useLocation()
+  return <p data-testid="login-location">{`${location.pathname}${location.search}`}</p>
+}
+
 const renderAt = (ui: React.ReactElement, path = '/') => render(<MemoryRouter initialEntries={[path]}>{ui}</MemoryRouter>)
 
 const convRow = (o: any = {}) => ({
@@ -47,9 +52,18 @@ beforeEach(() => {
 })
 
 describe('Admin page — access control', () => {
-  it('signed-out visitor is asked to log in and NO data call is made', () => {
-    renderAt(<SupportAdminPage />)
-    expect(screen.getByText(/ჯერ შედი ანგარიშში/)).toBeInTheDocument()
+  it('signed-out visitor is redirected to login (keeping the e-mail destination) and NO data call is made', () => {
+    render(
+      <MemoryRouter initialEntries={['/support-admin?c=11111111-2222-4333-8444-555555555555']}>
+        <Routes>
+          <Route path="/support-admin" element={<SupportAdminPage />} />
+          <Route path="/login" element={<LoginLocation />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('login-location')).toHaveTextContent(
+      '/login?next=%2Fsupport-admin%3Fc%3D11111111-2222-4333-8444-555555555555',
+    )
     expect(api.checkIsSupportAdmin).not.toHaveBeenCalled()
     expect(api.adminListConversations).not.toHaveBeenCalled()
   })
